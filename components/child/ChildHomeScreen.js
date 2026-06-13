@@ -7,7 +7,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, Platform, TouchableOpacity } from 'react-native';
-import { Calendar, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import RoleHomeShell from '../home/RoleHomeShell';
@@ -73,8 +73,6 @@ export default function ChildHomeScreen({
   const [children, setChildren] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [bulletinComposerOpen, setBulletinComposerOpen] = useState(false);
-
   const isParentViewingChild = Boolean(overrideChildId);
   const childId = overrideChildId ?? session?.child_id ?? session?.accessible_children?.[0]?.id;
   const familyId = overrideFamilyId ?? propFamilyId ?? session?.family_id;
@@ -298,7 +296,7 @@ export default function ChildHomeScreen({
 
   const renderSchedulePanel = (panelStyle) => (
     <View style={[styles.scheduleSection, panelStyle]}>
-      <View style={styles.sectionHeader}>
+      <View style={styles.schedulePanelHeader}>
         <View style={styles.scheduleNavGroup}>
           <View style={styles.dayNavButtonGroup}>
             <TouchableOpacity
@@ -367,23 +365,14 @@ export default function ChildHomeScreen({
   const mainContent = (
     <View style={styles.mainSurface}>
       <View style={styles.bulletinBoardSection}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionLabel}>Bulletin Board</Text>
-          <TouchableOpacity
-            style={styles.greetingActionButton}
-            onPress={() => setBulletinComposerOpen(true)}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Pencil size={18} color="#334155" strokeWidth={2.25} />
-            <Text style={styles.greetingActionButtonText}>New note</Text>
-          </TouchableOpacity>
-        </View>
         <BulletinBoardSection
           familyId={safeFamilyId}
           children={children}
           subjects={subjects}
-          composerOpen={bulletinComposerOpen}
-          onComposerOpenChange={setBulletinComposerOpen}
+          feedTitle="Bulletin Board"
+          onSubjectPress={(subjectId) => {
+            if (subjectId) onNavigate?.(`subject-${subjectId}`);
+          }}
         />
       </View>
     </View>
@@ -517,47 +506,53 @@ const styles = StyleSheet.create({
   },
   bulletinBoardSection: {
     flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
     marginTop: 2,
-    paddingTop: 14,
+    paddingTop: 4,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingBottom: 12,
+    paddingHorizontal: 0,
+    paddingBottom: 0,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.12)',
+    overflow: 'hidden',
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
-      minHeight: 0,
-      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06)',
+      height: '100%',
+      maxHeight: '100%',
     }),
   },
   scheduleSection: {
     flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
     marginTop: 2,
-    paddingTop: 14,
+    paddingTop: 4,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 12,
     paddingBottom: 8,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.12)',
+    overflow: 'hidden',
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
-      minHeight: 0,
-      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06)',
+      height: '100%',
+      maxHeight: '100%',
     }),
   },
-  sectionHeader: {
+  schedulePanelHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 0,
-    marginBottom: 8,
-    marginHorizontal: -12,
-    paddingHorizontal: 12,
-    paddingRight: 10,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 4,
+    flexShrink: 0,
+    gap: 12,
   },
   scheduleNavGroup: {
     flexDirection: 'row',

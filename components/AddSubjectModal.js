@@ -14,6 +14,7 @@ import {
   deleteSubjectCascade,
   dispatchSubjectDeletedSideEffects,
 } from '../lib/services/deleteSubjectCascade';
+import { seedSubjectGettingStartedBulletinPost } from '../lib/subjectGettingStartedBulletin';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 const SUBJECT_MODAL_MAX_WIDTH = 560;
@@ -547,6 +548,18 @@ export default function AddSubjectModal({
         }
       }
 
+      if (!existingSubjectId && savedSubjectId) {
+        try {
+          await seedSubjectGettingStartedBulletinPost({
+            familyId,
+            subjectId: savedSubjectId,
+            subjectName: subjectName.trim(),
+          });
+        } catch (seedErr) {
+          console.warn('[AddSubjectModal] Failed to seed subject bulletin welcome post:', seedErr);
+        }
+      }
+
       // Success
       const isEdit = !!(subject && subject.id);
       const successMessage = isEdit 
@@ -621,27 +634,24 @@ export default function AddSubjectModal({
         />
         <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.modalWrap}>
           <AppModalShell
-            mode={subject ? 'edit' : 'add'}
-            title={subject ? 'Edit subject' : 'New subject'}
+            title="New subject"
             onClose={handleClose}
             disableShellScroll
             shellStyle={styles.compactSubjectShell}
-            titleRowStyle={!subject ? styles.compactTitleRow : undefined}
+            titleRowStyle={styles.compactTitleRow}
             contentContainerStyle={styles.scrollContent}
             bodyStyle={styles.shellBody}
             footer={(
               <ModalFooter
-                mode="edit"
-                primaryLabel={isSubmitting ? 'Saving...' : 'Save changes'}
-                destructiveLabel={subject?.id ? (deletingSubject ? 'Deleting...' : 'Delete subject') : undefined}
+                mode="add"
+                primaryLabel={isSubmitting ? 'Saving...' : 'Add subject'}
                 onCancel={handleClose}
-                onDelete={subject?.id ? () => setShowDeleteSubjectConfirm(true) : undefined}
                 onPrimary={handleSubmit}
                 onBlockedPrimary={handleBlockedSubmit}
                 accent="#9ECFFB"
-                disabled={isSubmitting || deletingSubject}
+                disabled={isSubmitting}
                 visuallyDisabled={!canSubmit}
-                loading={isSubmitting || deletingSubject}
+                loading={isSubmitting}
               />
             )}
           >

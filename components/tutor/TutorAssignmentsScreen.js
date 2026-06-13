@@ -15,7 +15,7 @@ import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { getAssignments } from '../../lib/services/assignmentsClient';
 import TutorFeedbackModal from './TutorFeedbackModal';
-import AssignmentDetailModal from '../assignments/AssignmentDetailModal';
+import SubmitForReviewModal from '../child/SubmitForReviewModal';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { colors } from '../../theme/colors';
 
@@ -315,21 +315,15 @@ export default function TutorAssignmentsScreen({ familyId }) {
         onFeedbackSubmitted={handleFeedbackSubmitted}
       />
 
-      {/* Detail Modal */}
-      <AssignmentDetailModal
+      <SubmitForReviewModal
         visible={showDetailModal}
         assignment={selectedAssignment}
         childId={selectedAssignment?.child_id}
         familyId={familyId}
+        viewOnly
         onClose={() => {
           setShowDetailModal(false);
           setSelectedAssignment(null);
-        }}
-        onSubmit={null} // Tutors don't submit
-        onToggleHelp={null} // Tutors don't toggle help
-        onReview={() => {
-          setShowDetailModal(false);
-          setShowFeedbackModal(true);
         }}
       />
     </>

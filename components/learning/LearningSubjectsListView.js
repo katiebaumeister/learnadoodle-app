@@ -31,6 +31,10 @@ export default function LearningSubjectsListView({
   onAddMaterial,
   onAddEvent,
   onEditSubject,
+  onConfigureSchedule,
+  onEditUnits,
+  onNewAssignment,
+  getUnitsEditorLabelForSubject,
   searchPreviewSectionId = null,
   subjectDetailCache = {},
   searchPreviewTokens = [],
@@ -89,19 +93,6 @@ export default function LearningSubjectsListView({
         ) : null}
         {(onEditFamily || onEditSchoolYear || (canManageSubjects && onAddSubject)) ? (
           <View style={styles.headerActions}>
-            {onEditFamily ? (
-              <TouchableOpacity
-                style={styles.headerActionButton}
-                onPress={onEditFamily}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel="Edit Family"
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Users size={18} color="#334155" strokeWidth={2.25} />
-                <Text style={styles.headerActionButtonText}>Edit Family</Text>
-              </TouchableOpacity>
-            ) : null}
             {onEditSchoolYear ? (
               <TouchableOpacity
                 style={styles.headerActionButton}
@@ -113,6 +104,19 @@ export default function LearningSubjectsListView({
               >
                 <CalendarDays size={18} color="#334155" strokeWidth={2.25} />
                 <Text style={styles.headerActionButtonText}>Edit School Year</Text>
+              </TouchableOpacity>
+            ) : null}
+            {onEditFamily ? (
+              <TouchableOpacity
+                style={styles.headerActionButton}
+                onPress={onEditFamily}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Edit Family"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Users size={18} color="#334155" strokeWidth={2.25} />
+                <Text style={styles.headerActionButtonText}>Edit Family</Text>
               </TouchableOpacity>
             ) : null}
             {canManageSubjects && onAddSubject ? (
@@ -163,6 +167,14 @@ export default function LearningSubjectsListView({
               onAddSyllabus={onAddSyllabus}
               onAddEvent={onAddEvent}
               onEditSubject={onEditSubject}
+              onConfigureSchedule={onConfigureSchedule}
+              onEditUnits={onEditUnits}
+              onNewAssignment={onNewAssignment}
+              unitsEditorLabel={
+                typeof getUnitsEditorLabelForSubject === 'function'
+                  ? getUnitsEditorLabelForSubject(subject.id)
+                  : 'Edit units'
+              }
               onAddMaterial={onAddMaterial}
               searchPreviewSectionId={searchPreviewSectionId}
               searchPreviewData={subjectDetailCache[subject.id] || null}

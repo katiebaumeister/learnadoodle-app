@@ -1,29 +1,11 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Plus, Eye, Edit2, MoreVertical } from 'lucide-react';
+import { Plus, Clock, AlertTriangle, ChevronRight } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { useSession } from '../../contexts/SessionContext';
 import { getMaterialFileTypeLabel } from '../materials/MaterialDocViewerModal';
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
-import ChildAvatarCluster from '../ui/ChildAvatarCluster';
-import Dropdown, { DropdownItem } from '../ui/Dropdown';
-
-function getSubjectTermLabel(term) {
-  const raw = String(term || '').trim().toLowerCase();
-  if (raw === 'full_year') return 'Full year';
-  if (raw === 'fall_term') return 'Fall term';
-  if (raw === 'spring_term') return 'Spring term';
-  return '';
-}
-
-function buildYearTermLine(subject) {
-  if (!subject) return '';
-  const schoolYear = String(subject.school_year || '').trim();
-  const termLabel = getSubjectTermLabel(subject.school_term);
-  if (!schoolYear && !termLabel) return '';
-  if (schoolYear && termLabel) return `${schoolYear} · ${termLabel}`;
-  return schoolYear || termLabel;
-}
+import SubjectCardHeader from './SubjectCardHeader';
 
 function formatNaturalList(items = []) {
   const list = (items || []).map((v) => String(v || '').trim()).filter(Boolean);
@@ -47,6 +29,10 @@ export default function SubjectOverviewCard({
   onAddSyllabus,
   onAddEvent,
   onEditSubject,
+  onConfigureSchedule,
+  onEditUnits,
+  onNewAssignment,
+  unitsEditorLabel = 'Edit units',
   recentlyViewedMaterials = [],
   searchPreviewSectionId = null,
   searchPreviewData = null,
@@ -56,9 +42,7 @@ export default function SubjectOverviewCard({
 }) {
   const session = useSession();
   const [needsHelpHovered, setNeedsHelpHovered] = useState(false);
-  const [addEventHovered, setAddEventHovered] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuBtnRef = useRef(null);
+  const [addAssignmentHovered, setAddAssignmentHovered] = useState(false);
 
   const getChildName = (childId) => {
     const child = children.find(c => String(c.id) === String(childId));
@@ -67,6 +51,47 @@ export default function SubjectOverviewCard({
   
   const getChildById = (childId) => {
     return children.find(c => String(c.id) === String(childId));
+  };
+
+  /** Weekday + optional time for upcoming row, e.g. "Tue 9:00 AM–10:00 AM" */
+  const formatNextUpWhenLine = (item) => {
+    if (!item) return '';
+    const anchor = item.startTs || item.dueDate;
+    if (!anchor) return '';
+    const weekday = new Date(anchor).toLocaleDateString(undefined, { weekday: 'short' });
+    const tOpts = { hour: 'numeric', minute: '2-digit' };
+    const eventTypeRaw = String(item?.eventType || item?.event_type || '').trim();
+    const isIntrinsicAllDayType = ['Project', 'Trip', 'Holiday', 'Other'].includes(eventTypeRaw);
+    const s = item?.startTs ? new Date(item.startTs) : null;
+    const e = item?.endTs ? new Date(item.endTs) : null;
+    const hasValidStart = !!s && !Number.isNaN(s.getTime());
+    const hasValidEnd = !!e && !Number.isNaN(e.getTime());
+    const rawStart = String(item?.startTs || '').trim();
+    const rawEnd = String(item?.endTs || '').trim();
+    const isRawMidnight = (raw) => /T00:00(?::00(?:\.000)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i.test(raw);
+    const isRawEndOfDay = (raw) => /T23:59(?::59(?:\.999)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i.test(raw);
+    const isRawMidnightBounded =
+      !!rawStart &&
+      isRawMidnight(rawStart) &&
+      (!!rawEnd ? (isRawMidnight(rawEnd) || isRawEndOfDay(rawEnd)) : true);
+    const isMidnightBounded =
+      hasValidStart &&
+      hasValidEnd &&
+      s.getHours() === 0 &&
+      s.getMinutes() === 0 &&
+      ((e.getHours() === 0 && e.getMinutes() === 0) ||
+        (e.getHours() === 23 && e.getMinutes() === 59));
+    const isTimeless =
+      item?.is_flexible === true ||
+      item?.isFlexible === true ||
+      (!isIntrinsicAllDayType && (isMidnightBounded || isRawMidnightBounded));
+    let timeStr = '';
+    if (!isTimeless && hasValidStart) {
+      timeStr = hasValidEnd && s.getTime() !== e.getTime()
+        ? `${s.toLocaleTimeString(undefined, tOpts)}–${e.toLocaleTimeString(undefined, tOpts)}`
+        : s.toLocaleTimeString(undefined, tOpts);
+    }
+    return timeStr ? `${weekday} ${timeStr}` : weekday;
   };
 
   // Get assigned children names (moved up for use in handlers)
@@ -82,18 +107,46 @@ export default function SubjectOverviewCard({
   const assignedChildIdsForModals = Array.isArray(assignedChildren) ? assignedChildren : [];
   const firstAssignedChildId = assignedChildIdsForModals.length > 0 ? assignedChildIdsForModals[0] : null;
 
-  const runMenuAction = (action) => {
-    setMenuOpen(false);
-    action?.();
-  };
-
-  const handleViewDetails = (e) => {
-    e?.stopPropagation?.();
+  const handleNavigateToPlanner = (item, e) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault?.();
+    }
+    const rawEventId = item?.eventId ?? item?.event_id ?? item?.id ?? null;
+    const shouldOpenEventModal = item?.type === 'event';
+    const eventId = shouldOpenEventModal && rawEventId
+      ? String(rawEventId).trim().replace(/^event-/, '')
+      : null;
+    if (shouldOpenEventModal && eventId && Platform.OS === 'web' && typeof window !== 'undefined') {
+      const initialEvent = item?.event || item?.initialEvent || {
+        id: eventId,
+        title: item?.title || 'Lesson',
+        start_ts: item?.startTs || item?.dueDate || null,
+        end_ts: item?.endTs || null,
+        child_id: item?.childId || null,
+        subject_id: item?.subjectId || subject?.id || null,
+        event_type: item?.eventType || 'Lesson',
+      };
+      window.dispatchEvent(
+        new CustomEvent('openEventModal', {
+          detail: { eventId, initialEvent },
+        }),
+      );
+      return;
+    }
+    if (onNavigateToPlanner) {
+      onNavigateToPlanner({
+        subjectId: subject.id,
+        childId: item?.childId,
+        date: item?.dueDate,
+        eventId: item?.type === 'event' ? String(item.id || '').replace(/^event-/, '') : null,
+      });
+      return;
+    }
     onCardClick?.(subject);
   };
 
-  const handleEditSubject = (e) => {
-    e?.stopPropagation?.();
+  const handleEditSubject = () => {
     if (onEditSubject) {
       onEditSubject(subject);
       return;
@@ -105,17 +158,33 @@ export default function SubjectOverviewCard({
     }
   };
 
-  const handleAddEventForCard = (e) => {
-    e?.stopPropagation?.();
-    if (onAddEvent) {
-      onAddEvent(subject);
+  const handleConfigureSchedule = () => {
+    if (onConfigureSchedule) {
+      onConfigureSchedule(subject);
+    }
+  };
+
+  const handleEditUnits = () => {
+    if (onEditUnits) {
+      onEditUnits(subject);
+    }
+  };
+
+  const handleNewAssignment = () => {
+    if (onNewAssignment) {
+      onNewAssignment(subject);
+      return;
+    }
+    if (onAddAssignment) {
+      onAddAssignment(subject);
       return;
     }
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('openTaskModal', {
         detail: {
-          subjectId: subject.id,
           date: new Date(),
+          eventType: 'Assignment',
+          subjectId: subject.id,
           childIds: assignedChildIdsForModals,
           childId: firstAssignedChildId,
         },
@@ -123,30 +192,51 @@ export default function SubjectOverviewCard({
     }
   };
 
+  const handleAddAssignmentForCard = (e) => {
+    e?.stopPropagation?.();
+    handleNewAssignment();
+  };
+
   // Subject blurb: prefer notes, then legacy summary
   const subjectIntent = subject.notes?.trim() || subject.summary?.trim() || null;
+  const nextItem = subject.nextItem;
+  const overdueCount = subject.overdueCount || 0;
 
   const isParentViewer =
     session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true;
   const parentAssignmentAttentionCount = subject.parentAssignmentAttentionCount || 0;
   const parentNeedHelpCount = subject.parentNeedHelpCount || 0;
-  const yearTermLine = buildYearTermLine(subject);
-  const assignedChildrenMeta = useMemo(
-    () =>
-      assignedChildren
-        .map((childId) => {
-          const child = getChildById(childId);
-          const name = getChildName(childId);
-          if (!name) return null;
-          return {
-            id: String(child?.id || childId),
-            name,
-          };
-        })
-        .filter(Boolean),
-    [assignedChildren, children],
-  );
-  const studentsMetaLine = formatNaturalList(childrenNames);
+
+  const needsHelpBadge = isParentViewer && parentNeedHelpCount > 0 && typeof onNeedsHelpPress === 'function' ? (
+    <View
+      style={styles.needsHelpMarkWrap}
+      {...(Platform.OS === 'web'
+        ? {
+            onMouseEnter: () => setNeedsHelpHovered(true),
+            onMouseLeave: () => setNeedsHelpHovered(false),
+          }
+        : {})}
+    >
+      <TouchableOpacity
+        onPress={(e) => {
+          if (e?.stopPropagation) e.stopPropagation();
+          onNeedsHelpPress(subject);
+        }}
+        style={styles.needsHelpMark}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        accessibilityRole="button"
+        accessibilityLabel="Needs help — open subject"
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <Text style={styles.needsHelpMarkText}>!</Text>
+      </TouchableOpacity>
+      {Platform.OS === 'web' && needsHelpHovered ? (
+        <View style={styles.needsHelpTooltip} pointerEvents="none">
+          <Text style={styles.needsHelpTooltipText}>Needs help</Text>
+        </View>
+      ) : null}
+    </View>
+  ) : null;
 
   const openHomeReviewList = (e) => {
     if (e?.stopPropagation) e.stopPropagation();
@@ -360,143 +450,89 @@ export default function SubjectOverviewCard({
       activeOpacity={0.7}
     >
       {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <View style={styles.headerTitleRow}>
-            <View style={styles.subjectTitleWithBadge}>
-              <Text style={styles.subjectName} numberOfLines={2}>
-                {subject.name}
-              </Text>
-              {isParentViewer && parentNeedHelpCount > 0 && typeof onNeedsHelpPress === 'function' ? (
-                <View
-                  style={styles.needsHelpMarkWrap}
-                  {...(Platform.OS === 'web'
-                    ? {
-                        onMouseEnter: () => setNeedsHelpHovered(true),
-                        onMouseLeave: () => setNeedsHelpHovered(false),
-                      }
-                    : {})}
-                >
-                  <TouchableOpacity
-                    onPress={(e) => {
-                      if (e?.stopPropagation) e.stopPropagation();
-                      onNeedsHelpPress(subject);
-                    }}
-                    style={styles.needsHelpMark}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Needs help — open subject"
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={styles.needsHelpMarkText}>!</Text>
-                  </TouchableOpacity>
-                  {Platform.OS === 'web' && needsHelpHovered ? (
-                    <View style={styles.needsHelpTooltip} pointerEvents="none">
-                      <Text style={styles.needsHelpTooltipText}>Needs help</Text>
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
-            </View>
-            <View
-              style={styles.cardMenuWrap}
-              {...(Platform.OS === 'web' && {
-                onClick: (e) => e.stopPropagation(),
-                onMouseDown: (e) => e.stopPropagation(),
-              })}
+      <SubjectCardHeader
+        subjectName={subject.name}
+        subject={subject}
+        assignedChildIds={assignedChildren}
+        familyChildren={children}
+        unitsEditorLabel={unitsEditorLabel}
+        isParentViewer={isParentViewer}
+        stopPropagationOnMenu
+        needsHelpBadge={needsHelpBadge}
+        onEditSubject={isParentViewer ? handleEditSubject : null}
+        onConfigureSchedule={onConfigureSchedule ? handleConfigureSchedule : null}
+        onEditUnits={onEditUnits ? handleEditUnits : null}
+        onNewAssignment={isParentViewer ? handleNewAssignment : null}
+      />
+      {subjectIntent ? (
+        <Text style={styles.subjectIntent}>{subjectIntent}</Text>
+      ) : null}
+      {isParentViewer && parentAssignmentAttentionCount > 0 ? (
+        <View style={styles.parentAttentionBanner}>
+          <Text style={styles.parentAttentionText}>
+            *{' '}
+            {parentAssignmentAttentionCount === 1
+              ? 'One linked assignment needs a response'
+              : `${parentAssignmentAttentionCount} linked assignments need a response`}
+            . Open this subject for details, or use the review list on Home.
+          </Text>
+          {Platform.OS === 'web' ? (
+            <TouchableOpacity
+              onPress={openHomeReviewList}
+              activeOpacity={0.7}
+              style={styles.parentAttentionLinkWrap}
+              accessibilityRole="button"
+              accessibilityLabel="Go to Home review list"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <TouchableOpacity
-                ref={menuBtnRef}
-                style={[styles.cardMenuBtn, menuOpen && styles.cardMenuBtnActive]}
-                onPress={(e) => {
-                  e?.stopPropagation?.();
-                  setMenuOpen((open) => !open);
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={`${subject.name} actions`}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <MoreVertical size={16} color="#94A3B8" />
-              </TouchableOpacity>
-              <Dropdown
-                visible={menuOpen}
-                triggerRef={menuBtnRef}
-                onClose={() => setMenuOpen(false)}
-                placement="bottom-end"
-                width={220}
-                variant="context"
-              >
-                <DropdownItem
-                  icon={Eye}
-                  label="View details"
-                  onPress={() => runMenuAction(() => handleViewDetails())}
-                />
-                {onEditSubject ? (
-                  <DropdownItem
-                    icon={Edit2}
-                    label="Edit subject"
-                    onPress={() => runMenuAction(() => handleEditSubject())}
-                  />
-                ) : null}
-              </Dropdown>
-            </View>
-          </View>
-          {(yearTermLine || assignedChildrenMeta.length > 0 || studentsMetaLine) ? (
-            <View style={styles.subjectMetaRow}>
-              {yearTermLine ? <Text style={styles.subjectMetaLine}>{yearTermLine}</Text> : null}
-              {assignedChildrenMeta.length > 0 ? (
-                <View style={styles.subjectAssigneeGroup}>
-                  {yearTermLine ? <Text style={styles.subjectMetaSeparator}> · </Text> : null}
-                  <View style={styles.subjectAssigneeInline}>
-                    <ChildAvatarCluster
-                      childIds={assignedChildrenMeta.map((child) => child.id)}
-                      familyChildren={children}
-                      size={30}
-                      overlap={-9}
-                    />
-                    <Text style={styles.subjectStudentInlineName}>
-                      {assignedChildrenMeta.map((child) => child.name).join(', ')}
-                    </Text>
-                  </View>
-                </View>
-              ) : studentsMetaLine ? (
-                <View style={styles.subjectAssigneeGroup}>
-                  {yearTermLine ? <Text style={styles.subjectMetaSeparator}> · </Text> : null}
-                  <Text style={styles.subjectStudentInlineName}>{studentsMetaLine}</Text>
-                </View>
-              ) : null}
-            </View>
-          ) : null}
-          {subjectIntent && (
-            <Text style={styles.subjectIntent}>{subjectIntent}</Text>
-          )}
-          {isParentViewer && parentAssignmentAttentionCount > 0 ? (
-            <View style={styles.parentAttentionBanner}>
-              <Text style={styles.parentAttentionText}>
-                *{' '}
-                {parentAssignmentAttentionCount === 1
-                  ? 'One linked assignment needs a response'
-                  : `${parentAssignmentAttentionCount} linked assignments need a response`}
-                . Open this subject for details, or use the review list on Home.
-              </Text>
-              {Platform.OS === 'web' ? (
-                <TouchableOpacity
-                  onPress={openHomeReviewList}
-                  activeOpacity={0.7}
-                  style={styles.parentAttentionLinkWrap}
-                  accessibilityRole="button"
-                  accessibilityLabel="Go to Home review list"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={styles.parentAttentionLink}>Go to Home → review list</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
+              <Text style={styles.parentAttentionLink}>Go to Home → review list</Text>
+            </TouchableOpacity>
           ) : null}
         </View>
+      ) : null}
+
+      <View style={styles.whatsNextSection}>
+        {nextItem ? (
+          <TouchableOpacity
+            style={styles.decisionRow}
+            onPress={(e) => handleNavigateToPlanner(nextItem, e)}
+            accessibilityRole="button"
+            accessibilityLabel={`Next: ${nextItem.title}`}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Clock size={16} color={colors.accent || '#4F46E5'} />
+            <Text style={styles.decisionRowText} numberOfLines={2}>
+              Next: {nextItem.title} - {formatNextUpWhenLine(nextItem)}
+            </Text>
+            <ChevronRight size={16} color={colors.muted || '#6B7280'} />
+          </TouchableOpacity>
+        ) : overdueCount > 0 ? (
+          <TouchableOpacity
+            style={styles.decisionRow}
+            onPress={(e) => {
+              if (subject.overdueItems?.length > 0) {
+                handleNavigateToPlanner(subject.overdueItems[0], e);
+              }
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`${overdueCount} overdue items`}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <AlertTriangle size={16} color={colors.redBold || '#EF4444'} />
+            <Text style={styles.decisionRowText}>
+              {overdueCount} {overdueCount === 1 ? 'item' : 'items'} overdue
+            </Text>
+            <ChevronRight size={16} color={colors.muted || '#6B7280'} />
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.decisionRowEmpty}>
+            <Clock size={16} color={colors.muted || '#6B7280'} />
+            <Text style={styles.decisionRowEmptyTitle}>Nothing coming up</Text>
+          </View>
+        )}
       </View>
 
-      {/* Action bar - stop propagation on web so card's onPress doesn't swallow button clicks */}
+      {isParentViewer ? (
       <View
         style={styles.actionBar}
         {...(Platform.OS === 'web' && {
@@ -507,22 +543,23 @@ export default function SubjectOverviewCard({
         <TouchableOpacity
           style={[
             styles.addEventButton,
-            addEventHovered && styles.addEventButtonHovered,
+            addAssignmentHovered && styles.addEventButtonHovered,
           ]}
-          onPress={handleAddEventForCard}
-          onMouseEnter={() => Platform.OS === 'web' && setAddEventHovered(true)}
-          onMouseLeave={() => Platform.OS === 'web' && setAddEventHovered(false)}
+          onPress={handleAddAssignmentForCard}
+          onMouseEnter={() => Platform.OS === 'web' && setAddAssignmentHovered(true)}
+          onMouseLeave={() => Platform.OS === 'web' && setAddAssignmentHovered(false)}
           accessibilityRole="button"
-          accessibilityLabel="Add event"
+          accessibilityLabel="Add assignment"
           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >
           <Plus size={16} color="#6B7280" />
           <Text style={[
             styles.addEventButtonText,
-            addEventHovered && styles.addEventButtonTextHovered,
-          ]}>Add event</Text>
+            addAssignmentHovered && styles.addEventButtonTextHovered,
+          ]}>Add assignment</Text>
         </TouchableOpacity>
       </View>
+      ) : null}
       {searchPreviewContent}
     </TouchableOpacity>
   );
@@ -751,6 +788,49 @@ const styles = StyleSheet.create({
     color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  whatsNextSection: {
+    marginBottom: 16,
+  },
+  decisionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'background-color 0.2s ease',
+    }),
+  },
+  decisionRowText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  decisionRowEmpty: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+  },
+  decisionRowEmptyTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   actionBar: {

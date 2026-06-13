@@ -26,6 +26,7 @@ import {
 } from '../../lib/workEventHelpers';
 import { createFileMaterial } from '../../lib/services/materialsClient';
 import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
+import AssignmentCommentsPanel from './AssignmentCommentsPanel';
 
 function resolveLinkedEventId(assignment) {
   const raw = assignment?.linked_event_ids;
@@ -416,7 +417,7 @@ export default function WorkReviewModal({
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Comments</Text>
+              <Text style={styles.sectionLabel}>Review feedback</Text>
               <TextInput
                 style={styles.feedbackInput}
                 value={feedback}
@@ -426,6 +427,15 @@ export default function WorkReviewModal({
                 multiline
                 numberOfLines={5}
                 textAlignVertical="top"
+              />
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Assignment comments</Text>
+              <AssignmentCommentsPanel
+                assignmentId={assignment?.id}
+                assignment={assignment}
+                isParentViewer
               />
             </View>
           </ScrollView>

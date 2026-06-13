@@ -26,9 +26,10 @@ import EditTutorModal from '../EditTutorModal';
 import AddChildModal from '../AddChildModal';
 import InviteChildModal from '../InviteChildModal';
 import AddSubjectModal from '../AddSubjectModal';
+import EditSubjectSettingsModal from '../subjects/EditSubjectSettingsModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import CalendarEventCreateModal from '../create/CalendarEventCreateModal';
-import ParsePlainTextModal from '../ParsePlainTextModal';
+import { dispatchOpenSubjectUnitsEditor } from '../../lib/subjectUnitsEditor';
 import IDCardView from '../profile/IDCardView';
 import PlannerSettingsContent from './PlannerSettingsContent';
 import FamilyApproachSelector from './FamilyApproachSelector';
@@ -453,7 +454,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showGoogleDriveImportModal, setShowGoogleDriveImportModal] = useState(false);
-  const [showGoogleCurriculumModal, setShowGoogleCurriculumModal] = useState(false);
   const [showCourseScheduleModal, setShowCourseScheduleModal] = useState(false);
   const [courseScheduleDeletingAllEvents, setCourseScheduleDeletingAllEvents] = useState(false);
   const [courseScheduleMarkingEventId, setCourseScheduleMarkingEventId] = useState(null);
@@ -461,9 +461,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     subjectName: '',
     events: [],
   });
-  const [googleCurriculumMaterialId, setGoogleCurriculumMaterialId] = useState(null);
-  const [googleCurriculumSourceTitle, setGoogleCurriculumSourceTitle] = useState('');
-  const [googleCurriculumSubjectId, setGoogleCurriculumSubjectId] = useState(null);
   const [expandedFAQSection, setExpandedFAQSection] = useState(null);
   const [expandedFAQQuestion, setExpandedFAQQuestion] = useState(null);
   
@@ -1426,7 +1423,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       return;
     }
     setEditingSubjectInModal(subject);
-    setShowAddSubjectModal(true);
   };
 
   const handleSaveSubject = async () => {
@@ -2552,12 +2548,21 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   };
 
   const handleGoogleDriveImportedForCurriculum = useCallback(({ materialId, title, subjectId }) => {
-    setGoogleCurriculumMaterialId(materialId || null);
-    setGoogleCurriculumSourceTitle(title || '');
-    setGoogleCurriculumSubjectId(subjectId || null);
-    setShowGoogleCurriculumModal(true);
+    if (!subjectId) {
+      toast.push('Pick a subject before building curriculum from this file.', 'error');
+      return;
+    }
+    const subject = subjects.find((s) => String(s.id) === String(subjectId));
     setShowGoogleDriveImportModal(false);
-  }, []);
+    dispatchOpenSubjectUnitsEditor({
+      subjectId,
+      subjectName: subject?.name || subject?.title || title || 'Subject',
+      method: 'upload',
+      initialMaterialId: materialId || null,
+      autoContinueOnOpen: !!materialId,
+      childIds: children.map((child) => child.id).filter(Boolean),
+    });
+  }, [subjects, children, toast]);
 
   const formatCourseScheduleDateTime = useCallback((value) => {
     if (!value) return 'Date unavailable';
@@ -6034,20 +6039,32 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       </Modal>
 
       <AddSubjectModal 
-        visible={showAddSubjectModal} 
+        visible={showAddSubjectModal && !editingSubjectInModal} 
         onClose={() => {
           setShowAddSubjectModal(false);
-          setEditingSubjectInModal(null);
         }} 
         familyId={family?.id || familyId}
-        subject={editingSubjectInModal}
         initialSchoolYear={selectedCoursesSchoolYear}
         children={family?.children || []}
         onSubjectAdded={() => {
           loadSubjects();
-          setEditingSubjectInModal(null);
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('subjectCreated'));
+            window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          }
+        }}
+      />
+      <EditSubjectSettingsModal
+        visible={!!editingSubjectInModal}
+        onClose={() => setEditingSubjectInModal(null)}
+        familyId={family?.id || familyId}
+        subject={editingSubjectInModal}
+        children={family?.children || []}
+        initialGradingSettings={editingSubjectInModal?.grading_settings}
+        onSaved={() => {
+          loadSubjects();
+          setEditingSubjectInModal(null);
+          if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('refreshSubjects'));
           }
         }}
@@ -6078,32 +6095,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           loadConnectionStatus(false);
         }}
         onImportedForCurriculum={handleGoogleDriveImportedForCurriculum}
-      />
-      <ParsePlainTextModal
-        visible={showGoogleCurriculumModal}
-        onClose={() => {
-          setShowGoogleCurriculumModal(false);
-          setGoogleCurriculumMaterialId(null);
-          setGoogleCurriculumSourceTitle('');
-          setGoogleCurriculumSubjectId(null);
-        }}
-        subjectId={googleCurriculumSubjectId || null}
-        subjectName={
-          subjects.find((subject) => String(subject.id) === String(googleCurriculumSubjectId))?.name ||
-          subjects.find((subject) => String(subject.id) === String(googleCurriculumSubjectId))?.title ||
-          'Subject'
-        }
-        familyId={family?.id || familyId}
-        childIds={children.map((child) => child.id)}
-        initialMaterialId={googleCurriculumMaterialId}
-        initialSourceTitle={googleCurriculumSourceTitle}
-        autoStartOnOpen
-        onSaved={() => {
-          setShowGoogleCurriculumModal(false);
-          setGoogleCurriculumMaterialId(null);
-          setGoogleCurriculumSourceTitle('');
-          setGoogleCurriculumSubjectId(null);
-        }}
       />
 
       <InviteChildModal

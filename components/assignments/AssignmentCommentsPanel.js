@@ -1,0 +1,252 @@
+/**
+ * Assignment-specific comment thread (Instructions | My Work | Comments → Comments tab).
+ */
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Platform,
+  ActivityIndicator,
+  ScrollView,
+} from 'react-native';
+import { Send } from 'lucide-react';
+import { colors } from '../../theme/colors';
+import {
+  appendAssignmentComment,
+  fetchAssignmentComments,
+  markAssignmentCommentsRead,
+} from '../../lib/services/assignmentCommentsClient';
+import { parseAssignmentCommentLog } from '../../lib/assignmentLifecycle';
+
+function formatWhen(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+export default function AssignmentCommentsPanel({
+  assignmentId,
+  assignment = null,
+  isParentViewer = false,
+  readOnly = false,
+  onCommentSent,
+}) {
+  const [messages, setMessages] = useState([]);
+  const [draft, setDraft] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState(null);
+
+  const loadComments = useCallback(async () => {
+    if (!assignmentId) {
+      setMessages(parseAssignmentCommentLog(assignment?.comment_log));
+      return;
+    }
+    setLoading(true);
+    try {
+      const { data, error: fetchErr } = await fetchAssignmentComments(assignmentId);
+      if (fetchErr) throw fetchErr;
+      setMessages(data || []);
+      await markAssignmentCommentsRead(assignmentId);
+    } catch (e) {
+      setMessages(parseAssignmentCommentLog(assignment?.comment_log));
+    } finally {
+      setLoading(false);
+    }
+  }, [assignmentId, assignment?.comment_log]);
+
+  useEffect(() => {
+    loadComments();
+  }, [loadComments]);
+
+  const handleSend = async () => {
+    const body = draft.trim();
+    if (!body || !assignmentId || sending || readOnly) return;
+    setSending(true);
+    setError(null);
+    try {
+      const { error: sendErr } = await appendAssignmentComment(assignmentId, body);
+      if (sendErr) throw sendErr;
+      setDraft('');
+      await loadComments();
+      onCommentSent?.();
+    } catch (e) {
+      setError(e?.message || 'Could not send comment.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (!assignmentId && !assignment?.comment_log?.length) {
+    return (
+      <View style={styles.emptyWrap}>
+        <Text style={styles.emptyText}>
+          Comments appear here once this assignment is saved.
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.wrap}>
+      <Text style={styles.hint}>
+        Ask a question about this assignment. This thread is separate from direct messages.
+      </Text>
+
+      {loading ? (
+        <ActivityIndicator size="small" color={colors.primary || '#887DEE'} style={styles.loader} />
+      ) : (
+        <ScrollView style={styles.thread} nestedScrollEnabled>
+          {messages.length === 0 ? (
+            <Text style={styles.emptyText}>No comments yet. Ask a question to get started.</Text>
+          ) : (
+            messages.map((msg) => {
+              const isMine =
+                (isParentViewer && msg.senderRole === 'parent')
+                || (!isParentViewer && msg.senderRole === 'child');
+              return (
+                <View
+                  key={msg.id}
+                  style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}
+                >
+                  <Text style={styles.bubbleRole}>
+                    {msg.senderRole === 'parent' ? 'Parent' : 'Student'}
+                    {msg.createdAt ? ` · ${formatWhen(msg.createdAt)}` : ''}
+                  </Text>
+                  <Text style={styles.bubbleBody}>{msg.body}</Text>
+                </View>
+              );
+            })
+          )}
+        </ScrollView>
+      )}
+
+      {!readOnly && assignmentId ? (
+        <View style={styles.composer}>
+          <TextInput
+            style={styles.input}
+            value={draft}
+            onChangeText={setDraft}
+            placeholder={isParentViewer ? 'Reply to student…' : 'Ask a question…'}
+            placeholderTextColor={colors.muted || '#94A3B8'}
+            multiline
+            textAlignVertical="top"
+          />
+          <TouchableOpacity
+            style={[styles.sendBtn, (!draft.trim() || sending) && styles.sendBtnDisabled]}
+            onPress={handleSend}
+            disabled={!draft.trim() || sending}
+            {...(Platform.OS === 'web' && { cursor: !draft.trim() || sending ? 'not-allowed' : 'pointer' })}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color="#5B6880" />
+            ) : (
+              <Send size={16} color="#5B6880" />
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {error ? <Text style={styles.err}>{error}</Text> : null}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: {
+    gap: 10,
+    minHeight: 200,
+  },
+  hint: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#64748B',
+  },
+  loader: {
+    marginVertical: 16,
+  },
+  thread: {
+    maxHeight: 280,
+  },
+  emptyWrap: {
+    paddingVertical: 12,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: '#94A3B8',
+    lineHeight: 20,
+  },
+  bubble: {
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 8,
+    maxWidth: '92%',
+  },
+  bubbleMine: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  bubbleTheirs: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  bubbleRole: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  bubbleBody: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#1E293B',
+  },
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    paddingTop: 10,
+  },
+  input: {
+    flex: 1,
+    minHeight: 44,
+    maxHeight: 120,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#0F172A',
+    backgroundColor: '#FFFFFF',
+  },
+  sendBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#D6DCE8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  sendBtnDisabled: {
+    opacity: 0.5,
+  },
+  err: {
+    fontSize: 13,
+    color: '#DC2626',
+  },
+});

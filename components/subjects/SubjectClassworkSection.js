@@ -1,0 +1,707 @@
+import React, { useMemo, useState, useCallback } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Platform,
+  Modal,
+  ScrollView,
+} from 'react-native';
+import {
+  FileText,
+  List,
+  MoreVertical,
+  Plus,
+  X,
+} from 'lucide-react';
+import {
+  buildSubjectClassworkModel,
+  buildUnitPeerItems,
+  buildNoUnitPeerItems,
+} from '../../lib/subjectClassworkModel';
+import { getWorkStatusLabel } from '../../lib/workEventHelpers';
+import { formatDueShort } from '../tutor/tutorHelpUtils';
+import { updateAssignmentPlacement } from '../../lib/services/assignmentPlacementClient';
+import { useToast } from '../Toast';
+import AssignPlacementModal from './AssignPlacementModal';
+import ScheduleLessonModal from './ScheduleLessonModal';
+import {
+  CLASSWORK_ACCENT,
+  CLASSWORK_FG,
+  CLASSWORK_MUTED,
+  CLASSWORK_BORDER,
+  CLASSWORK_BG,
+} from '../../lib/classworkPanelTheme';
+
+function MenuPanel({ items = [], onClose }) {
+  if (!items.length) return null;
+  return (
+    <View style={styles.inlineMenu}>
+      {items.map((item) => (
+        <TouchableOpacity
+          key={item.key}
+          onPress={() => {
+            onClose();
+            item.onPress?.();
+          }}
+          style={styles.menuItem}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Text style={[styles.menuItemText, item.destructive && styles.menuItemDestructive]}>
+            {item.label}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
+function SectionHeader({ title }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionHeaderText}>{title}</Text>
+      <View style={styles.sectionHeaderRule} />
+    </View>
+  );
+}
+
+function LessonPeerRow({
+  lesson,
+  unit,
+  isParentViewer,
+  onSchedule,
+  onAttach,
+  hasUnattachedAssignments,
+  menuState,
+  setMenuState,
+  closeMenu,
+}) {
+  const menuKey = `lesson-${unit.unitId}-${lesson.lessonId}`;
+  const menuOpen = menuState?.key === menuKey;
+  const menuItems = [];
+  if (isParentViewer && lesson.lessonId) {
+    menuItems.push({
+      key: 'schedule',
+      label: lesson.schedule ? 'Change schedule' : 'Schedule lesson',
+      onPress: () => onSchedule({ ...lesson, unitTitle: unit.title, unitId: unit.unitId }),
+    });
+    if (hasUnattachedAssignments) {
+      menuItems.push({
+        key: 'attach',
+        label: 'Attach assignment',
+        onPress: () => onAttach({
+          lessonId: lesson.lessonId,
+          lessonTitle: lesson.title,
+          unitId: unit.unitId,
+          unitTitle: unit.title,
+          label: lesson.title,
+        }),
+      });
+    }
+  }
+
+  return (
+    <View style={[styles.peerRow, menuOpen && Platform.OS === 'web' && styles.peerRowMenuOpen]}>
+      <View style={styles.lessonDot} />
+      <View style={styles.peerBody}>
+        <Text style={styles.peerTitle}>{lesson.title || 'Lesson'}</Text>
+        <View style={styles.peerMetaRow}>
+          {lesson.schedule?.dateLabel ? (
+            <Text style={styles.peerMetaScheduled}>
+              Scheduled → {lesson.schedule.dateLabel}
+            </Text>
+          ) : (
+            <>
+              <Text style={styles.peerMetaMuted}>Not scheduled</Text>
+              {isParentViewer && lesson.lessonId ? (
+                <TouchableOpacity
+                  onPress={() => onSchedule({ ...lesson, unitTitle: unit.title, unitId: unit.unitId })}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.peerAction}>Schedule</Text>
+                </TouchableOpacity>
+              ) : null}
+            </>
+          )}
+        </View>
+      </View>
+      {isParentViewer && menuItems.length > 0 ? (
+        <View style={styles.menuAnchor}>
+          <TouchableOpacity
+            onPress={() => setMenuState(menuOpen ? null : { key: menuKey, items: menuItems })}
+            style={styles.iconBtn}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <MoreVertical size={16} color={CLASSWORK_MUTED} />
+          </TouchableOpacity>
+          {menuOpen ? <MenuPanel items={menuItems} onClose={closeMenu} /> : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function AssignmentPeerRow({
+  assignment,
+  attachedLessonTitle,
+  isParentViewer,
+  onPress,
+  onMenu,
+}) {
+  const status = getWorkStatusLabel(assignment);
+  const dueLine = formatDueShort(assignment.due_date);
+  const attachmentLine = attachedLessonTitle
+    ? `Attached to ${attachedLessonTitle}`
+    : 'No lesson';
+
+  return (
+    <TouchableOpacity
+      style={styles.peerRow}
+      onPress={() => onPress?.(assignment)}
+      activeOpacity={0.75}
+      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+    >
+      <FileText size={16} color="#64748B" style={styles.peerIconDoc} />
+      <View style={styles.peerBody}>
+        <Text style={styles.peerTitle}>{assignment.title || 'Assignment'}</Text>
+        <View style={styles.peerMetaStack}>
+          {dueLine ? <Text style={styles.peerMetaLine}>Due {dueLine}</Text> : null}
+          <Text style={styles.peerMetaLine}>{attachmentLine}</Text>
+          {status ? <Text style={styles.peerStatus}>{status}</Text> : null}
+        </View>
+      </View>
+      {isParentViewer ? (
+        <TouchableOpacity
+          onPress={(e) => {
+            if (Platform.OS === 'web' && e?.stopPropagation) e.stopPropagation();
+            onMenu?.(assignment);
+          }}
+          hitSlop={8}
+          style={styles.iconBtn}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <MoreVertical size={16} color={CLASSWORK_MUTED} />
+        </TouchableOpacity>
+      ) : null}
+    </TouchableOpacity>
+  );
+}
+
+function AttachAssignmentModal({
+  visible,
+  onClose,
+  lessonLabel,
+  assignments = [],
+  onSelect,
+}) {
+  if (!visible) return null;
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.attachOverlay}>
+        <View style={styles.attachCard}>
+          <View style={styles.attachHeader}>
+            <Text style={styles.attachTitle}>Attach to {lessonLabel}</Text>
+            <TouchableOpacity onPress={onClose} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <X size={20} color={CLASSWORK_MUTED} />
+            </TouchableOpacity>
+          </View>
+          {assignments.length === 0 ? (
+            <Text style={styles.attachEmpty}>No unassigned work. Create an assignment first.</Text>
+          ) : (
+            <ScrollView style={styles.attachList}>
+              {assignments.map((a) => (
+                <TouchableOpacity
+                  key={a.id}
+                  style={styles.attachOption}
+                  onPress={() => onSelect?.(a)}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.attachOptionText}>{a.title || 'Assignment'}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function EmptyClassworkState({ isParentViewer, onManageUnits, onCreateAssignment, unitsActionLabel }) {
+  return (
+    <View style={styles.emptyWrap}>
+      <Text style={styles.emptyHeading}>No classwork yet</Text>
+      <Text style={styles.emptySubtext}>
+        {isParentViewer
+          ? 'Add units and lessons, or create an assignment to get started.'
+          : 'Assignments and lessons will appear here.'}
+      </Text>
+
+      {isParentViewer ? (
+        <View style={styles.emptyActions}>
+          {onManageUnits ? (
+            <TouchableOpacity
+              style={styles.headerActionBtn}
+              onPress={onManageUnits}
+              accessibilityLabel={unitsActionLabel}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <List size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.headerActionBtnText}>{unitsActionLabel}</Text>
+            </TouchableOpacity>
+          ) : null}
+          {onCreateAssignment ? (
+            <TouchableOpacity
+              style={styles.headerActionBtn}
+              onPress={onCreateAssignment}
+              accessibilityLabel="Add assignment"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.headerActionBtnText}>Add assignment</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+export default function SubjectClassworkSection({
+  units = [],
+  assignments = [],
+  events = [],
+  familyId,
+  subjectId,
+  subjectName,
+  isParentViewer = true,
+  onOpenAssignment,
+  onCreateAssignment,
+  onManageUnits,
+  unitsActionLabel = 'Add units',
+  onPlacementChanged,
+}) {
+  const toast = useToast();
+  const model = useMemo(
+    () => buildSubjectClassworkModel({ units, assignments, events }),
+    [units, assignments, events],
+  );
+  const [placementAssignment, setPlacementAssignment] = useState(null);
+  const [scheduleLesson, setScheduleLesson] = useState(null);
+  const [attachTarget, setAttachTarget] = useState(null);
+  const [menuState, setMenuState] = useState(null);
+
+  const closeMenu = useCallback(() => setMenuState(null), []);
+
+  const handleAttachAssignment = async (assignment) => {
+    if (!attachTarget?.lessonId || !assignment?.id) return;
+    try {
+      await updateAssignmentPlacement({
+        assignmentId: assignment.id,
+        familyId,
+        unitId: attachTarget.unitId,
+        lessonId: attachTarget.lessonId,
+        lessonTitle: attachTarget.lessonTitle,
+        unitTitle: attachTarget.unitTitle,
+        linkedEventIds: assignment.linked_event_ids,
+      });
+      toast.push('Assignment attached', 'success');
+      setAttachTarget(null);
+      onPlacementChanged?.();
+    } catch (err) {
+      toast.push(err?.message || 'Could not attach assignment', 'error');
+    }
+  };
+
+  const noUnitItems = useMemo(
+    () => buildNoUnitPeerItems(model.noUnitAssignments),
+    [model.noUnitAssignments],
+  );
+
+  const hasContent = model.units.length > 0 || model.noUnitAssignments.length > 0;
+
+  if (!hasContent) {
+    return (
+      <EmptyClassworkState
+        isParentViewer={isParentViewer}
+        onManageUnits={onManageUnits}
+        onCreateAssignment={onCreateAssignment}
+        unitsActionLabel={unitsActionLabel}
+      />
+    );
+  }
+
+  return (
+    <View style={styles.wrap}>
+      {noUnitItems.length > 0 ? (
+        <View style={styles.sectionBlock}>
+          <SectionHeader title="NO UNIT" />
+          <View style={styles.peerList}>
+            {noUnitItems.map((item) => (
+              <AssignmentPeerRow
+                key={item.assignment.id}
+                assignment={item.assignment}
+                attachedLessonTitle={null}
+                isParentViewer={isParentViewer}
+                onPress={onOpenAssignment}
+                onMenu={setPlacementAssignment}
+              />
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {model.units.map((unit, unitIndex) => {
+        const peerItems = buildUnitPeerItems(unit);
+        if (peerItems.length === 0) return null;
+        const headerTitle = `UNIT ${unitIndex + 1} — ${unit.title}`.toUpperCase();
+        return (
+          <View key={unit.unitId} style={styles.sectionBlock}>
+            <SectionHeader title={headerTitle} />
+            <View style={styles.peerList}>
+              {peerItems.map((item) => {
+                if (item.kind === 'lesson') {
+                  return (
+                    <LessonPeerRow
+                      key={`lesson-${item.lesson.lessonId || item.lesson.title}`}
+                      lesson={item.lesson}
+                      unit={unit}
+                      isParentViewer={isParentViewer}
+                      onSchedule={setScheduleLesson}
+                      onAttach={setAttachTarget}
+                      hasUnattachedAssignments={model.noUnitAssignments.length > 0}
+                      menuState={menuState}
+                      setMenuState={setMenuState}
+                      closeMenu={closeMenu}
+                    />
+                  );
+                }
+                return (
+                  <AssignmentPeerRow
+                    key={item.assignment.id}
+                    assignment={item.assignment}
+                    attachedLessonTitle={item.attachedLessonTitle}
+                    isParentViewer={isParentViewer}
+                    onPress={onOpenAssignment}
+                    onMenu={setPlacementAssignment}
+                  />
+                );
+              })}
+            </View>
+          </View>
+        );
+      })}
+
+      {isParentViewer ? (
+        <View style={styles.footerActions}>
+          {onManageUnits ? (
+            <TouchableOpacity
+              style={styles.footerBtn}
+              onPress={onManageUnits}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={14} color={CLASSWORK_ACCENT} />
+              <Text style={styles.footerBtnText}>Add unit</Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity
+            style={styles.footerBtn}
+            onPress={onCreateAssignment}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Plus size={14} color={CLASSWORK_ACCENT} />
+            <Text style={styles.footerBtnText}>Add assignment</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      <AssignPlacementModal
+        visible={!!placementAssignment}
+        onClose={() => setPlacementAssignment(null)}
+        assignment={placementAssignment}
+        units={units}
+        familyId={familyId}
+        onSaved={() => {
+          setPlacementAssignment(null);
+          onPlacementChanged?.();
+        }}
+      />
+
+      <ScheduleLessonModal
+        visible={!!scheduleLesson}
+        onClose={() => setScheduleLesson(null)}
+        lesson={scheduleLesson}
+        unitTitle={scheduleLesson?.unitTitle}
+        familyId={familyId}
+        subjectId={subjectId}
+        subjectName={subjectName}
+        events={events}
+        onScheduled={() => {
+          setScheduleLesson(null);
+          onPlacementChanged?.();
+        }}
+      />
+
+      <AttachAssignmentModal
+        visible={!!attachTarget}
+        onClose={() => setAttachTarget(null)}
+        lessonLabel={attachTarget?.label || 'lesson'}
+        assignments={model.noUnitAssignments}
+        onSelect={handleAttachAssignment}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: {
+    paddingHorizontal: 14,
+    paddingBottom: 28,
+    gap: 28,
+  },
+  sectionBlock: {
+    gap: 10,
+  },
+  sectionHeader: {
+    gap: 8,
+  },
+  sectionHeaderText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  sectionHeaderRule: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+  },
+  peerList: {
+    gap: 14,
+    paddingTop: 4,
+  },
+  peerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 2,
+  },
+  peerRowMenuOpen: {
+    zIndex: 60,
+  },
+  peerIconDoc: {
+    marginTop: 2,
+    flexShrink: 0,
+  },
+  lessonDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: '#94A3B8',
+    marginTop: 5,
+    flexShrink: 0,
+  },
+  peerBody: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  peerTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: CLASSWORK_FG,
+    lineHeight: 21,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  peerMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  peerMetaStack: {
+    gap: 2,
+  },
+  peerMetaScheduled: {
+    fontSize: 13,
+    color: '#475569',
+  },
+  peerMetaMuted: {
+    fontSize: 13,
+    color: CLASSWORK_MUTED,
+  },
+  peerMetaLine: {
+    fontSize: 13,
+    color: '#64748B',
+  },
+  peerAction: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#2563EB',
+  },
+  peerStatus: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6366F1',
+    marginTop: 2,
+  },
+  iconBtn: {
+    padding: 4,
+    flexShrink: 0,
+  },
+  menuAnchor: {
+    position: 'relative',
+    zIndex: 10,
+  },
+  inlineMenu: {
+    position: 'absolute',
+    right: 0,
+    top: '100%',
+    marginTop: 4,
+    minWidth: 200,
+    backgroundColor: CLASSWORK_BG,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: CLASSWORK_BORDER,
+    paddingVertical: 4,
+    zIndex: 100,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(15,23,42,0.16)' } : {}),
+  },
+  menuItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  menuItemText: {
+    fontSize: 14,
+    color: CLASSWORK_FG,
+  },
+  menuItemDestructive: {
+    color: '#ef4444',
+  },
+  footerActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 20,
+    paddingTop: 4,
+  },
+  footerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  footerBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: CLASSWORK_ACCENT,
+  },
+  emptyWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 48,
+    gap: 10,
+    minHeight: 280,
+  },
+  emptyHeading: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: CLASSWORK_FG,
+    letterSpacing: -0.2,
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptySubtext: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: CLASSWORK_MUTED,
+    maxWidth: 360,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  emptyActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 10,
+    marginTop: 8,
+  },
+  headerActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 9999,
+    borderWidth: 1,
+    borderColor: '#E6EBF2',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  headerActionBtnText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: 'rgba(15,23,42,0.85)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attachOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  attachCard: {
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: '60%',
+    backgroundColor: CLASSWORK_BG,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  attachHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: CLASSWORK_BORDER,
+  },
+  attachTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: CLASSWORK_FG,
+    flex: 1,
+    paddingRight: 12,
+  },
+  attachEmpty: {
+    fontSize: 14,
+    color: CLASSWORK_MUTED,
+    padding: 16,
+  },
+  attachList: {
+    padding: 8,
+  },
+  attachOption: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  attachOptionText: {
+    fontSize: 15,
+    color: '#334155',
+  },
+});

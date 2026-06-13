@@ -16,16 +16,15 @@ import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator
 import { Inbox, CheckCircle, XCircle, RotateCcw, HelpCircle, Clock, FileText, User } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
-import { reviewAssignment } from '../../lib/services/gradebookClient';
-import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
+import WorkReviewModal from '../assignments/WorkReviewModal';
 import RespondToHelpRequestModal from './RespondToHelpRequestModal';
-import AssignmentDetailModal from '../assignments/AssignmentDetailModal';
+import SubmitForReviewModal from '../child/SubmitForReviewModal';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 
 const SECTIONS = [
-  { id: 'submissions', label: 'Submissions', icon: FileText },
+  { id: 'submissions', label: 'To Review', icon: FileText },
   { id: 'help_requests', label: 'Help Requests', icon: HelpCircle },
-  { id: 'needs_revision', label: 'Needs Revision', icon: RotateCcw },
+  { id: 'needs_revision', label: 'Sent Back', icon: RotateCcw },
 ];
 
 export default function ReviewInboxScreen({ familyId, onNavigate }) {
@@ -83,6 +82,7 @@ export default function ReviewInboxScreen({ familyId, onNavigate }) {
         `)
         .eq('family_id', familyId)
         .in('status', ['submitted'])
+        .neq('status', 'draft')
         .or('review_status.is.null,review_status.eq.needs_revision')
         .order('updated_at', { ascending: false });
 
@@ -394,7 +394,7 @@ export default function ReviewInboxScreen({ familyId, onNavigate }) {
       </View>
 
       {selectedAssignment && openModal === 'submission' && (
-        <AssignmentReviewModal
+        <WorkReviewModal
           visible
           assignment={selectedAssignment}
           onClose={() => {
@@ -402,7 +402,6 @@ export default function ReviewInboxScreen({ familyId, onNavigate }) {
             setSelectedAssignment(null);
           }}
           onReviewed={handleReviewed}
-          submissionReview
         />
       )}
       {selectedAssignment && openModal === 'help' && (
@@ -417,21 +416,15 @@ export default function ReviewInboxScreen({ familyId, onNavigate }) {
         />
       )}
 
-      {/* Detail Modal */}
-      <AssignmentDetailModal
+      <SubmitForReviewModal
         visible={showDetailModal}
         assignment={selectedAssignment}
         childId={selectedAssignment?.child_id}
         familyId={familyId}
+        viewOnly
         onClose={() => {
           setShowDetailModal(false);
           setSelectedAssignment(null);
-        }}
-        onSubmit={null} // Parents don't submit
-        onToggleHelp={null} // Parents don't toggle help
-        onReview={() => {
-          setShowDetailModal(false);
-          setOpenModal(selectedAssignment?.need_help ? 'help' : 'submission');
         }}
       />
     </>

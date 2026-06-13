@@ -2,6 +2,8 @@ import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from
 import { View, Text, StyleSheet, Modal, ActivityIndicator, Platform } from 'react-native';
 import { colors } from '../../theme/colors';
 import EventDetails from './EventDetails';
+import CalendarEventEditModal from '../create/CalendarEventEditModal';
+import { isSimpleCalendarEvent } from '../../lib/create/calendarEventFormUtils';
 import { getEvent, getSyllabusById } from '../../lib/apiClient';
 
 export default function EventModal({
@@ -367,6 +369,23 @@ export default function EventModal({
   };
 
   if (!visible) return null;
+
+  const useCalendarEventEditor = event && isSimpleCalendarEvent(event) && !openConflictResolution;
+
+  if (useCalendarEventEditor) {
+    return (
+      <CalendarEventEditModal
+        visible={visible}
+        event={event}
+        onClose={onClose}
+        onUpdated={() => handleEventUpdated()}
+        familyId={familyId}
+        familyMembers={familyMembers}
+        readOnly={eventReadOnly}
+        loading={loading}
+      />
+    );
+  }
 
   return (
     <Modal

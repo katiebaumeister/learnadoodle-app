@@ -19,10 +19,9 @@ import { FileText, Clock, AlertCircle, CheckCircle } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { getAssignments } from '../../lib/services/assignmentsClient';
 import AssignmentCard from '../assignments/AssignmentCard';
-import AssignmentDetailModal from '../assignments/AssignmentDetailModal';
+import SubmitForReviewModal from './SubmitForReviewModal';
 import OneTapSubmitButton from './OneTapSubmitButton';
 import QuickSubmitModal from '../assignments/QuickSubmitModal';
-import { submitAssignment } from '../../lib/services/assignmentsClient';
 
 const FILTERS = [
   { id: 'all', label: 'All' },
@@ -121,14 +120,6 @@ export default function ChildAssignmentsScreen({ familyId, onNavigate }) {
   const handleAssignmentPress = (assignment) => {
     setSelectedAssignment(assignment);
     setShowDetailModal(true);
-  };
-
-  const handleSubmit = async (assignmentId, evidenceId) => {
-    const { error } = await submitAssignment(assignmentId, evidenceId);
-    if (!error) {
-      await loadAssignments();
-      setShowDetailModal(false);
-    }
   };
 
   const handleQuickSubmit = (assignment) => {
@@ -246,8 +237,8 @@ export default function ChildAssignmentsScreen({ familyId, onNavigate }) {
         )}
       </View>
 
-      {/* Assignment Detail Modal */}
-      <AssignmentDetailModal
+      {/* Assignment view — Instructions | My Work | Comments */}
+      <SubmitForReviewModal
         visible={showDetailModal}
         assignment={selectedAssignment}
         childId={childId}
@@ -255,9 +246,13 @@ export default function ChildAssignmentsScreen({ familyId, onNavigate }) {
         onClose={() => {
           setShowDetailModal(false);
           setSelectedAssignment(null);
+          loadAssignments();
         }}
-        onSubmit={handleSubmit}
-        onReview={null} // Children can't review
+        onSubmitted={() => {
+          loadAssignments();
+          setShowDetailModal(false);
+          setSelectedAssignment(null);
+        }}
       />
 
       {/* Quick Submit Modal */}

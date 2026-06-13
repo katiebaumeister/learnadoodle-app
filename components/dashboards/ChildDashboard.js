@@ -7,8 +7,7 @@ import { useToast } from '../Toast';
 import ContinueLearningStrip from '../content/ContinueLearningStrip';
 import { getAssignments } from '../../lib/services/assignmentsClient';
 import AssignmentCard from '../assignments/AssignmentCard';
-import AssignmentDetailModal from '../assignments/AssignmentDetailModal';
-import { submitAssignment, toggleNeedHelp } from '../../lib/services/assignmentsClient';
+import SubmitForReviewModal from '../child/SubmitForReviewModal';
 import SmartSuggestionsList from '../planner/SmartSuggestionsList';
 import SuggestionActionModal from '../planner/SuggestionActionModal';
 
@@ -190,25 +189,10 @@ export default function ChildDashboard({ childId, childName, familyId: propFamil
     setShowAssignmentModal(true);
   };
 
-  const handleAssignmentSubmit = async (assignmentId, evidenceId) => {
-    const { error } = await submitAssignment(assignmentId, evidenceId);
-    if (!error) {
-      await loadAssignmentsDueSoon();
-      setShowAssignmentModal(false);
-      toast.push('Assignment submitted!', 'success');
-    } else {
-      toast.push('Failed to submit assignment', 'error');
-    }
-  };
-
-  const handleToggleHelp = async (assignmentId) => {
-    const { error } = await toggleNeedHelp(assignmentId);
-    if (!error) {
-      await loadAssignmentsDueSoon();
-      if (selectedAssignment?.id === assignmentId) {
-        setSelectedAssignment({ ...selectedAssignment, need_help: !selectedAssignment.need_help });
-      }
-    }
+  const handleAssignmentModalClose = () => {
+    setShowAssignmentModal(false);
+    setSelectedAssignment(null);
+    loadAssignmentsDueSoon();
   };
 
   const getTypeIcon = (type) => {
@@ -690,18 +674,16 @@ export default function ChildDashboard({ childId, childName, familyId: propFamil
         </View>
       </Modal>
 
-      {/* Assignment Detail Modal */}
-      <AssignmentDetailModal
+      <SubmitForReviewModal
         visible={showAssignmentModal}
         assignment={selectedAssignment}
         childId={childId}
         familyId={familyId}
-        onClose={() => {
-          setShowAssignmentModal(false);
-          setSelectedAssignment(null);
+        onClose={handleAssignmentModalClose}
+        onSubmitted={() => {
+          toast.push('Assignment submitted!', 'success');
+          handleAssignmentModalClose();
         }}
-        onSubmit={handleAssignmentSubmit}
-        onToggleHelp={handleToggleHelp}
       />
 
       {/* Suggestion Action Modal */}

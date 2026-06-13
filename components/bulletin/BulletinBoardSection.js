@@ -13,11 +13,13 @@ import {
   ScrollView,
   ActivityIndicator,
   Image,
+  Modal as RNModal,
 } from 'react-native';
 import {
   ChevronDown,
   FileText,
   MoreVertical,
+  Plus,
   Paperclip,
   Send,
   Trash2,
@@ -26,7 +28,7 @@ import {
 import { useSession } from '../../contexts/SessionContext';
 import { getFamilyMembers } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
-import { buildFamilyDmParticipants } from '../../lib/familyDmClient';
+import { buildFamilyDmParticipants, findChildLinkedUserId } from '../../lib/familyDmClient';
 import {
   addBulletinComment,
   createBulletinPost,
@@ -36,17 +38,90 @@ import {
   fetchAuthorProfiles,
   fetchBulletinPosts,
   formatBulletinTimestamp,
+  formatStreamTimestamp,
   resolveMaterialUrl,
   uploadBulletinMaterial,
 } from '../../lib/services/bulletinClient';
-import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
+import { resolveBundledAvatarSource, LEARNADOODLE_ICON_ASSET } from '../../assets/imageAssetMap';
+import { sourceForChild } from '../ui/ChildAvatarCluster';
+import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import ConfirmDialog from '../ConfirmDialog';
-import Modal from '../home/Modal';
+import AppModalShell from '../ui/AppModalShell';
+import { ModalFooter } from '../ui/ModalFooter';
+import { createModalStyles as modalFieldStyles, ACCENT as MODAL_ACCENT } from '../create/shared/createModalStyles';
+import InstructionsEditor from '../create/shared/InstructionsEditor';
+import useAssignmentActivity from './useAssignmentActivity';
+import BulletinLearnadoodleBody from './BulletinLearnadoodleBody';
+import BulletinStreamCard from './BulletinStreamCard';
+import { mergeBulletinStreamItems } from '../../lib/bulletinStreamModel';
+import { openBulletinActivityItem } from '../../lib/bulletinFeedNavigation';
 
 const VISIBILITY_ALL = 'all';
 const VISIBILITY_SELF = 'self';
 const VISIBILITY_SELECTED = 'selected';
+const BULLETIN_AVATAR_RING_SIZE = 36;
+const BULLETIN_CONTENT_INDENT = BULLETIN_AVATAR_RING_SIZE + 10;
+const BULLETIN_PARENT_AVATAR_BG = '#F3E8FF';
+const STREAM_COMPOSER_BTN = 36;
+
+function findChildForUserId(userId, children = [], familyMembers = []) {
+  const uid = userId ? String(userId) : '';
+  if (!uid) return null;
+
+  for (const child of children) {
+    const linked = findChildLinkedUserId(child.id, familyMembers);
+    if (linked && String(linked) === uid) return child;
+  }
+
+  for (const member of familyMembers) {
+    const memberUid = member?.user_id ? String(member.user_id) : '';
+    if (memberUid !== uid) continue;
+    const role = String(member.member_role || member.role || '').toLowerCase();
+    if (role !== 'child' && role !== 'student') continue;
+    const childId = member.child_id ?? member.child_scope?.[0];
+    if (!childId) continue;
+    const child = children.find((c) => c != null && String(c.id) === String(childId));
+    if (child) return child;
+  }
+
+  return null;
+}
+
+function resolveBulletinAuthorAvatarBackground(isLearnadoodle, userId, children = [], familyMembers = []) {
+  if (isLearnadoodle) return BULLETIN_PARENT_AVATAR_BG;
+  const child = findChildForUserId(userId, children, familyMembers);
+  if (child) {
+    return getChildColorFromAvatar(child.avatar_key || child.avatar_url || child.avatar);
+  }
+  return BULLETIN_PARENT_AVATAR_BG;
+}
+
+function BulletinAuthorAvatar({ source, backgroundColor, isLearnadoodle = false }) {
+  const imageSize = 32;
+  return (
+    <View
+      style={[
+        styles.postAuthorAvatarRing,
+        { backgroundColor, width: BULLETIN_AVATAR_RING_SIZE, height: BULLETIN_AVATAR_RING_SIZE },
+      ]}
+    >
+      <Image
+        source={source}
+        style={[
+          styles.postAuthorAvatarImage,
+          {
+            width: imageSize,
+            height: imageSize,
+            ...(isLearnadoodle && { transform: [{ scale: 1.08 }] }),
+            ...(Platform.OS === 'web' && { objectFit: isLearnadoodle ? 'contain' : 'cover' }),
+          },
+        ]}
+        resizeMode={isLearnadoodle ? 'contain' : 'cover'}
+      />
+    </View>
+  );
+}
 
 function avatarSourceForUserId(userId) {
   const raw = String(userId || '');
@@ -65,12 +140,23 @@ function audienceLabel(post) {
   return count === 1 ? '1 member' : `${count} members`;
 }
 
+function BulletinPostBody({ body }) {
+  return (
+    <View style={styles.postBodyWrap}>
+      <BulletinLearnadoodleBody body={body} textStyle={styles.postBody} />
+    </View>
+  );
+}
+
 function BulletinPostCard({
   post,
   profileMap,
   subjectName,
   currentUserId,
   canDelete,
+  familyChildren = [],
+  familyMembers = [],
+  streamLayout = false,
   onDeletePost,
   onAddComment,
   onDeleteComment,
@@ -80,8 +166,21 @@ function BulletinPostCard({
   const [postingComment, setPostingComment] = useState(false);
   const menuBtnRef = useRef(null);
 
-  const authorName = displayNameForUser(profileMap, post.authorUserId);
-  const isMine = String(post.authorUserId) === String(currentUserId);
+  const isLearnadoodlePost = post.source === 'learnadoodle';
+  const authorName = isLearnadoodlePost ? 'Learnadoodle' : displayNameForUser(profileMap, post.authorUserId);
+  const isMine = !isLearnadoodlePost && String(post.authorUserId) === String(currentUserId);
+  const childAuthor = findChildForUserId(post.authorUserId, familyChildren, familyMembers);
+  const authorAvatar = isLearnadoodlePost
+    ? LEARNADOODLE_ICON_ASSET
+    : childAuthor
+      ? sourceForChild(childAuthor)
+      : avatarSourceForUserId(post.authorUserId);
+  const authorAvatarBackground = resolveBulletinAuthorAvatarBackground(
+    isLearnadoodlePost,
+    post.authorUserId,
+    familyChildren,
+    familyMembers
+  );
 
   const handlePostComment = async () => {
     const trimmed = commentText.trim();
@@ -102,23 +201,176 @@ function BulletinPostCard({
     }
   };
 
+  const postMenu = canDelete && !isLearnadoodlePost ? (
+    <View style={styles.postMenuWrap}>
+      <TouchableOpacity
+        ref={menuBtnRef}
+        style={[styles.postMenuBtn, menuOpen && styles.postMenuBtnActive]}
+        onPress={() => setMenuOpen((open) => !open)}
+        accessibilityLabel="Post options"
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <MoreVertical size={16} color="#94A3B8" />
+      </TouchableOpacity>
+      <Dropdown
+        visible={menuOpen}
+        triggerRef={menuBtnRef}
+        onClose={() => setMenuOpen(false)}
+        placement="bottom-end"
+        width={200}
+        variant="context"
+      >
+        <DropdownItem
+          icon={Trash2}
+          label="Delete"
+          danger
+          onPress={() => {
+            setMenuOpen(false);
+            onDeletePost?.(post);
+          }}
+        />
+      </Dropdown>
+    </View>
+  ) : null;
+
+  const attachmentList = post.materials?.length > 0 ? (
+    <View style={styles.attachmentList}>
+      {post.materials.map(({ material, materialId }) => (
+        <TouchableOpacity
+          key={materialId}
+          style={styles.attachmentChip}
+          onPress={() => openMaterial(material)}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <FileText size={14} color="#6366F1" />
+          <Text style={styles.attachmentChipText} numberOfLines={1}>
+            {material?.title || 'Attachment'}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  ) : null;
+
+  const commentsSection = !isLearnadoodlePost ? (
+    <View style={streamLayout ? styles.streamCommentsSection : styles.commentsSection}>
+      {(post.comments || []).map((comment) => {
+        const commentAuthor = displayNameForUser(profileMap, comment.authorUserId);
+        const canDeleteComment =
+          String(comment.authorUserId) === String(currentUserId)
+          || isMine
+          || canDelete;
+        return (
+          <View key={comment.id} style={streamLayout ? styles.streamCommentRow : styles.commentRow}>
+            <View style={styles.commentBodyWrap}>
+              <Text style={streamLayout ? styles.streamCommentAuthor : styles.commentAuthor}>
+                {commentAuthor}
+              </Text>
+              <Text style={streamLayout ? styles.streamCommentBody : styles.commentBody}>
+                {comment.body}
+              </Text>
+            </View>
+            {canDeleteComment ? (
+              <TouchableOpacity
+                style={styles.commentDeleteBtn}
+                onPress={() => onDeleteComment?.(post.id, comment.id)}
+                accessibilityLabel="Delete comment"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={14} color="#94A3B8" />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        );
+      })}
+      <View style={streamLayout ? styles.streamCommentComposer : styles.commentComposer}>
+        <TextInput
+          style={streamLayout ? styles.streamCommentInput : styles.commentInput}
+          placeholder="Reply..."
+          placeholderTextColor="#94A3B8"
+          value={commentText}
+          onChangeText={setCommentText}
+          multiline
+          {...(Platform.OS === 'web' && {
+            onKeyDown: (e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handlePostComment();
+              }
+            },
+          })}
+        />
+        <TouchableOpacity
+          style={[
+            streamLayout ? styles.streamCommentSendBtn : styles.commentSendBtn,
+            !commentText.trim() && (streamLayout ? styles.streamCommentSendBtnDisabled : styles.commentSendBtnDisabled),
+          ]}
+          onPress={handlePostComment}
+          disabled={!commentText.trim() || postingComment}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          {postingComment ? (
+            <ActivityIndicator size="small" color="#6366F1" />
+          ) : (
+            <Send size={16} color={commentText.trim() ? '#6366F1' : '#CBD5E1'} />
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  ) : null;
+
+  if (streamLayout) {
+    return (
+      <View style={styles.streamPostWrap}>
+        <Text style={styles.streamTimeDivider}>{formatStreamTimestamp(post.createdAt)}</Text>
+        <View style={styles.streamPostRow}>
+          <BulletinAuthorAvatar
+            source={authorAvatar}
+            backgroundColor={authorAvatarBackground}
+            isLearnadoodle={isLearnadoodlePost}
+          />
+          <View style={styles.streamPostContent}>
+            <View style={styles.streamPostHeaderRow}>
+              <Text style={styles.streamSenderLabel}>{authorName}</Text>
+              {postMenu}
+            </View>
+            {subjectName || post.body || post.materials?.length > 0 ? (
+              <View style={styles.streamBubble}>
+                {subjectName ? (
+                  <View style={styles.subjectBadge}>
+                    <Text style={styles.subjectBadgeText}>{subjectName}</Text>
+                  </View>
+                ) : null}
+                <BulletinPostBody body={post.body} />
+                {attachmentList}
+              </View>
+            ) : null}
+            {commentsSection}
+          </View>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.postCard}>
       <View style={styles.postHeader}>
         <View style={styles.postAuthorRow}>
-          <Image
-            source={avatarSourceForUserId(post.authorUserId)}
-            style={styles.postAuthorAvatar}
+          <BulletinAuthorAvatar
+            source={authorAvatar}
+            backgroundColor={authorAvatarBackground}
+            isLearnadoodle={isLearnadoodlePost}
           />
           <View style={styles.postAuthorText}>
-            <Text style={styles.postAuthorName}>{authorName}</Text>
+            <Text style={styles.postAuthorName}>
+              {authorName}
+            </Text>
             <Text style={styles.postMeta}>
               {formatBulletinTimestamp(post.createdAt)}
               {post.visibility !== VISIBILITY_ALL ? ` · ${audienceLabel(post)}` : ''}
             </Text>
           </View>
         </View>
-        {canDelete ? (
+        {canDelete && !isLearnadoodlePost ? (
           <View style={styles.postMenuWrap}>
             <TouchableOpacity
               ref={menuBtnRef}
@@ -151,89 +403,56 @@ function BulletinPostCard({
         ) : null}
       </View>
 
-      {subjectName ? (
-        <View style={styles.subjectBadge}>
-          <Text style={styles.subjectBadgeText}>{subjectName}</Text>
-        </View>
-      ) : null}
-
-      <Text style={styles.postBody}>{post.body}</Text>
-
-      {post.materials?.length > 0 ? (
-        <View style={styles.attachmentList}>
-          {post.materials.map(({ material, materialId }) => (
-            <TouchableOpacity
-              key={materialId}
-              style={styles.attachmentChip}
-              onPress={() => openMaterial(material)}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <FileText size={14} color="#6366F1" />
-              <Text style={styles.attachmentChipText} numberOfLines={1}>
-                {material?.title || 'Attachment'}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      ) : null}
-
-      <View style={styles.commentsSection}>
-        {(post.comments || []).map((comment) => {
-          const commentAuthor = displayNameForUser(profileMap, comment.authorUserId);
-          const canDeleteComment =
-            String(comment.authorUserId) === String(currentUserId)
-            || isMine
-            || canDelete;
-          return (
-            <View key={comment.id} style={styles.commentRow}>
-              <View style={styles.commentBodyWrap}>
-                <Text style={styles.commentAuthor}>{commentAuthor}</Text>
-                <Text style={styles.commentBody}>{comment.body}</Text>
-              </View>
-              {canDeleteComment ? (
-                <TouchableOpacity
-                  style={styles.commentDeleteBtn}
-                  onPress={() => onDeleteComment?.(post.id, comment.id)}
-                  accessibilityLabel="Delete comment"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <X size={14} color="#94A3B8" />
-                </TouchableOpacity>
-              ) : null}
+      {subjectName || post.body || post.materials?.length > 0 ? (
+        <View style={styles.postContentBox}>
+          {subjectName ? (
+            <View style={styles.subjectBadge}>
+              <Text style={styles.subjectBadgeText}>{subjectName}</Text>
             </View>
-          );
-        })}
-        <View style={styles.commentComposer}>
-          <TextInput
-            style={styles.commentInput}
-            placeholder="Add a comment..."
-            placeholderTextColor="#94A3B8"
-            value={commentText}
-            onChangeText={setCommentText}
-            multiline
-            {...(Platform.OS === 'web' && {
-              onKeyDown: (e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handlePostComment();
-                }
-              },
-            })}
-          />
-          <TouchableOpacity
-            style={[styles.commentSendBtn, !commentText.trim() && styles.commentSendBtnDisabled]}
-            onPress={handlePostComment}
-            disabled={!commentText.trim() || postingComment}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            {postingComment ? (
-              <ActivityIndicator size="small" color="#6366F1" />
-            ) : (
-              <Send size={16} color={commentText.trim() ? '#6366F1' : '#CBD5E1'} />
-            )}
-          </TouchableOpacity>
+          ) : null}
+          <BulletinPostBody body={post.body} />
+          {attachmentList}
         </View>
-      </View>
+      ) : null}
+
+      {commentsSection}
+    </View>
+  );
+}
+
+function StreamPostMenu({ post, onDelete }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuBtnRef = useRef(null);
+
+  return (
+    <View style={styles.postMenuWrap}>
+      <TouchableOpacity
+        ref={menuBtnRef}
+        style={[styles.postMenuBtn, menuOpen && styles.postMenuBtnActive]}
+        onPress={() => setMenuOpen((open) => !open)}
+        accessibilityLabel="Post options"
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <MoreVertical size={14} color="#94A3B8" />
+      </TouchableOpacity>
+      <Dropdown
+        visible={menuOpen}
+        triggerRef={menuBtnRef}
+        onClose={() => setMenuOpen(false)}
+        placement="bottom-end"
+        width={200}
+        variant="context"
+      >
+        <DropdownItem
+          icon={Trash2}
+          label="Delete"
+          danger
+          onPress={() => {
+            setMenuOpen(false);
+            onDelete?.(post);
+          }}
+        />
+      </Dropdown>
     </View>
   );
 }
@@ -247,8 +466,14 @@ export default function BulletinBoardSection({
   onComposerOpenChange,
   /** When set, only show posts tagged to this subject and default new notes to it. */
   filterSubjectId = null,
-  /** Taller feed for subject detail (full-width panel). */
-  expandedLayout = false,
+  /** Full-height stream with bottom composer (Home + Subject bulletin). */
+  expandedLayout = true,
+  /** Opens assignment detail when user taps assignment activity in the feed. */
+  onAssignmentActivityPress = null,
+  /** Navigate to subject detail from home feed subject chip. */
+  onSubjectPress = null,
+  /** Optional heading above the feed (e.g. Home "Bulletin Board"). */
+  feedTitle = null,
 }) {
   const session = useSession();
   const [loading, setLoading] = useState(true);
@@ -275,6 +500,7 @@ export default function BulletinBoardSection({
   const [pendingDeletePost, setPendingDeletePost] = useState(null);
   const [deletingPost, setDeletingPost] = useState(false);
   const subjectMenuRef = useRef(null);
+  const feedScrollRef = useRef(null);
 
   const subjectById = useMemo(() => {
     const map = new Map();
@@ -283,6 +509,13 @@ export default function BulletinBoardSection({
     });
     return map;
   }, [subjects]);
+
+  const emptyStateMessage = useMemo(() => {
+    if (filterSubjectId) {
+      return 'Post class updates here, or check back as students submit work and you review assignments.';
+    }
+    return 'Activity from all subjects will appear here — assignments posted, work submitted, questions asked, and feedback returned.';
+  }, [filterSubjectId]);
 
   const participants = useMemo(
     () => buildFamilyDmParticipants({
@@ -296,6 +529,9 @@ export default function BulletinBoardSection({
   );
 
   const canDeleteAny = session?.role_flags?.isParent === true;
+  const useModalComposer = true;
+  const showComposerAudienceFields = !filterSubjectId;
+  const canCreatePost = canDeleteAny;
 
   const loadPosts = useCallback(async () => {
     if (!familyId) return;
@@ -335,6 +571,20 @@ export default function BulletinBoardSection({
   }, [loadPosts]);
 
   useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const handler = (event) => {
+      const detail = event?.detail || {};
+      if (detail.familyId && String(detail.familyId) !== String(familyId)) return;
+      if (filterSubjectId && detail.subjectId && String(detail.subjectId) !== String(filterSubjectId)) {
+        return;
+      }
+      loadPosts();
+    };
+    window.addEventListener('refreshBulletinBoard', handler);
+    return () => window.removeEventListener('refreshBulletinBoard', handler);
+  }, [familyId, filterSubjectId, loadPosts]);
+
+  useEffect(() => {
     if (filterSubjectId) {
       setSubjectId(filterSubjectId);
     }
@@ -345,6 +595,44 @@ export default function BulletinBoardSection({
     const filterKey = String(filterSubjectId);
     return posts.filter((post) => String(post.subjectId || '') === filterKey);
   }, [posts, filterSubjectId]);
+
+  const streamPosts = visiblePosts;
+
+  const { items: activityItems, loading: activityLoading } = useAssignmentActivity(
+    familyId,
+    filterSubjectId || null,
+    50,
+    true
+  );
+
+  const mergedStreamItems = useMemo(
+    () => mergeBulletinStreamItems({
+      posts: streamPosts,
+      activityItems,
+      subjectById,
+      profileMap,
+      displayNameForUser,
+      filterSubjectId,
+    }),
+    [streamPosts, activityItems, subjectById, profileMap, filterSubjectId]
+  );
+
+  const handleStreamCardPress = useCallback((entry) => {
+    if (entry.kind !== 'activity' || !entry.payload) return;
+    if (onAssignmentActivityPress) {
+      onAssignmentActivityPress(entry.payload);
+      return;
+    }
+    openBulletinActivityItem(entry.payload);
+  }, [onAssignmentActivityPress]);
+
+  useEffect(() => {
+    if (!expandedLayout || loading || activityLoading) return undefined;
+    const timer = setTimeout(() => {
+      feedScrollRef.current?.scrollToEnd?.({ animated: false });
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [expandedLayout, loading, activityLoading, mergedStreamItems.length]);
 
   const toggleParticipant = (participant) => {
     if (participant.type === 'child') {
@@ -375,7 +663,9 @@ export default function BulletinBoardSection({
     setSubjectId(filterSubjectId || null);
     setSubjectMenuOpen(false);
     setPendingMaterials([]);
-    setComposerOpenState(false);
+    if (useModalComposer || !expandedLayout) {
+      setComposerOpenState(false);
+    }
     setError(null);
   };
 
@@ -440,6 +730,11 @@ export default function BulletinBoardSection({
         setProfileMap(nextProfiles);
       }
       resetComposer();
+      if (expandedLayout) {
+        setTimeout(() => {
+          feedScrollRef.current?.scrollToEnd?.({ animated: true });
+        }, 80);
+      }
     } catch (err) {
       setError(err?.message || 'Could not post note');
     } finally {
@@ -508,81 +803,18 @@ export default function BulletinBoardSection({
 
   const selectedSubjectLabel = subjectId ? subjectById.get(String(subjectId)) || 'Subject' : 'No subject';
 
-  return (
-    <View style={[styles.root, expandedLayout && styles.rootExpanded]}>
-      <Modal
-        isOpen={isComposerOpen}
-        onClose={resetComposer}
-        title="New note"
-        maxWidth={640}
-        ariaLabelledBy="bulletin-composer-title"
-      >
-        <ScrollView
-          style={styles.composerScroll}
-          contentContainerStyle={styles.composerForm}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          <Text style={styles.composerLabel}>Share with</Text>
-          <View style={styles.visibilityRow}>
-            {[
-              { key: VISIBILITY_ALL, label: 'All members' },
-              { key: VISIBILITY_SELF, label: 'Only me' },
-              { key: VISIBILITY_SELECTED, label: 'Selected' },
-            ].map((opt) => (
-              <TouchableOpacity
-                key={opt.key}
-                style={[styles.visibilityChip, visibility === opt.key && styles.visibilityChipActive]}
-                onPress={() => setVisibility(opt.key)}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text
-                  style={[
-                    styles.visibilityChipText,
-                    visibility === opt.key && styles.visibilityChipTextActive,
-                  ]}
-                >
-                  {opt.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {visibility === VISIBILITY_SELECTED ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.participantScroll}>
-              <View style={styles.participantRow}>
-                {participants.map((participant) => {
-                  const selected = isParticipantSelected(participant);
-                  return (
-                    <TouchableOpacity
-                      key={`${participant.type}:${participant.id}`}
-                      style={[styles.participantChip, selected && styles.participantChipActive]}
-                      onPress={() => toggleParticipant(participant)}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Text
-                        style={[
-                          styles.participantChipText,
-                          selected && styles.participantChipTextActive,
-                        ]}
-                      >
-                        {participant.name}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </ScrollView>
-          ) : null}
-
+  const composerFormFields = (
+    <>
+      {showComposerAudienceFields ? (
+        <>
           {filterSubjectId ? (
-            <View style={styles.subjectRow}>
-              <Text style={styles.composerLabel}>Subject</Text>
+            <View style={modalFieldStyles.formGroup}>
+              <Text style={modalFieldStyles.fieldLabel}>Subject</Text>
               <Text style={styles.subjectLockedText}>{selectedSubjectLabel}</Text>
             </View>
           ) : (
-            <View style={styles.subjectRow}>
-              <Text style={styles.composerLabel}>Subject</Text>
+            <View style={modalFieldStyles.formGroup}>
+              <Text style={modalFieldStyles.fieldLabel}>Subject</Text>
               <View style={styles.subjectPickerWrap}>
                 <TouchableOpacity
                   ref={subjectMenuRef}
@@ -622,116 +854,232 @@ export default function BulletinBoardSection({
             </View>
           )}
 
-          <TextInput
-            style={styles.composerInput}
-            placeholder="Share something with your family..."
-            placeholderTextColor="#94A3B8"
-            value={body}
-            onChangeText={setBody}
-            multiline
-            autoFocus={Platform.OS === 'web'}
-          />
-
-          {pendingMaterials.length > 0 ? (
-            <View style={styles.pendingAttachments}>
-              {pendingMaterials.map((material) => (
-                <View key={material.id} style={styles.pendingAttachmentChip}>
-                  <FileText size={14} color="#6366F1" />
-                  <Text style={styles.pendingAttachmentText} numberOfLines={1}>
-                    {material.title}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() =>
-                      setPendingMaterials((prev) => prev.filter((m) => m.id !== material.id))
-                    }
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          <View style={modalFieldStyles.formGroup}>
+            <Text style={modalFieldStyles.fieldLabel}>Share with</Text>
+            <View style={modalFieldStyles.chipRow}>
+              {[
+                { key: VISIBILITY_ALL, label: 'All members' },
+                { key: VISIBILITY_SELF, label: 'Only me' },
+                { key: VISIBILITY_SELECTED, label: 'Selected' },
+              ].map((opt) => (
+                <TouchableOpacity
+                  key={opt.key}
+                  style={[styles.optionChip, visibility === opt.key && styles.optionChipSelected]}
+                  onPress={() => setVisibility(opt.key)}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text
+                    style={[
+                      styles.optionChipText,
+                      visibility === opt.key && styles.optionChipTextSelected,
+                    ]}
                   >
-                    <X size={14} color="#94A3B8" />
-                  </TouchableOpacity>
-                </View>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
               ))}
             </View>
+          </View>
+
+          {visibility === VISIBILITY_SELECTED ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.participantScroll}>
+              <View style={modalFieldStyles.chipRow}>
+                {participants.map((participant) => {
+                  const selected = isParticipantSelected(participant);
+                  return (
+                    <TouchableOpacity
+                      key={`${participant.type}:${participant.id}`}
+                      style={[styles.optionChip, selected && styles.optionChipSelected]}
+                      onPress={() => toggleParticipant(participant)}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text
+                        style={[
+                          styles.optionChipText,
+                          selected && styles.optionChipTextSelected,
+                        ]}
+                      >
+                        {participant.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
           ) : null}
+        </>
+      ) : null}
 
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      <InstructionsEditor
+        value={body}
+        onChangeText={setBody}
+        label={null}
+        placeholder={
+          filterSubjectId
+            ? 'Share an announcement with your class...'
+            : 'Share an announcement with your family...'
+        }
+        autoFocus={useModalComposer && Platform.OS === 'web'}
+        textAreaStyle={styles.composerTextArea}
+      />
 
-          <View style={styles.composerActions}>
+      {pendingMaterials.length > 0 ? (
+        <View style={styles.pendingAttachments}>
+          {pendingMaterials.map((material) => (
+            <View key={material.id} style={styles.pendingAttachmentChip}>
+              <FileText size={14} color="#6BB3E8" />
+              <Text style={styles.pendingAttachmentText} numberOfLines={1}>
+                {material.title}
+              </Text>
+              <TouchableOpacity
+                onPress={() =>
+                  setPendingMaterials((prev) => prev.filter((m) => m.id !== material.id))
+                }
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={14} color="#94A3B8" />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+      <TouchableOpacity
+        style={styles.attachBtn}
+        onPress={handleAttachFile}
+        disabled={uploading}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        {uploading ? (
+          <ActivityIndicator size="small" color="#64748B" />
+        ) : (
+          <Paperclip size={18} color="#64748B" />
+        )}
+        <Text style={styles.attachBtnText}>Attach file</Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  return (
+    <View style={[styles.root, styles.rootExpanded]}>
+      {useModalComposer && (feedTitle || canCreatePost) ? (
+        <View style={styles.subjectStreamToolbar}>
+          {feedTitle ? (
+            <Text style={styles.feedTitle}>{feedTitle}</Text>
+          ) : (
+            <View style={styles.feedTitleSpacer} />
+          )}
+          {canCreatePost ? (
             <TouchableOpacity
-              style={styles.attachBtn}
-              onPress={handleAttachFile}
-              disabled={uploading}
+              style={styles.postActionBtn}
+              onPress={() => setComposerOpenState(true)}
+              accessibilityLabel="Post announcement"
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              {uploading ? (
-                <ActivityIndicator size="small" color="#64748B" />
-              ) : (
-                <Paperclip size={18} color="#64748B" />
-              )}
-              <Text style={styles.attachBtnText}>Attach file</Text>
+              <Plus size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.postActionBtnText}>Post</Text>
             </TouchableOpacity>
-            <View style={styles.composerActionRight}>
-              <TouchableOpacity
-                onPress={resetComposer}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.postBtn, (!body.trim() || posting) && styles.postBtnDisabled]}
-                onPress={handleCreatePost}
-                disabled={!body.trim() || posting}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                {posting ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.postBtnText}>Post</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </ScrollView>
-      </Modal>
+          ) : null}
+        </View>
+      ) : null}
 
-      {loading ? (
-        <View style={styles.loadingWrap}>
+      {useModalComposer ? (
+        <RNModal
+          visible={isComposerOpen}
+          transparent
+          animationType="fade"
+          onRequestClose={resetComposer}
+        >
+          <View style={styles.composerModalOverlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={resetComposer} />
+            <TouchableOpacity
+              activeOpacity={1}
+              onPress={(e) => e.stopPropagation()}
+              style={styles.composerModalWrap}
+            >
+              <AppModalShell
+                title="New announcement"
+                onClose={resetComposer}
+                shellStyle={styles.composerModalShell}
+                titleRowStyle={modalFieldStyles.compactTitleRow}
+                contentContainerStyle={modalFieldStyles.contentContainer}
+                bodyStyle={modalFieldStyles.shellBody}
+                footer={(
+                  <ModalFooter
+                    mode="add"
+                    primaryLabel={posting ? 'Posting…' : 'Post'}
+                    onCancel={resetComposer}
+                    onPrimary={handleCreatePost}
+                    accent={MODAL_ACCENT}
+                    disabled={posting}
+                    visuallyDisabled={!body.trim()}
+                    loading={posting}
+                  />
+                )}
+              >
+                <ScrollView
+                  style={styles.composerScroll}
+                  contentContainerStyle={styles.composerForm}
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {composerFormFields}
+                </ScrollView>
+              </AppModalShell>
+            </TouchableOpacity>
+          </View>
+        </RNModal>
+      ) : null}
+
+      {loading || activityLoading ? (
+        <View style={[styles.loadingWrap, styles.loadingWrapExpanded]}>
           <ActivityIndicator size="small" color="#6366F1" />
         </View>
-      ) : visiblePosts.length === 0 ? (
-        <View style={[styles.emptyWrap, expandedLayout && styles.emptyWrapExpanded]}>
-          <View style={styles.emptyState}>
-            <View style={styles.emptyIllustration}>
-              <FileText size={28} color="#94a3b8" strokeWidth={1.75} />
-            </View>
-            <Text style={styles.emptyTitle}>No notes yet</Text>
-          </View>
-        </View>
       ) : (
-        <ScrollView
-          style={[styles.feedScroll, expandedLayout && styles.feedScrollExpanded]}
-          contentContainerStyle={styles.feedContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {visiblePosts.map((post) => (
-            <BulletinPostCard
-              key={post.id}
-              post={post}
-              profileMap={profileMap}
-              subjectName={
-                filterSubjectId
-                  ? null
-                  : (post.subjectId ? subjectById.get(String(post.subjectId)) : null)
-              }
-              currentUserId={currentUserId}
-              canDelete={
-                canDeleteAny || String(post.authorUserId) === String(currentUserId)
-              }
-              onDeletePost={setPendingDeletePost}
-              onAddComment={handleAddComment}
-              onDeleteComment={handleDeleteComment}
-            />
-          ))}
-        </ScrollView>
+        <>
+          <ScrollView
+            ref={feedScrollRef}
+            style={styles.feedScrollExpanded}
+            contentContainerStyle={[
+              styles.feedContentStream,
+              mergedStreamItems.length === 0 && styles.feedContentEmptyExpanded,
+            ]}
+            showsVerticalScrollIndicator
+            keyboardShouldPersistTaps="handled"
+          >
+            {mergedStreamItems.length === 0 ? (
+              <View style={styles.emptyStateExpanded}>
+                <View style={styles.emptyIllustration}>
+                  <FileText size={28} color="#94a3b8" strokeWidth={1.75} />
+                </View>
+                <Text style={styles.emptyTitle}>{emptyStateMessage}</Text>
+              </View>
+            ) : (
+              mergedStreamItems.map((entry) => {
+                const post = entry.kind === 'post' ? entry.payload : null;
+                const canDeletePost = post
+                  && post.source !== 'learnadoodle'
+                  && (canDeleteAny || String(post.authorUserId) === String(currentUserId));
+                return (
+                  <BulletinStreamCard
+                    key={entry.id}
+                    entry={entry}
+                    showSubjectName={!filterSubjectId}
+                    onPress={entry.kind === 'activity' ? handleStreamCardPress : undefined}
+                    onSubjectPress={onSubjectPress}
+                    headerRight={
+                      canDeletePost ? (
+                        <StreamPostMenu post={post} onDelete={setPendingDeletePost} />
+                      ) : null
+                    }
+                  />
+                );
+              })
+            )}
+          </ScrollView>
+        </>
       )}
 
       <ConfirmDialog
@@ -760,9 +1108,11 @@ const styles = StyleSheet.create({
     }),
   },
   rootExpanded: {
-    minHeight: 420,
+    flex: 1,
+    minHeight: 0,
     ...(Platform.OS === 'web' && {
-      minHeight: 480,
+      overflow: 'hidden',
+      maxHeight: '100%',
     }),
   },
   composerScroll: {
@@ -772,75 +1122,62 @@ const styles = StyleSheet.create({
     }),
   },
   composerForm: {
-    gap: 12,
+    gap: 0,
     paddingBottom: 4,
   },
-  composerLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#64748B',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
+  composerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
   },
-  visibilityRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+  composerModalWrap: {
+    width: '100%',
+    maxWidth: 640,
   },
-  visibilityChip: {
+  composerModalShell: {
+    height: 'auto',
+    maxHeight: Platform.OS === 'web' ? '90vh' : '86%',
+    borderRadius: 28,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
+    }),
+  },
+  composerTextArea: {
+    minHeight: 96,
+  },
+  optionChip: {
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 999,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.28)',
-    backgroundColor: '#F8FAFC',
+    borderColor: '#D1D5DB',
   },
-  visibilityChipActive: {
-    backgroundColor: '#EEF2FF',
-    borderColor: 'rgba(99, 102, 241, 0.35)',
+  optionChipSelected: {
+    borderColor: '#85C4F2',
+    backgroundColor: 'rgba(133, 196, 242, 0.2)',
   },
-  visibilityChipText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#475569',
+  optionChipText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
-  visibilityChipTextActive: {
-    color: '#4338CA',
-    fontWeight: '600',
+  optionChipTextSelected: {
+    color: '#6BB3E8',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   participantScroll: {
     maxHeight: 44,
-  },
-  participantRow: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingVertical: 2,
-  },
-  participantChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.28)',
-    backgroundColor: '#FFFFFF',
-  },
-  participantChipActive: {
-    backgroundColor: '#EEF2FF',
-    borderColor: 'rgba(99, 102, 241, 0.35)',
-  },
-  participantChipText: {
-    fontSize: 13,
-    color: '#475569',
-  },
-  participantChipTextActive: {
-    color: '#4338CA',
-    fontWeight: '600',
-  },
-  subjectRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
+    marginBottom: 14,
   },
   subjectPickerWrap: {
     position: 'relative',
@@ -862,25 +1199,9 @@ const styles = StyleSheet.create({
     color: '#334155',
   },
   subjectLockedText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  composerInput: {
-    minHeight: 96,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.22)',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: '#0F172A',
-    textAlignVertical: 'top',
-    backgroundColor: '#FFFFFF',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      outlineStyle: 'none',
-    }),
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#111827',
   },
   pendingAttachments: {
     gap: 8,
@@ -901,47 +1222,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#334155',
   },
-  composerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
   attachBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    alignSelf: 'flex-start',
+    marginTop: 4,
   },
   attachBtnText: {
     fontSize: 13,
     fontWeight: '500',
     color: '#64748B',
-  },
-  composerActionRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-  },
-  cancelText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#64748B',
-  },
-  postBtn: {
-    paddingHorizontal: 18,
-    paddingVertical: 9,
-    borderRadius: 999,
-    backgroundColor: '#4F46E5',
-    minWidth: 72,
-    alignItems: 'center',
-  },
-  postBtnDisabled: {
-    opacity: 0.5,
-  },
-  postBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
   },
   errorText: {
     fontSize: 13,
@@ -953,23 +1244,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 40,
   },
-  emptyWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 132,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+  loadingWrapExpanded: {
+    minHeight: 0,
   },
-  emptyWrapExpanded: {
-    minHeight: 280,
+  emptyStateContainer: {
+    flex: 1,
+    minHeight: 148,
+    justifyContent: 'center',
     ...(Platform.OS === 'web' && {
-      minHeight: 320,
+      display: 'flex',
+      flexDirection: 'column',
+      minHeight: 148,
     }),
   },
   emptyState: {
     justifyContent: 'center',
     alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
@@ -984,12 +1276,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 12,
   },
+  /** Empty state — status message, not a headline (matches TodayScheduleCard) */
   emptyTitle: {
     fontSize: 14,
     fontWeight: '400',
     color: '#94a3b8',
-    marginBottom: 8,
+    marginBottom: 16,
+    maxWidth: 320,
     textAlign: 'center',
+    lineHeight: 20,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -999,14 +1294,31 @@ const styles = StyleSheet.create({
     minHeight: 0,
   },
   feedScrollExpanded: {
-    minHeight: 280,
+    flex: 1,
+    minHeight: 0,
     ...(Platform.OS === 'web' && {
-      minHeight: 320,
+      overflowY: 'auto',
+      WebkitOverflowScrolling: 'touch',
     }),
   },
   feedContent: {
     gap: 12,
     paddingBottom: 8,
+  },
+  feedContentEmptyExpanded: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  emptyStateExpanded: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    minHeight: 240,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   postCard: {
     borderRadius: 12,
@@ -1032,10 +1344,15 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-  postAuthorAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  postAuthorAvatarRing: {
+    borderRadius: BULLETIN_AVATAR_RING_SIZE / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    overflow: 'hidden',
+  },
+  postAuthorAvatarImage: {
+    ...(Platform.OS === 'web' && { objectFit: 'contain' }),
   },
   postAuthorText: {
     flex: 1,
@@ -1043,13 +1360,22 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   postAuthorName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1E293B',
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#374151',
+    letterSpacing: -0.2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   postMeta: {
-    fontSize: 12,
-    color: '#64748B',
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#374151',
+    letterSpacing: -0.1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   postMenuWrap: {
     flexShrink: 0,
@@ -1071,21 +1397,58 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.22)',
   },
   subjectBadgeText: {
     fontSize: 12,
     fontWeight: '600',
     color: '#475569',
   },
+  postContentBox: {
+    marginLeft: BULLETIN_CONTENT_INDENT,
+    marginTop: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.18)',
+    gap: 10,
+  },
+  postBodyWrap: {
+    gap: 8,
+  },
   postBody: {
     fontSize: 15,
-    lineHeight: 22,
-    color: '#0F172A',
+    lineHeight: 24,
+    fontWeight: '400',
+    color: '#374151',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       whiteSpace: 'pre-wrap',
     }),
+  },
+  postBodyInBullet: {
+    flex: 1,
+  },
+  postBulletList: {
+    gap: 10,
+    marginVertical: 2,
+  },
+  postBulletRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  postBulletDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#374151',
+    marginTop: 10,
+    flexShrink: 0,
   },
   attachmentList: {
     gap: 8,
@@ -1125,14 +1488,22 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   commentAuthor: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#334155',
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#374151',
+    letterSpacing: -0.1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   commentBody: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: '#475569',
+    fontSize: 15,
+    lineHeight: 24,
+    fontWeight: '400',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   commentDeleteBtn: {
     padding: 4,
@@ -1169,5 +1540,220 @@ const styles = StyleSheet.create({
   },
   commentSendBtnDisabled: {
     backgroundColor: '#F8FAFC',
+  },
+  feedContentStream: {
+    gap: 4,
+    paddingTop: 8,
+    paddingBottom: 16,
+    paddingHorizontal: 12,
+  },
+  streamPostWrap: {
+    gap: 2,
+    marginBottom: 6,
+  },
+  streamTimeDivider: {
+    alignSelf: 'center',
+    fontSize: 11,
+    color: '#94A3B8',
+    marginVertical: 10,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  streamPostRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  streamPostContent: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  streamPostHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  streamSenderLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  streamBubble: {
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    gap: 8,
+  },
+  streamCommentsSection: {
+    marginTop: 6,
+    gap: 8,
+  },
+  streamCommentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    paddingLeft: 4,
+  },
+  streamCommentAuthor: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  streamCommentBody: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#334155',
+  },
+  streamCommentComposer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 6,
+    marginTop: 2,
+  },
+  streamCommentInput: {
+    flex: 1,
+    minHeight: 32,
+    maxHeight: 80,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.22)',
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 13,
+    color: '#0F172A',
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      outlineStyle: 'none',
+    }),
+  },
+  streamCommentSendBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EEF2FF',
+  },
+  streamCommentSendBtnDisabled: {
+    backgroundColor: '#F8FAFC',
+  },
+  streamComposerWrap: {
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    flexShrink: 0,
+    backgroundColor: '#FFFFFF',
+  },
+  streamPendingAttachments: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    gap: 6,
+  },
+  streamComposerError: {
+    paddingHorizontal: 12,
+    paddingTop: 6,
+    fontSize: 12,
+    color: '#DC2626',
+  },
+  streamComposerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  streamComposerIconBtn: {
+    width: STREAM_COMPOSER_BTN,
+    height: STREAM_COMPOSER_BTN,
+    borderRadius: STREAM_COMPOSER_BTN / 2,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  streamComposerInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: STREAM_COMPOSER_BTN / 2,
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 8,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#0F172A',
+    maxHeight: 120,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      outlineStyle: 'none',
+      resize: 'none',
+    }),
+  },
+  streamComposerSend: {
+    width: STREAM_COMPOSER_BTN,
+    height: STREAM_COMPOSER_BTN,
+    borderRadius: STREAM_COMPOSER_BTN / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#4F46E5',
+  },
+  streamComposerSendDisabled: {
+    opacity: 0.45,
+  },
+  subjectStreamToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 4,
+    flexShrink: 0,
+    gap: 12,
+  },
+  feedTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1e293b',
+    letterSpacing: -0.2,
+    flex: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  feedTitleSpacer: {
+    flex: 1,
+  },
+  postActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 9999,
+    borderWidth: 1,
+    borderColor: '#E6EBF2',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  postActionBtnText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: 'rgba(15,23,42,0.85)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

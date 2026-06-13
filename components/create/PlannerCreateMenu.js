@@ -1,10 +1,11 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
+import { Calendar, FileText } from 'lucide-react';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 
 const CREATE_OPTIONS = [
-  { id: 'calendar_event', label: 'Event' },
-  { id: 'assignment', label: 'Assignment' },
+  { id: 'calendar_event', label: 'Event', icon: Calendar },
+  { id: 'assignment', label: 'Assignment', icon: FileText },
 ];
 
 export default function PlannerCreateMenu({ visible, triggerRef, onClose, onSelect }) {
@@ -27,6 +28,7 @@ export default function PlannerCreateMenu({ visible, triggerRef, onClose, onSele
         {CREATE_OPTIONS.map((option, index) => (
           <DropdownItem
             key={option.id}
+            icon={option.icon}
             label={option.label}
             onPress={() => handleSelect(option.id)}
             variant="context"

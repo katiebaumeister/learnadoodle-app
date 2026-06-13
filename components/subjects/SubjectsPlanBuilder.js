@@ -19,6 +19,7 @@ import { applyToCalendar, fixTargetGap, getAcademicYear, getFixTargetGapHistory,
 import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
 import { autoAssignLessonsToUnlinkedEvents } from '../../lib/subjectLessonLinking';
 import { curriculumStructureHasContent } from '../../lib/subjectUnitsEditorDraft';
+import { dispatchOpenSubjectUnitsEditor, normalizeSubjectUnitsEditorMethod } from '../../lib/subjectUnitsEditor';
 import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
 import { supabase } from '../../lib/supabase';
 import { getAcademicYearExclusions, getFamilyPlannerSettings, saveFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
@@ -3747,8 +3748,14 @@ export default function SubjectsPlanBuilder({
   };
 
   const handleCurriculumAction = (subject, method) => {
-    openPlanningPreferences();
-    toast?.push?.('Plan routing is deprecated. Use School Year Settings and Schedule instead.', 'info');
+    const sid = subject?.id;
+    if (!sid) return;
+    dispatchOpenSubjectUnitsEditor({
+      subjectId: sid,
+      subjectName: subject?.name || subject?.title || 'Subject',
+      method: normalizeSubjectUnitsEditorMethod(method),
+      childIds: Array.isArray(subject?.assignedChildren) ? subject.assignedChildren.filter(Boolean) : [],
+    });
   };
 
   const handleSave = async () => {

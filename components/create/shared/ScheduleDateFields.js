@@ -22,14 +22,19 @@ export default function ScheduleDateFields({
   endDateError = null,
   timeError = null,
   trailingContent = null,
+  matchEventModalDateWidth = false,
+  endDateRequired = false,
 }) {
   const handleStartPrev = () => onStartDateChange?.(addDays(startDate, -1));
   const handleStartNext = () => onStartDateChange?.(addDays(startDate, 1));
+  const dateColumnStyle = matchEventModalDateWidth
+    ? styles.scheduleColumnEventDate
+    : styles.scheduleColumn;
 
   return (
     <View style={styles.formGroup}>
       <View style={styles.dateTimeInlineRow}>
-        <View style={styles.scheduleColumn}>
+        <View style={dateColumnStyle}>
           <Text style={styles.fieldLabel}>Start date <Text style={styles.required}>*</Text></Text>
           <View style={[styles.chip, styles.scheduleDateChip, startDateError && { borderColor: '#ef4444' }]}>
             <TouchableOpacity onPress={handleStartPrev}>
@@ -40,7 +45,9 @@ export default function ScheduleDateFields({
               style={styles.scheduleDateChipLabel}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={styles.chipText}>{fmtDate(startDate)}</Text>
+              <Text style={styles.scheduleDateChipText} numberOfLines={1}>
+                {fmtDate(startDate)}
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={handleStartNext}>
               <ChevronRight size={16} color={FG} />
@@ -50,8 +57,11 @@ export default function ScheduleDateFields({
         </View>
 
         {showEndDate && onEndDateChange ? (
-          <View style={styles.scheduleColumn}>
-            <Text style={styles.fieldLabel}>End date</Text>
+          <View style={dateColumnStyle}>
+            <Text style={styles.fieldLabel}>
+              End date
+              {endDateRequired ? <Text style={styles.required}> *</Text> : null}
+            </Text>
             <View style={[styles.chip, styles.scheduleDateChip, endDateError && { borderColor: '#ef4444' }]}>
               <TouchableOpacity onPress={() => endDate && onEndDateChange?.(addDays(endDate, -1))}>
                 <ChevronLeft size={16} color={FG} />
@@ -61,7 +71,10 @@ export default function ScheduleDateFields({
                 style={styles.scheduleDateChipLabel}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Text style={[styles.chipText, !endDate && { color: PLACEHOLDER }]}>
+                <Text
+                  style={[styles.scheduleDateChipText, !endDate && { color: PLACEHOLDER }]}
+                  numberOfLines={1}
+                >
                   {endDate ? fmtDate(endDate) : 'Optional'}
                 </Text>
               </TouchableOpacity>

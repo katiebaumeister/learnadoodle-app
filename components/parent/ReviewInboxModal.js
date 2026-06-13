@@ -10,8 +10,8 @@ import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Pressable, Activi
 import { Inbox, X, CheckCircle, RotateCcw, HelpCircle, Clock, FileText, User } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
-import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
-import AssignmentDetailModal from '../assignments/AssignmentDetailModal';
+import WorkReviewModal from '../assignments/WorkReviewModal';
+import SubmitForReviewModal from '../child/SubmitForReviewModal';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { colors } from '../../theme/colors';
 
@@ -405,10 +405,9 @@ export default function ReviewInboxModal({ visible, onClose, familyId, initialSe
       {/* Review Modal */}
       {selectedAssignment && (
         <>
-          <AssignmentReviewModal
+          <WorkReviewModal
             visible={showReviewModal}
             assignment={selectedAssignment}
-            familyId={familyId}
             onClose={() => {
               setShowReviewModal(false);
               setSelectedAssignment(null);
@@ -416,14 +415,13 @@ export default function ReviewInboxModal({ visible, onClose, familyId, initialSe
             onReviewed={handleReviewed}
           />
 
-          {/* Detail Modal */}
-          <AssignmentDetailModal
+          <SubmitForReviewModal
             visible={showDetailModal}
             assignment={selectedAssignment}
             childId={selectedAssignment?.child_id}
             familyId={familyId}
+            viewOnly
             onClose={handleDetailModalClose}
-            onAssignmentUpdated={handleReviewed}
           />
         </>
       )}

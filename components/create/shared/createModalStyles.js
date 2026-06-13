@@ -187,6 +187,22 @@ export const createModalStyles = StyleSheet.create({
     flexBasis: 0,
     minWidth: 0,
   },
+  /** Same width as one column in the 4-field event row (start/end date + start/end time). */
+  scheduleColumnEventDate: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    minWidth: 0,
+    ...(Platform.OS === 'web'
+      ? {
+          width: 'calc((100% - 36px) / 4)',
+          maxWidth: 'calc((100% - 36px) / 4)',
+        }
+      : {
+          width: '48%',
+          maxWidth: '48%',
+        }),
+  },
   scheduleColumnCompact: {
     alignSelf: 'flex-start',
     flexGrow: 0,
@@ -214,8 +230,16 @@ export const createModalStyles = StyleSheet.create({
   scheduleDateChipLabel: {
     flex: 1,
     paddingHorizontal: 6,
-    minWidth: 0,
+    minWidth: 96,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scheduleDateChipText: {
+    color: FG,
+    fontSize: 14,
+    fontWeight: '500',
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && { whiteSpace: 'nowrap' }),
   },
   scheduleDateChipLabelCompact: {
     flex: 1,

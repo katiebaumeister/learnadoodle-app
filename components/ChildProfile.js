@@ -205,7 +205,7 @@ export default function ChildProfile({
       case 'schedule':
         return <ScheduleTab child={child} />;
       case 'assignments':
-        return <AssignmentsTab child={child} familyId={familyId} />;
+        return <AssignmentsTab child={child} familyId={familyId} isParentViewer />;
       case 'projects':
         return <ProjectsTab child={child} />;
       case 'syllabus':

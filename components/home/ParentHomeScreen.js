@@ -9,7 +9,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, Platform, ScrollView, TouchableOpacity } from 'react-native';
-import { Plus, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { isAbortLikeError } from '../../lib/apiClient';
@@ -19,6 +19,7 @@ import ParentDigestModal from './ParentDigestModal';
 import BulletinBoardSection from '../bulletin/BulletinBoardSection';
 import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
+import { openBulletinActivityItem } from '../../lib/bulletinFeedNavigation';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
 
 function getTimeBasedGreeting() {
@@ -183,7 +184,6 @@ export default function ParentHomeScreen({
   const [notificationCount, setNotificationCount] = useState(0);
   const [error, setError] = useState(null);
   const [showParentDigest, setShowParentDigest] = useState(false);
-  const [bulletinComposerOpen, setBulletinComposerOpen] = useState(false);
   const initialDataReadyFiredRef = useRef(false);
   const onInitialDataReadyRef = useRef(onInitialDataReady);
   onInitialDataReadyRef.current = onInitialDataReady;
@@ -745,7 +745,7 @@ export default function ParentHomeScreen({
 
   const renderSchedulePanel = (panelStyle) => (
     <View style={[styles.scheduleSection, panelStyle]}>
-      <View style={styles.sectionHeader}>
+      <View style={styles.schedulePanelHeader}>
         <View style={styles.scheduleNavGroup}>
           <View style={styles.dayNavButtonGroup}>
             <TouchableOpacity
@@ -773,12 +773,12 @@ export default function ParentHomeScreen({
         </View>
         {onAddEvent ? (
           <TouchableOpacity
-            style={styles.greetingAddButton}
+            style={styles.panelActionBtn}
             onPress={onAddEvent}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
             <Plus size={18} color="#334155" strokeWidth={2.25} />
-            <Text style={styles.greetingAddButtonText}>Add event</Text>
+            <Text style={styles.panelActionBtnText}>Add event</Text>
           </TouchableOpacity>
         ) : null}
       </View>
@@ -814,27 +814,26 @@ export default function ParentHomeScreen({
     </View>
   );
 
+  const handleBulletinActivityPress = useCallback((item) => {
+    openBulletinActivityItem(item, { onNavigate });
+  }, [onNavigate]);
+
+  const handleBulletinSubjectPress = useCallback((subjectId) => {
+    if (!subjectId) return;
+    onNavigate?.(`subject-${subjectId}`);
+  }, [onNavigate]);
+
   const mainContent = (
     <View style={styles.mainSurface}>
       <View style={styles.bulletinBoardSection}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionLabel}>Bulletin Board</Text>
-          <TouchableOpacity
-            style={styles.greetingAddButton}
-            onPress={() => setBulletinComposerOpen(true)}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Pencil size={18} color="#334155" strokeWidth={2.25} />
-            <Text style={styles.greetingAddButtonText}>New note</Text>
-          </TouchableOpacity>
-        </View>
         <BulletinBoardSection
           familyId={familyId}
           children={children}
           subjects={effectiveHomeData.subjects?.length ? effectiveHomeData.subjects : stableSubjects}
           profile={profile}
-          composerOpen={bulletinComposerOpen}
-          onComposerOpenChange={setBulletinComposerOpen}
+          feedTitle="Bulletin Board"
+          onAssignmentActivityPress={handleBulletinActivityPress}
+          onSubjectPress={handleBulletinSubjectPress}
         />
       </View>
     </View>
@@ -963,31 +962,6 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  greetingAddButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.22)',
-    flexShrink: 0,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      transition: 'all 0.2s ease',
-    }),
-  },
-  greetingAddButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#334155',
-    letterSpacing: -0.1,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
   mainSurface: {
     flex: 1,
     backgroundColor: 'transparent',
@@ -1001,47 +975,76 @@ const styles = StyleSheet.create({
   },
   bulletinBoardSection: {
     flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
     marginTop: 2,
-    paddingTop: 14,
+    paddingTop: 4,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingBottom: 12,
+    paddingHorizontal: 0,
+    paddingBottom: 0,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.12)',
+    overflow: 'hidden',
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
-      minHeight: 0,
-      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06)',
+      height: '100%',
+      maxHeight: '100%',
     }),
   },
   scheduleSection: {
     flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
     marginTop: 2,
-    paddingTop: 14,
+    paddingTop: 4,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 12,
     paddingBottom: 8,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.12)',
+    overflow: 'hidden',
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
-      minHeight: 0,
-      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06)',
+      height: '100%',
+      maxHeight: '100%',
     }),
   },
-  sectionHeader: {
+  schedulePanelHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 0,
-    marginBottom: 8,
-    marginHorizontal: -12,
-    paddingHorizontal: 12,
-    paddingRight: 10,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 4,
+    flexShrink: 0,
+    gap: 12,
+  },
+  panelActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 9999,
+    borderWidth: 1,
+    borderColor: '#E6EBF2',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  panelActionBtnText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: 'rgba(15,23,42,0.85)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   scheduleNavGroup: {
     flexDirection: 'row',

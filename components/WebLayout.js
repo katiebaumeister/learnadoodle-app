@@ -33,6 +33,7 @@ import EventModal from './events/EventModal';
 import AddChildModal from './AddChildModal';
 import InviteChildModal from './InviteChildModal';
 import AddSubjectModal from './AddSubjectModal';
+import EditSubjectSettingsModal from './subjects/EditSubjectSettingsModal';
 import EditChildModal from './EditChildModal';
 import SubmitForReviewModal from './child/SubmitForReviewModal';
 import RespondToHelpRequestModal from './parent/RespondToHelpRequestModal';
@@ -228,6 +229,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showInviteChildModal, setShowInviteChildModal] = useState(false);
   const [inviteChildModalPrefillId, setInviteChildModalPrefillId] = useState(null);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
+  const [showEditSubjectSettingsModal, setShowEditSubjectSettingsModal] = useState(false);
+  const [editSubjectSettingsInitialTab, setEditSubjectSettingsInitialTab] = useState('details');
   const [editingSubject, setEditingSubject] = useState(null);
   const [addSubjectPrefill, setAddSubjectPrefill] = useState({ schoolYear: null, schoolTerm: null, childIds: [] });
   const [createModalKind, setCreateModalKind] = useState(null);
@@ -2178,11 +2181,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const incomingSchoolYear = e.detail?.schoolYear || null;
       const incomingSchoolTerm = e.detail?.schoolTerm || null;
       const incomingChildIds = Array.isArray(e.detail?.childIds) ? e.detail.childIds.filter(Boolean) : [];
-      setEditingSubject(subject);
+      if (subject) {
+        setEditingSubject(subject);
+        setEditSubjectSettingsInitialTab(e.detail?.initialTab || 'details');
+        setShowEditSubjectSettingsModal(true);
+        return;
+      }
+      setEditingSubject(null);
       setAddSubjectPrefill({
-        schoolYear: subject ? null : incomingSchoolYear,
-        schoolTerm: subject ? null : incomingSchoolTerm,
-        childIds: subject ? [] : incomingChildIds,
+        schoolYear: incomingSchoolYear,
+        schoolTerm: incomingSchoolTerm,
+        childIds: incomingChildIds,
       });
       setShowAddSubjectModal(true);
     };
@@ -4104,16 +4113,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         />
       )}
 
-      {/* Add/Edit Subject Modal */}
+      {/* Add Subject Modal */}
       <AddSubjectModal
         visible={showAddSubjectModal}
         onClose={() => {
           setShowAddSubjectModal(false);
-          setEditingSubject(null);
           setAddSubjectPrefill({ schoolYear: null, schoolTerm: null, childIds: [] });
         }}
         familyId={familyId}
-        subject={editingSubject}
         initialSchoolYear={addSubjectPrefill.schoolYear}
         initialSchoolTerm={addSubjectPrefill.schoolTerm}
         defaultChildIds={addSubjectPrefill.childIds}
@@ -4128,12 +4135,41 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             next[idx] = { ...next[idx], ...newSubject };
             return next;
           });
-          setEditingSubject(null);
           setAddSubjectPrefill({ schoolYear: null, schoolTerm: null, childIds: [] });
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             if (newSubject?.id) {
               window.dispatchEvent(new CustomEvent('subjectRecordUpserted', { detail: { subject: newSubject } }));
             }
+            window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          }
+        }}
+      />
+
+      <EditSubjectSettingsModal
+        visible={showEditSubjectSettingsModal && !!editingSubject}
+        onClose={() => {
+          setShowEditSubjectSettingsModal(false);
+          setEditingSubject(null);
+          setEditSubjectSettingsInitialTab('details');
+        }}
+        familyId={familyId}
+        subject={editingSubject}
+        children={children}
+        initialTab={editSubjectSettingsInitialTab}
+        initialGradingSettings={editingSubject?.grading_settings}
+        onSaved={(newSubject) => {
+          setSubjects((prev) => {
+            const list = Array.isArray(prev) ? prev : [];
+            if (!newSubject?.id) return list;
+            const idx = list.findIndex((s) => String(s?.id) === String(newSubject.id));
+            if (idx === -1) return list;
+            const next = [...list];
+            next[idx] = { ...next[idx], ...newSubject };
+            return next;
+          });
+          setEditingSubject((prev) => (prev ? { ...prev, ...newSubject } : prev));
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('subjectRecordUpserted', { detail: { subject: newSubject } }));
             window.dispatchEvent(new CustomEvent('refreshSubjects'));
           }
         }}

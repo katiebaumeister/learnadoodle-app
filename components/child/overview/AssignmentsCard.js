@@ -4,15 +4,20 @@
  */
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
-import { FileText, Clock, AlertCircle, CheckCircle } from 'lucide-react';
+import { FileText, Clock, AlertCircle } from 'lucide-react';
 import { getAssignments } from '../../../lib/services/assignmentsClient';
 import { colors } from '../../../theme/colors';
 import AssignmentCard from '../../assignments/AssignmentCard';
-import AssignmentDetailModal from '../../assignments/AssignmentDetailModal';
-import AssignmentReviewModal from '../../assignments/AssignmentReviewModal';
-import { submitAssignment, toggleNeedHelp, reviewAssignment } from '../../../lib/services/assignmentsClient';
+import SubmitForReviewModal from '../SubmitForReviewModal';
+import WorkReviewModal from '../../assignments/WorkReviewModal';
 
-export default function AssignmentsCard({ childId, familyId, onNavigate, embedded = false }) {
+export default function AssignmentsCard({
+  childId,
+  familyId,
+  onNavigate,
+  embedded = false,
+  isParentViewer = false,
+}) {
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedAssignment, setSelectedAssignment] = useState(null);
@@ -20,9 +25,7 @@ export default function AssignmentsCard({ childId, familyId, onNavigate, embedde
   const [showReviewModal, setShowReviewModal] = useState(false);
 
   useEffect(() => {
-    if (childId) {
-      loadAssignments();
-    }
+    if (childId) loadAssignments();
   }, [childId]);
 
   const loadAssignments = async () => {
@@ -30,19 +33,15 @@ export default function AssignmentsCard({ childId, familyId, onNavigate, embedde
     try {
       setLoading(true);
       const { data, error } = await getAssignments(childId);
-      if (error) {
-        setAssignments([]);
-        return;
-      }
-      setAssignments(data || []);
-    } catch (error) {
+      setAssignments(error ? [] : (data || []));
+    } catch (_) {
       setAssignments([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const dueSoon = assignments.filter(a => {
+  const dueSoon = assignments.filter((a) => {
     if (!a.due_date) return false;
     const dueDate = new Date(a.due_date);
     const now = new Date();
@@ -51,40 +50,22 @@ export default function AssignmentsCard({ childId, familyId, onNavigate, embedde
     return dueDate >= now && dueDate <= nextWeek && a.status !== 'accepted';
   }).slice(0, 5);
 
-  const needsReview = assignments.filter(a => a.status === 'submitted').slice(0, 5);
+  const needsReview = assignments.filter((a) => a.status === 'submitted').slice(0, 5);
 
   const handleAssignmentPress = (assignment) => {
     setSelectedAssignment(assignment);
-    setShowDetailModal(true);
-  };
-
-  const handleSubmit = async (assignmentId, evidenceId) => {
-    const { error } = await submitAssignment(assignmentId, evidenceId);
-    if (!error) {
-      await loadAssignments();
-      setShowDetailModal(false);
+    if (isParentViewer && assignment.status === 'submitted') {
+      setShowReviewModal(true);
+    } else {
+      setShowDetailModal(true);
     }
   };
 
-  const handleToggleHelp = async (assignmentId) => {
-    const { error } = await toggleNeedHelp(assignmentId);
-    if (!error) {
-      await loadAssignments();
-      if (selectedAssignment?.id === assignmentId) {
-        setSelectedAssignment({ ...selectedAssignment, need_help: !selectedAssignment.need_help });
-      }
-    }
-  };
-
-  const handleReview = (assignment) => {
-    setSelectedAssignment(assignment);
-    setShowReviewModal(true);
-  };
-
-  const handleReviewed = async () => {
+  const closeModals = async () => {
     await loadAssignments();
-    setShowReviewModal(false);
     setShowDetailModal(false);
+    setShowReviewModal(false);
+    setSelectedAssignment(null);
   };
 
   const cardStyle = embedded ? [styles.card, styles.cardEmbedded] : styles.card;
@@ -104,83 +85,70 @@ export default function AssignmentsCard({ childId, familyId, onNavigate, embedde
         <View style={styles.header}>
           <FileText size={20} color={colors.text} />
           <Text style={styles.title}>Assignments</Text>
-          {onNavigate && (
-            <TouchableOpacity
-              onPress={() => onNavigate('assignments')}
-              style={styles.viewAllButton}
-            >
+          {onNavigate ? (
+            <TouchableOpacity onPress={() => onNavigate('assignments')} style={styles.viewAllButton}>
               <Text style={styles.viewAllText}>View All</Text>
             </TouchableOpacity>
-          )}
+          ) : null}
         </View>
 
-        {needsReview.length > 0 && (
+        {needsReview.length > 0 ? (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <AlertCircle size={16} color={colors.orangeBold} />
               <Text style={styles.sectionTitle}>Needs Review ({needsReview.length})</Text>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scroll}>
-              {needsReview.map(assignment => (
+              {needsReview.map((assignment) => (
                 <View key={assignment.id} style={styles.assignmentWrapper}>
-                  <AssignmentCard
-                    assignment={assignment}
-                    onPress={() => handleAssignmentPress(assignment)}
-                  />
+                  <AssignmentCard assignment={assignment} onPress={() => handleAssignmentPress(assignment)} />
                 </View>
               ))}
             </ScrollView>
           </View>
-        )}
+        ) : null}
 
-        {dueSoon.length > 0 && (
+        {dueSoon.length > 0 ? (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Clock size={16} color={colors.blueBold} />
               <Text style={styles.sectionTitle}>Due Soon ({dueSoon.length})</Text>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scroll}>
-              {dueSoon.map(assignment => (
+              {dueSoon.map((assignment) => (
                 <View key={assignment.id} style={styles.assignmentWrapper}>
-                  <AssignmentCard
-                    assignment={assignment}
-                    onPress={() => handleAssignmentPress(assignment)}
-                  />
+                  <AssignmentCard assignment={assignment} onPress={() => handleAssignmentPress(assignment)} />
                 </View>
               ))}
             </ScrollView>
           </View>
-        )}
+        ) : null}
 
-        {dueSoon.length === 0 && needsReview.length === 0 && (
+        {dueSoon.length === 0 && needsReview.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>No assignments at this time</Text>
           </View>
-        )}
+        ) : null}
       </View>
 
-      <AssignmentDetailModal
+      <SubmitForReviewModal
         visible={showDetailModal}
         assignment={selectedAssignment}
         childId={childId}
         familyId={familyId}
-        onClose={() => {
-          setShowDetailModal(false);
-          setSelectedAssignment(null);
-        }}
-        onSubmit={handleSubmit}
-        onToggleHelp={handleToggleHelp}
-        onReview={handleReview}
+        viewOnly={isParentViewer}
+        onClose={closeModals}
+        onSubmitted={closeModals}
       />
 
-      <AssignmentReviewModal
+      <WorkReviewModal
         visible={showReviewModal}
         assignment={selectedAssignment}
         onClose={() => {
           setShowReviewModal(false);
           setSelectedAssignment(null);
         }}
-        onReviewed={handleReviewed}
+        onReviewed={closeModals}
       />
     </>
   );
@@ -198,54 +166,51 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     borderWidth: 0,
     padding: 0,
-    borderRadius: 0,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   title: {
+    flex: 1,
     fontSize: 16,
     fontWeight: '600',
     color: colors.text,
-    flex: 1,
   },
   viewAllButton: {
-    paddingVertical: 4,
     paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   viewAllText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.text,
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.blueBold,
   },
   section: {
-    marginBottom: 16,
+    marginBottom: 12,
   },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   sectionTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: colors.text,
   },
   scroll: {
-    marginHorizontal: -16,
-    paddingHorizontal: 16,
+    marginHorizontal: -4,
   },
   assignmentWrapper: {
-    width: 280,
-    marginRight: 12,
+    width: 260,
+    marginHorizontal: 4,
   },
   emptyState: {
-    padding: 24,
-    alignItems: 'center',
+    paddingVertical: 12,
   },
   emptyText: {
     fontSize: 14,
@@ -254,8 +219,6 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 14,
     color: colors.muted,
-    textAlign: 'center',
-    padding: 16,
+    marginTop: 8,
   },
 });
-

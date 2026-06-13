@@ -11,7 +11,7 @@ import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { isAbortLikeError } from '../../lib/apiClient';
 import { getFamilyMembers } from '../../lib/apiClient';
-import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
+import WorkReviewModal from '../assignments/WorkReviewModal';
 import RespondToHelpRequestModal from './RespondToHelpRequestModal';
 import { colors } from '../../theme/colors';
 import {
@@ -1285,12 +1285,11 @@ export default function EmbeddedNotificationCenter({
       </View>
 
       {selectedAssignment && openModal === 'submission' && (
-        <AssignmentReviewModal
+        <WorkReviewModal
           visible
           onClose={closeModals}
           assignment={selectedAssignment}
           onReviewed={handleReviewComplete}
-          submissionReview
         />
       )}
       {selectedAssignment && openModal === 'help' && (

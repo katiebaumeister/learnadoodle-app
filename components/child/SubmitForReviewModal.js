@@ -19,11 +19,28 @@ import { colors } from '../../theme/colors';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
 import {
   extractQuizAnswers,
+  extractStudentSubmissionText,
   formatQuizAnswersBlock,
-  getStudentSubmissionStatusLabel,
   parseWorkSpec,
+  resolveQuizAnswerRows,
   resolveStudentSubmissionModes,
 } from '../../lib/workEventHelpers';
+import { getAssignmentLifecycleLabel } from '../../lib/assignmentLifecycle';
+import { logActivityFromAssignment } from '../../lib/services/assignmentActivityClient';
+import { ACTIVITY_TYPE } from '../../lib/assignmentLifecycle';
+import AssignmentCommentsPanel from '../assignments/AssignmentCommentsPanel';
+
+const STUDENT_TABS = [
+  { id: 'instructions', label: 'Instructions' },
+  { id: 'work', label: 'My Work' },
+  { id: 'comments', label: 'Comments' },
+];
+
+const VIEWER_TABS = [
+  { id: 'instructions', label: 'Instructions' },
+  { id: 'work', label: 'Submission' },
+  { id: 'comments', label: 'Comments' },
+];
 
 function formatContextLine(startTs, endTs) {
   if (!startTs) return null;
@@ -201,6 +218,8 @@ export default function SubmitForReviewModal({
   const [linkedEventRow, setLinkedEventRow] = useState(null);
   const [subjectName, setSubjectName] = useState(null);
   const [reviewMarkupFiles, setReviewMarkupFiles] = useState([]);
+  const [activeTab, setActiveTab] = useState('instructions');
+  const [resourceMaterials, setResourceMaterials] = useState([]);
 
   useEffect(() => {
     if (!visible) return;
@@ -214,6 +233,8 @@ export default function SubmitForReviewModal({
     setLinkedEventRow(null);
     setSubjectName(null);
     setReviewMarkupFiles([]);
+    setActiveTab('instructions');
+    setResourceMaterials([]);
   }, [visible, assignment?.id, eventContext?.id]);
 
   const contextSubtitle = useMemo(() => {
@@ -254,10 +275,16 @@ export default function SubmitForReviewModal({
     if (resolvedEvent?.start_ts) return formatDateYmd(resolvedEvent.start_ts);
     return formatDateYmd(assignment?.due_date);
   }, [resolvedEvent?.start_ts, assignment?.due_date]);
-  const statusLabel = getStudentSubmissionStatusLabel(assignment);
+  const statusLabel = getAssignmentLifecycleLabel(assignment);
   const submitCtaLabel = submissionModes.parentCheckoff && !submissionModes.text && !submissionModes.file && !submissionModes.photo && !submissionModes.link && !submissionModes.quiz
     ? 'Mark ready for parent review'
     : 'Submit';
+  const assignmentTabs = viewOnly ? VIEWER_TABS : STUDENT_TABS;
+  const studentSubmissionText = extractStudentSubmissionText(assignment?.description);
+  const quizAnswerRows = useMemo(
+    () => resolveQuizAnswerRows(workSpec, assignment?.description),
+    [workSpec, assignment?.description]
+  );
 
   useEffect(() => {
     if (!visible) return;
@@ -295,6 +322,38 @@ export default function SubmitForReviewModal({
   }, [visible, assignment?.id, assignment?.linked_review_attachment_ids]);
 
   useEffect(() => {
+    if (!visible || viewOnly || activeTab !== 'work' || !assignment?.id) return;
+    const status = String(assignment.status || '').toLowerCase();
+    if (status !== 'assigned' && status !== 'not_started') return;
+    updateAssignment(assignment.id, { status: 'in_progress' }).catch(() => {});
+  }, [visible, viewOnly, activeTab, assignment?.id, assignment?.status]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadResources = async () => {
+      if (!visible) return;
+      const eventRow = eventContext || linkedEventRow;
+      const rawIds = eventRow?.materials_attachment_ids;
+      const ids = Array.isArray(rawIds) ? rawIds.map(String).filter(Boolean) : [];
+      if (ids.length === 0) {
+        if (!cancelled) setResourceMaterials([]);
+        return;
+      }
+      try {
+        const { data } = await supabase
+          .from('materials')
+          .select('id, title, provider_url, url')
+          .in('id', ids);
+        if (!cancelled) setResourceMaterials(data || []);
+      } catch (_) {
+        if (!cancelled) setResourceMaterials([]);
+      }
+    };
+    loadResources();
+    return () => { cancelled = true; };
+  }, [visible, eventContext, linkedEventRow?.materials_attachment_ids]);
+
+  useEffect(() => {
     let cancelled = false;
     const loadEventBrief = async () => {
       if (!visible) return;
@@ -311,7 +370,7 @@ export default function SubmitForReviewModal({
       try {
         const { data, error: evErr } = await supabase
           .from('events')
-          .select('id, title, event_type, work_spec, start_ts, end_ts, subject_id, description')
+          .select('id, title, event_type, work_spec, start_ts, end_ts, subject_id, description, materials_attachment_ids')
           .eq('id', linkedEventId)
           .maybeSingle();
         if (cancelled || evErr) return;
@@ -537,6 +596,10 @@ export default function SubmitForReviewModal({
         }
         const { error: upErr } = await updateAssignment(assignment.id, updates);
         if (upErr) throw upErr;
+        await logActivityFromAssignment(
+          { ...assignment, ...updates, status: 'submitted' },
+          ACTIVITY_TYPE.SUBMITTED,
+        );
         onSubmitted?.();
         onClose?.();
         return;
@@ -567,6 +630,10 @@ export default function SubmitForReviewModal({
             description: buildDescription(linked?.description),
           });
           if (upErr) throw upErr;
+          await logActivityFromAssignment(
+            { ...linked, status: 'submitted', submitted_at: nowIso },
+            ACTIVITY_TYPE.SUBMITTED,
+          );
         } else {
           const { error: insErr } = await createAssignment({
             family_id: familyId,
@@ -639,49 +706,170 @@ export default function SubmitForReviewModal({
               </View>
             ) : null}
 
-            {instructions ? (
-              <>
-                <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Instructions</Text>
-                <Text style={styles.instructionsText}>{instructions}</Text>
-              </>
-            ) : null}
-
-            {submissionHistoryLines.length > 0 ? (
-              <>
-                <Text style={[styles.sectionLabel, { marginTop: 14 }]}>History</Text>
-                <View style={styles.historyBox}>
-                  {submissionHistoryLines.map((line, idx) => (
-                    <Text key={`submission-history-${idx}`} style={styles.historyText}>
-                      {line}
+            <View style={styles.tabBar}>
+              {assignmentTabs.map((tab) => {
+                const isActive = activeTab === tab.id;
+                return (
+                  <TouchableOpacity
+                    key={tab.id}
+                    style={[styles.tabChip, isActive && styles.tabChipActive]}
+                    onPress={() => setActiveTab(tab.id)}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={[styles.tabChipText, isActive && styles.tabChipTextActive]}>
+                      {tab.label}
                     </Text>
-                  ))}
-                </View>
-              </>
-            ) : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
 
-            {reviewMarkupFiles.length > 0 ? (
+            {activeTab === 'instructions' ? (
               <>
-                <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Marked-up files from parent</Text>
-                <View style={styles.historyBox}>
-                  {reviewMarkupFiles.map((file) => (
-                    <TouchableOpacity
-                      key={file.id}
-                      onPress={() => {
-                        const url = String(file.provider_url || file.url || '').trim();
-                        if (url && Platform.OS === 'web' && typeof window !== 'undefined') {
-                          window.open(url, '_blank', 'noopener,noreferrer');
-                        }
-                      }}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Text style={styles.markupLink}>{file.title || 'Marked-up file'}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                {instructions ? (
+                  <>
+                    <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Instructions</Text>
+                    <Text style={styles.instructionsText}>{instructions}</Text>
+                  </>
+                ) : (
+                  <Text style={styles.instructionsText}>No instructions provided.</Text>
+                )}
+
+                {resourceMaterials.length > 0 ? (
+                  <>
+                    <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Resources</Text>
+                    {resourceMaterials.map((mat) => (
+                      <TouchableOpacity
+                        key={mat.id}
+                        onPress={() => {
+                          const url = String(mat.provider_url || mat.url || '').trim();
+                          if (url && Platform.OS === 'web' && typeof window !== 'undefined') {
+                            window.open(url, '_blank', 'noopener,noreferrer');
+                          }
+                        }}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={styles.markupLink}>{mat.title || 'Resource'}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </>
+                ) : null}
+
+                {(assignment?.max_score != null || assignment?.rubric_id || workSpec?.points_possible) ? (
+                  <>
+                    <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Points</Text>
+                    <Text style={styles.instructionsText}>
+                      {workSpec?.points_possible
+                        ? `${workSpec.points_possible} points possible`
+                        : assignment?.max_score != null
+                          ? `${assignment.max_score} points possible`
+                          : 'Graded with rubric'}
+                    </Text>
+                  </>
+                ) : null}
+
+                {submissionHistoryLines.length > 0 ? (
+                  <>
+                    <Text style={[styles.sectionLabel, { marginTop: 14 }]}>History</Text>
+                    <View style={styles.historyBox}>
+                      {submissionHistoryLines.map((line, idx) => (
+                        <Text key={`submission-history-${idx}`} style={styles.historyText}>
+                          {line}
+                        </Text>
+                      ))}
+                    </View>
+                  </>
+                ) : null}
+
+                {reviewMarkupFiles.length > 0 ? (
+                  <>
+                    <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Marked-up files from parent</Text>
+                    <View style={styles.historyBox}>
+                      {reviewMarkupFiles.map((file) => (
+                        <TouchableOpacity
+                          key={file.id}
+                          onPress={() => {
+                            const url = String(file.provider_url || file.url || '').trim();
+                            if (url && Platform.OS === 'web' && typeof window !== 'undefined') {
+                              window.open(url, '_blank', 'noopener,noreferrer');
+                            }
+                          }}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={styles.markupLink}>{file.title || 'Marked-up file'}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                ) : null}
+
+                {String(reviewSnapshot?.review_feedback || assignment?.review_feedback || '').trim() ? (
+                  <>
+                    <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Parent feedback</Text>
+                    <Text style={styles.instructionsText}>
+                      {String(reviewSnapshot?.review_feedback || assignment?.review_feedback || '').trim()}
+                    </Text>
+                  </>
+                ) : null}
               </>
             ) : null}
 
-            {!viewOnly && submissionModes.quiz ? (
+            {activeTab === 'comments' ? (
+              <AssignmentCommentsPanel
+                assignmentId={assignment?.id}
+                assignment={assignment}
+                isParentViewer={viewOnly}
+                readOnly={viewOnly && !assignment?.id}
+              />
+            ) : null}
+
+            {activeTab === 'work' && viewOnly ? (
+              <>
+                {!assignment?.submitted_at && !studentSubmissionText && quizAnswerRows.every((r) => !r.answer) ? (
+                  <Text style={styles.instructionsText}>Not submitted yet.</Text>
+                ) : null}
+                {assignment?.submitted_at ? (
+                  <Text style={styles.contextWhen}>
+                    Submitted {formatWhenShort(assignment.submitted_at)}
+                  </Text>
+                ) : null}
+                {studentSubmissionText ? (
+                  <>
+                    <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Student response</Text>
+                    <Text style={styles.instructionsText}>{studentSubmissionText}</Text>
+                  </>
+                ) : null}
+                {quizAnswerRows.length > 0 ? (
+                  <>
+                    <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Quiz answers</Text>
+                    {quizAnswerRows.map((row, index) => (
+                      <View key={row.id} style={styles.quizField}>
+                        <Text style={styles.quizPrompt}>
+                          {index + 1}. {row.prompt}
+                        </Text>
+                        <Text style={styles.instructionsText}>{row.answer || '—'}</Text>
+                      </View>
+                    ))}
+                  </>
+                ) : null}
+                {String(reviewSnapshot?.review_feedback || assignment?.review_feedback || '').trim() ? (
+                  <>
+                    <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Your feedback</Text>
+                    <Text style={styles.instructionsText}>
+                      {String(reviewSnapshot?.review_feedback || assignment?.review_feedback || '').trim()}
+                    </Text>
+                  </>
+                ) : null}
+              </>
+            ) : null}
+
+            {activeTab === 'work' && !viewOnly ? (
+              <>
+            {!submissionModes.quiz && !submissionModes.text && !submissionModes.file
+              && !submissionModes.photo && !submissionModes.link && !submissionModes.parentCheckoff ? (
+              <Text style={styles.instructionsText}>No submission required for this assignment.</Text>
+            ) : null}
+            {submissionModes.quiz ? (
               <>
                 <Text style={styles.sectionLabel}>Questions</Text>
                 {submissionModes.quizQuestions.map((q, index) => (
@@ -808,6 +996,8 @@ export default function SubmitForReviewModal({
                 )}
               </TouchableOpacity>
             </View>
+              </>
+            ) : null}
           </ScrollView>
         </TouchableOpacity>
       </TouchableOpacity>
@@ -891,6 +1081,32 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#475569',
+  },
+  tabBar: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 16,
+    marginBottom: 4,
+  },
+  tabChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+  },
+  tabChipActive: {
+    borderColor: '#C7D2FE',
+    backgroundColor: '#EEF2FF',
+  },
+  tabChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  tabChipTextActive: {
+    color: '#4338CA',
   },
   instructionsText: {
     fontSize: 14,

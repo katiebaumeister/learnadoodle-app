@@ -10,6 +10,7 @@ export default function EventAttachmentsField({
   onMaterialChange,
   onAddNew,
   label = 'Attachments',
+  placeholder = 'Select attachment…',
 }) {
   const [materials, setMaterials] = useState([]);
   const [open, setOpen] = useState(false);
@@ -46,7 +47,7 @@ export default function EventAttachmentsField({
           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >
           <Text style={[styles.selectText, !selected && !loading && styles.selectPlaceholder, loading && { color: PLACEHOLDER }]}>
-            {loading ? 'Loading…' : selected?.title || selected?.name || 'Select attachment…'}
+            {loading ? 'Loading…' : selected?.title || selected?.name || placeholder}
           </Text>
           <ChevronDown size={16} color={MUTED} />
         </TouchableOpacity>

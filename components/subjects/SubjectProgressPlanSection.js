@@ -32,6 +32,7 @@ import {
 } from '../../lib/subjectProgressPlanCache';
 import { colors } from '../../theme/colors';
 import { formatSubjectPlanHeading } from '../../lib/formatSubjectPlanHeading';
+import { dispatchOpenSubjectUnitsEditor, normalizeSubjectUnitsEditorMethod } from '../../lib/subjectUnitsEditor';
 
 function dispatchOpenPlanModal(detail) {
   // Deprecated routing: keep call sites intact but disable plan modal navigation.
@@ -517,12 +518,20 @@ export default function SubjectProgressPlanSection({
     }
   }, [academicYearId, mergedScheduleRows, familyId, subjectId]);
 
-  /** Route subject-detail unit actions without opening deprecated plan modal. */
+  /** Route subject-detail unit actions through the canonical units editor. */
   const openCurriculumStructureAction = useCallback(
-    () => {
-      toast.push('Plan routing is deprecated. Use Schedule and School Year Settings instead.', 'info');
+    (method) => {
+      if (!subjectId) return;
+      dispatchOpenSubjectUnitsEditor({
+        subjectId,
+        subjectName,
+        method: normalizeSubjectUnitsEditorMethod(method),
+        childIds: assignedChildIds,
+        academicYearId,
+        hasExistingContent: hasUnitsOrLessonsContent,
+      });
     },
-    [toast]
+    [subjectId, subjectName, assignedChildIds, academicYearId, hasUnitsOrLessonsContent],
   );
 
   const handleDeletePlan = useCallback(async () => {

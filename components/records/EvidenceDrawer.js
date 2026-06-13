@@ -10,8 +10,7 @@ import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import NoteEditorModal from './NoteEditorModal';
 import { getAssignments } from '../../lib/services/assignmentsClient';
-import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
-import { reviewAssignment } from '../../lib/services/assignmentsClient';
+import WorkReviewModal from '../assignments/WorkReviewModal';
 import { safeImageUri } from '../../lib/safeImageUri';
 
 export default function EvidenceDrawer({
@@ -471,8 +470,7 @@ export default function EvidenceDrawer({
         children={children}
       />
 
-      {/* Assignment Review Modal */}
-      <AssignmentReviewModal
+      <WorkReviewModal
         visible={showReviewModal}
         assignment={selectedAssignment}
         onClose={() => {
@@ -480,17 +478,6 @@ export default function EvidenceDrawer({
           setSelectedAssignment(null);
         }}
         onReviewed={handleReviewed}
-      />
-        visible={showNoteEditor}
-        onClose={() => setShowNoteEditor(false)}
-        onSaved={(note) => {
-          if (onNoteSaved) onNoteSaved(note);
-          setShowNoteEditor(false);
-        }}
-        familyId={familyId}
-        defaultChildId={childIds.length === 1 ? childIds[0] : null}
-        linkedEvidenceId={evidenceId}
-        children={children}
       />
     </>
   );

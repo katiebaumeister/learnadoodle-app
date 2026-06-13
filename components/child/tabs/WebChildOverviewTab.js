@@ -198,6 +198,7 @@ export default function WebChildOverviewTab({ childId, familyId, onNavigate }) {
         <AssignmentsCard 
           childId={childId}
           familyId={familyId}
+          isParentViewer
           onNavigate={(section) => handleNavigate(`/child/${childId}?section=${section}`)}
         />
       </div>

@@ -48,6 +48,9 @@ import {
   deleteSubjectCascadeForFamily,
   dispatchSubjectDeletedSideEffects,
 } from '../../lib/services/deleteSubjectCascade';
+import { dispatchOpenSubjectUnitsEditor } from '../../lib/subjectUnitsEditor';
+import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
+import { curriculumStructureHasContent } from '../../lib/subjectUnitsEditorDraft';
 import PlannerSettingsContent from '../settings/PlannerSettingsContent';
 import FamilyPanel from '../settings/FamilyPanel';
 import AppModalShell from '../ui/AppModalShell';
@@ -2275,6 +2278,45 @@ export default function SubjectsPage({
     }
   }, [onEditSubject]);
 
+  const handleConfigureScheduleForSubject = useCallback((subject) => {
+    if (!subject) return;
+    handleSubjectClick(subject, null, null, 'configure_schedule');
+  }, [handleSubjectClick]);
+
+  const handleEditUnitsForSubject = useCallback((subject) => {
+    if (!subject?.id || !familyId) return;
+    const cached = getSubjectProgressCache(familyId, subject.id);
+    const units = Array.isArray(cached?.curriculumUnits) ? cached.curriculumUnits : [];
+    dispatchOpenSubjectUnitsEditor({
+      subjectId: subject.id,
+      subjectName: subject.name,
+      hasExistingContent: curriculumStructureHasContent({ units }),
+    });
+  }, [familyId]);
+
+  const getUnitsEditorLabelForSubject = useCallback((subjectId) => {
+    if (!familyId || subjectId == null) return 'Add units';
+    const cached = getSubjectProgressCache(familyId, subjectId);
+    const units = Array.isArray(cached?.curriculumUnits) ? cached.curriculumUnits : [];
+    return curriculumStructureHasContent({ units }) ? 'Edit units' : 'Add units';
+  }, [familyId]);
+
+  const handleNewAssignmentForSubject = useCallback((subject) => {
+    if (!subject?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const assignedChildren = subject.assignedChildren || [];
+    window.dispatchEvent(
+      new CustomEvent('openTaskModal', {
+        detail: {
+          date: new Date(),
+          eventType: 'Assignment',
+          subjectId: subject.id,
+          childIds: assignedChildren,
+          childId: assignedChildren[0] || null,
+        },
+      }),
+    );
+  }, []);
+
   const handleArchiveSubjectRequest = useCallback((subject) => {
     if (!subject?.id || !canManageSubjectsActions) return;
     setArchiveSubjectTarget(subject);
@@ -3210,6 +3252,12 @@ export default function SubjectsPage({
               ? handleEditSubjectForSubject
               : undefined
           }
+          onConfigureSchedule={
+            !isChildView && canManageSubjectsActions ? handleConfigureScheduleForSubject : undefined
+          }
+          onEditUnits={!isChildView && canManageSubjectsActions ? handleEditUnitsForSubject : undefined}
+          onNewAssignment={!isChildView && canManageSubjectsActions ? handleNewAssignmentForSubject : undefined}
+          getUnitsEditorLabelForSubject={getUnitsEditorLabelForSubject}
           onAddMaterial={onAddMaterial}
           searchPreviewSectionId={activeSearchPreviewSectionId}
           subjectDetailCache={subjectDetailCache}

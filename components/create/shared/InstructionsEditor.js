@@ -46,6 +46,9 @@ export default function InstructionsEditor({
   onChangeText,
   label = 'Instructions',
   placeholder = 'Add instructions for students…',
+  autoFocus = false,
+  hideToolbar = false,
+  textAreaStyle = null,
 }) {
   const inputRef = useRef(null);
   const selectionRef = useRef({ start: 0, end: 0 });
@@ -89,7 +92,9 @@ export default function InstructionsEditor({
 
   return (
     <View style={styles.formGroup}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+      {label != null && label !== '' ? (
+        <Text style={styles.fieldLabel}>{label}</Text>
+      ) : null}
       <TextInput
         ref={inputRef}
         value={value}
@@ -99,29 +104,32 @@ export default function InstructionsEditor({
         }}
         placeholder={placeholder}
         placeholderTextColor={PLACEHOLDER}
-        style={[styles.notesTextArea, { minHeight: 120 }]}
+        style={[styles.notesTextArea, { minHeight: 120 }, textAreaStyle]}
         multiline
         textAlignVertical="top"
+        autoFocus={autoFocus}
       />
-      <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
-        {[
-          { mode: 'bold', Icon: Bold, label: 'Bold' },
-          { mode: 'italic', Icon: Italic, label: 'Italic' },
-          { mode: 'underline', Icon: Underline, label: 'Underline' },
-          { mode: 'list', Icon: List, label: 'Bulleted list' },
-        ].map(({ mode, Icon, label }) => (
-          <TouchableOpacity
-            key={mode}
-            onPress={() => applyFormat(mode)}
-            style={styles.attachActionButton}
-            accessibilityLabel={label}
-            {...preventToolbarBlur}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Icon size={14} color="#374151" />
-          </TouchableOpacity>
-        ))}
-      </View>
+      {!hideToolbar ? (
+        <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
+          {[
+            { mode: 'bold', Icon: Bold, label: 'Bold' },
+            { mode: 'italic', Icon: Italic, label: 'Italic' },
+            { mode: 'underline', Icon: Underline, label: 'Underline' },
+            { mode: 'list', Icon: List, label: 'Bulleted list' },
+          ].map(({ mode, Icon, label: actionLabel }) => (
+            <TouchableOpacity
+              key={mode}
+              onPress={() => applyFormat(mode)}
+              style={styles.attachActionButton}
+              accessibilityLabel={actionLabel}
+              {...preventToolbarBlur}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Icon size={14} color="#374151" />
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
