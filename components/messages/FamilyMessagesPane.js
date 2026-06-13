@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
+import { SquarePen } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { getFamilyMembers } from '../../lib/apiClient';
 import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
@@ -16,14 +17,19 @@ import { sourceForChild } from '../ui/ChildAvatarCluster';
 import {
   ASSIGNMENT_SELECT,
   buildFamilyDmParticipants,
+  buildCompositeParticipant,
   buildPreviewMapFromUnified,
   formatDmRelativeTime,
+  mergeGroupThreadParticipants,
   participantKey,
   queryFamilyDirectMessages,
+  queryFamilyDmThreads,
   sortParticipantsByActivity,
 } from '../../lib/familyDmClient';
 import FamilyDmChat from './FamilyDmChat';
+import FamilyNewMessagePicker from './FamilyNewMessagePicker';
 import MessagesPaneCloseButton from './MessagesPaneCloseButton';
+import { ACCENT_TEXT, ACCENT_CHIP_BORDER, ACCENT_SOFT_BG } from '../create/shared/createModalStyles';
 
 function avatarSourceForParticipant(participant) {
   if (!participant) return resolveBundledAvatarSource('prof1');
@@ -53,6 +59,7 @@ export default function FamilyMessagesPane({
   const [previewMap, setPreviewMap] = useState(new Map());
   const [paneView, setPaneView] = useState('inbox');
   const [chatParticipant, setChatParticipant] = useState(null);
+  const [familyMembersList, setFamilyMembersList] = useState([]);
   const inboxReadyRef = useRef(false);
   const loadInFlightRef = useRef(false);
 
@@ -99,7 +106,7 @@ export default function FamilyMessagesPane({
         viewerChildId,
       });
 
-      const [dmResult, assignmentsResult] = await Promise.all([
+      const [dmResult, assignmentsResult, threadsResult] = await Promise.all([
         queryFamilyDirectMessages(supabase, { familyId, limit: 300, ascending: false }),
         supabase
           .from('assignments')
@@ -107,6 +114,7 @@ export default function FamilyMessagesPane({
           .eq('family_id', familyId)
           .order('updated_at', { ascending: false })
           .limit(300),
+        queryFamilyDmThreads(supabase, { familyId, limit: 50 }),
       ]);
 
       const messages = !dmResult.error && Array.isArray(dmResult.data) ? dmResult.data : [];
@@ -119,16 +127,31 @@ export default function FamilyMessagesPane({
       if (assignmentsResult.error) {
         console.warn('[FamilyMessagesPane] assignment previews unavailable:', assignmentsResult.error.message);
       }
+      if (threadsResult.error) {
+        console.warn('[FamilyMessagesPane] group threads unavailable:', threadsResult.error.message);
+      }
+
+      const withGroupThreads = mergeGroupThreadParticipants({
+        directParticipants: built,
+        threads: threadsResult.data,
+        children: childrenList,
+        members,
+        viewerRole,
+        viewerChildId,
+        currentUserId,
+      });
+
+      setFamilyMembersList(members);
 
       const previews = buildPreviewMapFromUnified({
         directMessages: messages,
         assignments,
-        participants: built,
+        participants: withGroupThreads,
         currentUserId,
         viewerRole,
         viewerChildId,
       });
-      const sorted = sortParticipantsByActivity(built, previews);
+      const sorted = sortParticipantsByActivity(withGroupThreads, previews);
 
       setParticipants(sorted);
       setPreviewMap(previews);
@@ -181,6 +204,24 @@ export default function FamilyMessagesPane({
     setPaneView('chat');
   }, []);
 
+  const handleOpenNewMessage = useCallback(() => {
+    setPaneView('picker');
+  }, []);
+
+  const handlePickerNext = useCallback(({ participants: selected, deliveryMode }) => {
+    const composite = buildCompositeParticipant(
+      selected,
+      deliveryMode === 'separate' ? 'separate' : 'group',
+    );
+    if (!composite) return;
+    setChatParticipant(composite);
+    setPaneView('chat');
+  }, []);
+
+  const handleBackFromPicker = useCallback(() => {
+    setPaneView('inbox');
+  }, []);
+
   const handleBackFromChat = useCallback(() => {
     setChatParticipant(null);
     setPaneView('inbox');
@@ -201,6 +242,22 @@ export default function FamilyMessagesPane({
     [participants, previewMap]
   );
 
+  if (paneView === 'picker') {
+    return (
+      <View style={[
+        styles.container,
+        styles.containerFlex,
+        placement === 'left' ? styles.containerLeft : styles.containerRight,
+      ]}>
+        <FamilyNewMessagePicker
+          participants={participants}
+          onBack={handleBackFromPicker}
+          onNext={handlePickerNext}
+        />
+      </View>
+    );
+  }
+
   if (paneView === 'chat' && chatParticipant) {
     return (
       <View style={[
@@ -215,9 +272,17 @@ export default function FamilyMessagesPane({
           viewerRole={viewerRole}
           viewerChildId={viewerChildId}
           familyChildren={familyChildren}
+          familyMembers={familyMembersList}
           childInviteSummaries={childInviteSummaries}
           onClosePane={showPaneClose ? onClosePane : null}
           onBack={handleBackFromChat}
+          onGroupThreadCreated={(threadId) => {
+            setChatParticipant((prev) => (
+              prev?.type === 'group' && threadId
+                ? { ...prev, threadId: String(threadId) }
+                : prev
+            ));
+          }}
         />
       </View>
     );
@@ -236,7 +301,7 @@ export default function FamilyMessagesPane({
 
       {loading && listRows.length === 0 ? (
         <View style={styles.loadingState}>
-          <ActivityIndicator size="small" color="#6366F1" />
+          <ActivityIndicator size="small" color={ACCENT_TEXT} />
         </View>
       ) : (
         <ScrollView
@@ -244,6 +309,24 @@ export default function FamilyMessagesPane({
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
+          <TouchableOpacity
+            style={styles.newMessageRow}
+            onPress={handleOpenNewMessage}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="New message"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <View style={styles.newMessageIconWrap}>
+              <SquarePen size={18} color={ACCENT_TEXT} />
+            </View>
+            <Text style={styles.newMessageLabel}>New message</Text>
+          </TouchableOpacity>
+
+          {listRows.length > 0 ? (
+            <Text style={styles.sectionLabel}>Recent</Text>
+          ) : null}
+
           {listRows.map(({ participant, key, preview, lastActivityAt }) => (
             <TouchableOpacity
               key={key}
@@ -317,6 +400,36 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingTop: 4,
     paddingBottom: 24,
+  },
+  newMessageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  newMessageIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: ACCENT_SOFT_BG,
+    borderWidth: 1,
+    borderColor: ACCENT_CHIP_BORDER,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  newMessageLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  sectionLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 6,
   },
   threadRow: {
     flexDirection: 'row',

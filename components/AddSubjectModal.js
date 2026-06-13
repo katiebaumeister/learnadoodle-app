@@ -1684,7 +1684,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: '#B8D7F9',
+    borderColor: '#9ECFFB',
   },
   addMaterialText: {
     fontSize: 13,

@@ -15,6 +15,10 @@ import { useToast } from '../Toast';
 import { parseChildIds } from '../../lib/services/subjectsClient';
 import AppModalShell from '../ui/AppModalShell';
 import { ModalFooter } from '../ui/ModalFooter';
+import {
+  createModalStyles as styles,
+  CREATE_EVENT_MODAL_MAX_WIDTH,
+} from '../create/shared/createModalStyles';
 import Dropdown from '../ui/Dropdown';
 import ConfirmDialog from '../ConfirmDialog';
 import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
@@ -32,14 +36,14 @@ import {
 import { saveSubjectGradingSettings } from '../../lib/services/subjectGradingSettingsClient';
 import {
   APPLY_SCOPE_FULL_YEAR,
-  APPLY_SCOPE_FORWARD,
   applySubjectScheduleToCalendar,
   buildInitialScheduleForm,
+  countSubjectScheduleEvents,
+  isScheduleFormConfigured,
+  removeSubjectScheduleFromCalendar,
 } from '../../lib/subjectConfigureSchedule';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
-const EDIT_SETTINGS_MAX_WIDTH = 880;
-
 const TERM_OPTIONS = [
   { id: 'full_year', label: 'Full year' },
   { id: 'fall_term', label: 'Fall term' },
@@ -101,15 +105,15 @@ export default function EditSubjectSettingsModal({
 
   const [gradingDraft, setGradingDraft] = useState(() => parseSubjectGradingSettings(initialGradingSettings));
 
-  const [weekdays, setWeekdays] = useState([1, 3, 5]);
-  const [startTime, setStartTime] = useState('09:00');
-  const [durationMinutes, setDurationMinutes] = useState('60');
+  const [weekdays, setWeekdays] = useState([]);
+  const [startTime, setStartTime] = useState('');
+  const [durationMinutes, setDurationMinutes] = useState('');
   const [startDate, setStartDate] = useState(null);
   const [endDate, setEndDate] = useState(null);
   const [datePickerTarget, setDatePickerTarget] = useState(null);
-  const [generatingSchedule, setGeneratingSchedule] = useState(false);
-  const [applyScope, setApplyScope] = useState(APPLY_SCOPE_FULL_YEAR);
-  const [hasExistingBlock, setHasExistingBlock] = useState(false);
+  const [removingScheduleEvents, setRemovingScheduleEvents] = useState(false);
+  const [showRemoveScheduleConfirm, setShowRemoveScheduleConfirm] = useState(false);
+  const [hasScheduleEvents, setHasScheduleEvents] = useState(false);
 
   const schoolYearTriggerRef = useRef(null);
   const schoolTermTriggerRef = useRef(null);
@@ -147,28 +151,54 @@ export default function EditSubjectSettingsModal({
 
   useEffect(() => {
     if (!visible || !subject || hasHydratedRef.current) return;
-    setSubjectName(subject.name || '');
-    setGrade(subject.grade || '');
-    setSchoolYear(subject.school_year || getDefaultSchoolYear());
-    setSchoolTerm(subject.school_term || getDefaultSchoolTerm());
-    setGradingDraft(parseSubjectGradingSettings(initialGradingSettings ?? subject.grading_settings));
-    const childIds = subject.child_id ? parseChildIds(subject.child_id) : [];
-    setSelectedChildIds(childIds);
+    let cancelled = false;
 
-    const initialSchedule = buildInitialScheduleForm({
-      subject,
-      planData: subjectPlanData,
-      academicYearId,
-    });
-    setWeekdays(initialSchedule.weekdays);
-    setStartTime(initialSchedule.startTime);
-    setDurationMinutes(String(initialSchedule.durationMinutes));
-    setStartDate(initialSchedule.startDate);
-    setEndDate(initialSchedule.endDate);
-    setHasExistingBlock(!!initialSchedule.hasExistingBlock);
-    setApplyScope(initialSchedule.hasExistingBlock ? APPLY_SCOPE_FORWARD : APPLY_SCOPE_FULL_YEAR);
-    hasHydratedRef.current = true;
-  }, [visible, subject, subjectPlanData, academicYearId, initialGradingSettings]);
+    const hydrate = async () => {
+      setSubjectName(subject.name || '');
+      setGrade(subject.grade || '');
+      setSchoolYear(subject.school_year || getDefaultSchoolYear());
+      setSchoolTerm(subject.school_term || getDefaultSchoolTerm());
+      setGradingDraft(parseSubjectGradingSettings(initialGradingSettings ?? subject.grading_settings));
+      const childIds = subject.child_id ? parseChildIds(subject.child_id) : [];
+      setSelectedChildIds(childIds);
+
+      const initialSchedule = buildInitialScheduleForm({
+        subject,
+        planData: subjectPlanData,
+        academicYearId,
+      });
+      if (cancelled) return;
+      setWeekdays(initialSchedule.weekdays);
+      setStartTime(initialSchedule.startTime || '');
+      setDurationMinutes(
+        initialSchedule.durationMinutes === '' || initialSchedule.durationMinutes == null
+          ? ''
+          : String(initialSchedule.durationMinutes),
+      );
+      setStartDate(initialSchedule.startDate);
+      setEndDate(initialSchedule.endDate);
+
+      try {
+        const eventCount = await countSubjectScheduleEvents({
+          familyId,
+          subjectId: subject.id,
+          academicYearId: academicYearId || initialSchedule.academicYearId,
+        });
+        if (!cancelled) {
+          setHasScheduleEvents(!!initialSchedule.hasExistingBlock || eventCount > 0);
+        }
+      } catch (_) {
+        if (!cancelled) {
+          setHasScheduleEvents(!!initialSchedule.hasExistingBlock);
+        }
+      }
+
+      hasHydratedRef.current = true;
+    };
+
+    hydrate();
+    return () => { cancelled = true; };
+  }, [visible, subject, subjectPlanData, academicYearId, initialGradingSettings, familyId]);
 
   useEffect(() => {
     if (propChildren?.length) {
@@ -241,10 +271,36 @@ export default function EditSubjectSettingsModal({
   };
 
   const validateSchedule = () => {
+    if (!isScheduleFormConfigured({ weekdays, startTime, durationMinutes, startDate, endDate })) {
+      return null;
+    }
     if (!weekdays.length) return 'Select at least one day.';
+    if (!String(startTime || '').trim()) return 'Enter a start time.';
     if (!startDate || !endDate) return 'Pick start and end dates.';
     if (!Number(durationMinutes) || Number(durationMinutes) <= 0) return 'Duration must be at least 1 minute.';
     return null;
+  };
+
+  const applyScheduleIfConfigured = async () => {
+    if (!isScheduleFormConfigured({ weekdays, startTime, durationMinutes, startDate, endDate })) {
+      return null;
+    }
+    const scheduleError = validateSchedule();
+    if (scheduleError) throw new Error(scheduleError);
+    return applySubjectScheduleToCalendar({
+      familyId,
+      subject: { ...subject, name: subjectName.trim() || subject.name },
+      assignedChildIds: effectiveAssignedChildIds,
+      allChildIds: effectiveAllChildIds,
+      weekdays,
+      startTime,
+      durationMinutes: Number(durationMinutes),
+      startDate,
+      endDate,
+      academicYearId,
+      planData: subjectPlanData,
+      applyScope: APPLY_SCOPE_FULL_YEAR,
+    });
   };
 
   const handleSave = async () => {
@@ -281,7 +337,17 @@ export default function EditSubjectSettingsModal({
 
       await saveSubjectGradingSettings(subject.id, familyId, gradingDraft);
 
-      toast.push(`"${subjectName.trim()}" settings saved`, 'success');
+      const scheduleResult = await applyScheduleIfConfigured();
+      if (scheduleResult) {
+        setHasScheduleEvents(true);
+      }
+
+      toast.push(
+        scheduleResult
+          ? `"${subjectName.trim()}" saved and calendar updated`
+          : `"${subjectName.trim()}" settings saved`,
+        'success',
+      );
       onSaved?.(data?.[0] || { ...subject, name: subjectName.trim() });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
@@ -298,39 +364,32 @@ export default function EditSubjectSettingsModal({
     }
   };
 
-  const handleGenerateSchedule = async () => {
-    const scheduleError = validateSchedule();
-    if (scheduleError) {
-      setValidationBanner(scheduleError);
-      return;
-    }
-    setGeneratingSchedule(true);
+  const handleRemoveScheduleEvents = async () => {
+    if (!subject?.id || !familyId || removingScheduleEvents) return;
+    setRemovingScheduleEvents(true);
     setValidationBanner('');
     try {
-      const result = await applySubjectScheduleToCalendar({
+      await removeSubjectScheduleFromCalendar({
         familyId,
-        subject: { ...subject, name: subjectName.trim() || subject.name },
-        assignedChildIds: effectiveAssignedChildIds,
-        allChildIds: effectiveAllChildIds,
-        weekdays,
-        startTime,
-        durationMinutes: Number(durationMinutes),
-        startDate,
-        endDate,
+        subjectId: subject.id,
         academicYearId,
-        planData: subjectPlanData,
-        applyScope: hasExistingBlock ? applyScope : APPLY_SCOPE_FULL_YEAR,
       });
-      toast.push(`Generated ${result?.created ?? 0} calendar events`, 'success');
-      setHasExistingBlock(true);
+      setHasScheduleEvents(false);
+      setWeekdays([]);
+      setStartTime('');
+      setDurationMinutes('');
+      setStartDate(null);
+      setEndDate(null);
+      toast.push('Removed scheduled calendar events for this subject', 'success');
       onSaved?.(subject);
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: subject.id } }));
       }
     } catch (err) {
-      setValidationBanner(err?.message || 'Failed to generate calendar events');
+      setValidationBanner(err?.message || 'Could not remove calendar events.');
     } finally {
-      setGeneratingSchedule(false);
+      setRemovingScheduleEvents(false);
+      setShowRemoveScheduleConfirm(false);
     }
   };
 
@@ -357,15 +416,15 @@ export default function EditSubjectSettingsModal({
   return (
     <>
       <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-        <View style={styles.overlay}>
+        <View style={localStyles.overlay}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
-          <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.modalWrap}>
+          <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={localStyles.modalWrap}>
             <AppModalShell
               title="Subject settings"
               onClose={onClose}
               disableShellScroll
-              shellStyle={styles.settingsShell}
-              titleRowStyle={styles.titleRow}
+              shellStyle={localStyles.settingsShell}
+              titleRowStyle={styles.compactTitleRow}
               contentContainerStyle={styles.contentContainer}
               bodyStyle={styles.shellBody}
               footer={(
@@ -377,21 +436,21 @@ export default function EditSubjectSettingsModal({
                   onDelete={() => setShowDeleteConfirm(true)}
                   onPrimary={handleSave}
                   accent="#9ECFFB"
-                  disabled={saving || deletingSubject || generatingSchedule}
+                  disabled={saving || deletingSubject || removingScheduleEvents}
                   loading={saving || deletingSubject}
                 />
               )}
             >
               {validationBanner ? (
-                <View style={styles.validationBanner}>
+                <View style={styles.validationBannerContainer}>
                   <Text style={styles.validationBannerText}>{validationBanner}</Text>
                 </View>
               ) : null}
 
               <ScrollView
                 ref={formScrollRef}
-                style={styles.formScroll}
-                contentContainerStyle={styles.formScrollContent}
+                style={localStyles.formScroll}
+                contentContainerStyle={localStyles.formScrollContent}
                 showsVerticalScrollIndicator
                 keyboardShouldPersistTaps="handled"
               >
@@ -400,149 +459,147 @@ export default function EditSubjectSettingsModal({
                     sectionOffsetsRef.current.details = e.nativeEvent.layout.y;
                   }}
                 >
-                  <Text style={styles.sectionTitle}>Details</Text>
-                  <View style={styles.sectionPanel}>
-                    <View style={styles.formGroup}>
-                      <Text style={styles.fieldLabel}>Subject name</Text>
-                      <TextInput
-                        style={styles.fieldInput}
-                        value={subjectName}
-                        onChangeText={setSubjectName}
-                        placeholder="e.g., World History"
-                        placeholderTextColor="#9ca3af"
-                      />
-                    </View>
+                  <Text style={styles.sectionHeading}>Details</Text>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.fieldLabel}>Subject name</Text>
+                    <TextInput
+                      style={styles.fieldInput}
+                      value={subjectName}
+                      onChangeText={setSubjectName}
+                      placeholder="e.g., World History"
+                      placeholderTextColor="#9ca3af"
+                    />
+                  </View>
 
-                    <View style={styles.formGroup}>
-                      <Text style={styles.fieldLabel}>Students</Text>
-                      {loadingChildren ? (
-                        <Text style={styles.loadingText}>Loading students…</Text>
-                      ) : (
-                        <View style={styles.chipRow}>
-                          {children.map((child) => {
-                            const isSelected = selectedChildIds.includes(child.id);
-                            return (
-                              <TouchableOpacity
-                                key={child.id}
-                                style={[styles.childChip, isSelected && styles.childChipSelected]}
-                                onPress={() => {
-                                  setSelectedChildIds((prev) =>
-                                    isSelected
-                                      ? prev.filter((id) => id !== child.id)
-                                      : [...prev, child.id]
-                                  );
-                                }}
-                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                              >
-                                <Text style={[styles.childChipText, isSelected && styles.childChipTextSelected]}>
-                                  {child.first_name || child.name}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
-                      )}
-                    </View>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.fieldLabel}>Students</Text>
+                    {loadingChildren ? (
+                      <Text style={localStyles.loadingText}>Loading students…</Text>
+                    ) : (
+                      <View style={styles.chipRow}>
+                        {children.map((child) => {
+                          const isSelected = selectedChildIds.includes(child.id);
+                          return (
+                            <TouchableOpacity
+                              key={child.id}
+                              style={[localStyles.childChip, isSelected && localStyles.childChipSelected]}
+                              onPress={() => {
+                                setSelectedChildIds((prev) =>
+                                  isSelected
+                                    ? prev.filter((id) => id !== child.id)
+                                    : [...prev, child.id]
+                                );
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={[localStyles.childChipText, isSelected && localStyles.childChipTextSelected]}>
+                                {child.first_name || child.name}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    )}
+                  </View>
 
-                    <View style={styles.formGroup}>
-                      <Text style={styles.fieldLabel}>Grade level</Text>
-                      <View style={styles.gradeChipRow}>
-                        {GRADE_OPTIONS.map((gradeOption) => (
+                  <View style={styles.formGroup}>
+                    <Text style={styles.fieldLabel}>Grade level</Text>
+                    <View style={localStyles.gradeChipRow}>
+                      {GRADE_OPTIONS.map((gradeOption) => (
+                        <TouchableOpacity
+                          key={gradeOption}
+                          style={[localStyles.gradeChip, grade === gradeOption && localStyles.gradeChipSelected]}
+                          onPress={() => setGrade(gradeOption)}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={[localStyles.gradeChipText, grade === gradeOption && localStyles.gradeChipTextSelected]}>
+                            {gradeOption}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+
+                  <View style={localStyles.scopeRow}>
+                    <View style={localStyles.scopeField}>
+                      <Text style={styles.fieldLabel}>School year</Text>
+                      <TouchableOpacity
+                        ref={schoolYearTriggerRef}
+                        style={styles.select}
+                        onPress={() => {
+                          setShowSchoolTermDropdown(false);
+                          setShowSchoolYearDropdown((open) => !open);
+                        }}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={styles.selectText}>{schoolYear}</Text>
+                        <ChevronDown size={18} color="#6b7280" />
+                      </TouchableOpacity>
+                      <Dropdown
+                        visible={showSchoolYearDropdown}
+                        triggerRef={schoolYearTriggerRef}
+                        onClose={() => setShowSchoolYearDropdown(false)}
+                        placement="bottom-start"
+                        matchTriggerWidth
+                        maxHeight={220}
+                      >
+                        {schoolYearOptions.map((opt) => (
                           <TouchableOpacity
-                            key={gradeOption}
-                            style={[styles.gradeChip, grade === gradeOption && styles.gradeChipSelected]}
-                            onPress={() => setGrade(gradeOption)}
-                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            key={opt}
+                            style={[localStyles.menuOption, opt === schoolYear && localStyles.menuOptionSelected]}
+                            onPress={() => {
+                              setSchoolYear(opt);
+                              setShowSchoolYearDropdown(false);
+                            }}
                           >
-                            <Text style={[styles.gradeChipText, grade === gradeOption && styles.gradeChipTextSelected]}>
-                              {gradeOption}
+                            <Text style={[localStyles.menuOptionText, opt === schoolYear && localStyles.menuOptionTextSelected]}>
+                              {opt}
                             </Text>
+                            {opt === schoolYear ? <CheckCircle size={16} color="#6BB3E8" /> : null}
                           </TouchableOpacity>
                         ))}
-                      </View>
+                      </Dropdown>
                     </View>
-
-                    <View style={styles.stackedFields}>
-                      <View style={styles.scopeField}>
-                        <Text style={styles.fieldLabel}>School year</Text>
-                        <TouchableOpacity
-                          ref={schoolYearTriggerRef}
-                          style={styles.dropdownButton}
-                          onPress={() => {
-                            setShowSchoolTermDropdown(false);
-                            setShowSchoolYearDropdown((open) => !open);
-                          }}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={styles.dropdownButtonText}>{schoolYear}</Text>
-                          <ChevronDown size={18} color="#6b7280" />
-                        </TouchableOpacity>
-                        <Dropdown
-                          visible={showSchoolYearDropdown}
-                          triggerRef={schoolYearTriggerRef}
-                          onClose={() => setShowSchoolYearDropdown(false)}
-                          placement="bottom-start"
-                          matchTriggerWidth
-                          maxHeight={220}
-                        >
-                          {schoolYearOptions.map((opt) => (
-                            <TouchableOpacity
-                              key={opt}
-                              style={[styles.dropdownOption, opt === schoolYear && styles.dropdownOptionSelected]}
-                              onPress={() => {
-                                setSchoolYear(opt);
-                                setShowSchoolYearDropdown(false);
-                              }}
-                            >
-                              <Text style={[styles.dropdownOptionText, opt === schoolYear && styles.dropdownOptionTextSelected]}>
-                                {opt}
-                              </Text>
-                              {opt === schoolYear ? <CheckCircle size={16} color="#3b82f6" /> : null}
-                            </TouchableOpacity>
-                          ))}
-                        </Dropdown>
-                      </View>
-                      <View style={styles.scopeField}>
-                        <Text style={styles.fieldLabel}>Term</Text>
-                        <TouchableOpacity
-                          ref={schoolTermTriggerRef}
-                          style={styles.dropdownButton}
-                          onPress={() => {
-                            setShowSchoolYearDropdown(false);
-                            setShowSchoolTermDropdown((open) => !open);
-                          }}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={styles.dropdownButtonText}>
-                            {(TERM_OPTIONS.find((opt) => opt.id === schoolTerm) || TERM_OPTIONS[0]).label}
-                          </Text>
-                          <ChevronDown size={18} color="#6b7280" />
-                        </TouchableOpacity>
-                        <Dropdown
-                          visible={showSchoolTermDropdown}
-                          triggerRef={schoolTermTriggerRef}
-                          onClose={() => setShowSchoolTermDropdown(false)}
-                          placement="bottom-start"
-                          matchTriggerWidth
-                          maxHeight={220}
-                        >
-                          {TERM_OPTIONS.map((opt) => (
-                            <TouchableOpacity
-                              key={opt.id}
-                              style={[styles.dropdownOption, opt.id === schoolTerm && styles.dropdownOptionSelected]}
-                              onPress={() => {
-                                setSchoolTerm(opt.id);
-                                setShowSchoolTermDropdown(false);
-                              }}
-                            >
-                              <Text style={[styles.dropdownOptionText, opt.id === schoolTerm && styles.dropdownOptionTextSelected]}>
-                                {opt.label}
-                              </Text>
-                              {opt.id === schoolTerm ? <CheckCircle size={16} color="#3b82f6" /> : null}
-                            </TouchableOpacity>
-                          ))}
-                        </Dropdown>
-                      </View>
+                    <View style={localStyles.scopeField}>
+                      <Text style={styles.fieldLabel}>Term</Text>
+                      <TouchableOpacity
+                        ref={schoolTermTriggerRef}
+                        style={styles.select}
+                        onPress={() => {
+                          setShowSchoolYearDropdown(false);
+                          setShowSchoolTermDropdown((open) => !open);
+                        }}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={styles.selectText}>
+                          {(TERM_OPTIONS.find((opt) => opt.id === schoolTerm) || TERM_OPTIONS[0]).label}
+                        </Text>
+                        <ChevronDown size={18} color="#6b7280" />
+                      </TouchableOpacity>
+                      <Dropdown
+                        visible={showSchoolTermDropdown}
+                        triggerRef={schoolTermTriggerRef}
+                        onClose={() => setShowSchoolTermDropdown(false)}
+                        placement="bottom-start"
+                        matchTriggerWidth
+                        maxHeight={220}
+                      >
+                        {TERM_OPTIONS.map((opt) => (
+                          <TouchableOpacity
+                            key={opt.id}
+                            style={[localStyles.menuOption, opt.id === schoolTerm && localStyles.menuOptionSelected]}
+                            onPress={() => {
+                              setSchoolTerm(opt.id);
+                              setShowSchoolTermDropdown(false);
+                            }}
+                          >
+                            <Text style={[localStyles.menuOptionText, opt.id === schoolTerm && localStyles.menuOptionTextSelected]}>
+                              {opt.label}
+                            </Text>
+                            {opt.id === schoolTerm ? <CheckCircle size={16} color="#6BB3E8" /> : null}
+                          </TouchableOpacity>
+                        ))}
+                      </Dropdown>
                     </View>
                   </View>
                 </View>
@@ -554,9 +611,8 @@ export default function EditSubjectSettingsModal({
                     sectionOffsetsRef.current.schedule = e.nativeEvent.layout.y;
                   }}
                 >
-                  <Text style={styles.sectionTitle}>Schedule</Text>
-                  <View style={styles.sectionPanel}>
-                    <SubjectScheduleFields
+                  <Text style={styles.sectionHeading}>Schedule</Text>
+                  <SubjectScheduleFields
                       embeddedInForm
                       weekdays={weekdays}
                       onWeekdaysChange={setWeekdays}
@@ -570,34 +626,24 @@ export default function EditSubjectSettingsModal({
                       onEndDateChange={setEndDate}
                       onOpenStartDatePicker={() => setDatePickerTarget('start')}
                       onOpenEndDatePicker={() => setDatePickerTarget('end')}
-                      hasExistingBlock={hasExistingBlock}
-                      applyScope={applyScope}
-                      onApplyScopeChange={setApplyScope}
-                      showGenerateButton
-                      onGenerate={handleGenerateSchedule}
-                      generating={generatingSchedule}
-                      generateDisabled={!weekdays.length || !startDate || !endDate}
+                      showRemoveEventsButton={hasScheduleEvents}
+                      onRemoveAllEvents={() => setShowRemoveScheduleConfirm(true)}
+                      removingEvents={removingScheduleEvents}
                     />
-                  </View>
                 </View>
-
-                <View style={styles.sectionDivider} />
 
                 <View
                   onLayout={(e) => {
                     sectionOffsetsRef.current.grades = e.nativeEvent.layout.y;
                   }}
                 >
-                  <Text style={styles.sectionTitle}>Grades</Text>
-                  <View style={styles.sectionPanel}>
-                    <SubjectGradingFields
-                      draft={gradingDraft}
-                      onUpdateDraft={updateGradingDraft}
-                      onUpdateCategory={updateCategory}
-                      onRemoveCategory={removeCategory}
-                      onAddCategory={addCategory}
-                    />
-                  </View>
+                  <SubjectGradingFields
+                    draft={gradingDraft}
+                    onUpdateDraft={updateGradingDraft}
+                    onUpdateCategory={updateCategory}
+                    onRemoveCategory={removeCategory}
+                    onAddCategory={addCategory}
+                  />
                 </View>
               </ScrollView>
             </AppModalShell>
@@ -617,6 +663,19 @@ export default function EditSubjectSettingsModal({
       />
 
       <ConfirmDialog
+        visible={showRemoveScheduleConfirm}
+        title="Remove all scheduled events?"
+        message="This removes plan-generated calendar events for this subject. Lessons you linked to curriculum are not deleted."
+        confirmLabel={removingScheduleEvents ? 'Removing…' : 'Remove all events'}
+        cancelLabel="Cancel"
+        destructive
+        onCancel={() => {
+          if (!removingScheduleEvents) setShowRemoveScheduleConfirm(false);
+        }}
+        onConfirm={handleRemoveScheduleEvents}
+      />
+
+      <ConfirmDialog
         visible={showDeleteConfirm}
         title="Delete subject?"
         message="This will permanently delete this subject and related planning links. This cannot be undone."
@@ -632,203 +691,123 @@ export default function EditSubjectSettingsModal({
   );
 }
 
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
+const localStyles = StyleSheet.create({
+  overlay: styles.overlay,
   modalWrap: {
-    width: '100%',
-    maxWidth: EDIT_SETTINGS_MAX_WIDTH,
+    ...styles.modalWrap,
+    maxWidth: CREATE_EVENT_MODAL_MAX_WIDTH,
   },
   settingsShell: {
-    height: Platform.OS === 'web' ? '88vh' : '88%',
-    maxHeight: Platform.OS === 'web' ? 920 : undefined,
-    minHeight: 520,
-    borderRadius: 28,
-    overflow: 'hidden',
+    ...styles.compactShell,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
+      maxHeight: '90vh',
     }),
-  },
-  titleRow: {
-    paddingTop: 18,
-    paddingBottom: 10,
-  },
-  contentContainer: {
-    flex: 1,
-    minHeight: 0,
-    paddingBottom: 0,
-  },
-  shellBody: {
-    flex: 1,
-    minHeight: 0,
-    paddingTop: 0,
-  },
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#0F172A',
-    marginBottom: 14,
-    letterSpacing: -0.2,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  sectionDivider: {
-    height: 1,
-    backgroundColor: 'rgba(148, 163, 184, 0.18)',
-    marginVertical: 22,
-  },
-  sectionPanel: {
-    gap: 4,
-  },
-  validationBanner: {
-    marginBottom: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FECACA',
-  },
-  validationBannerText: {
-    fontSize: 13,
-    color: '#B91C1C',
   },
   formScroll: {
     flex: 1,
     minHeight: 0,
     ...(Platform.OS === 'web' && {
       overflowY: 'auto',
+      maxHeight: 'calc(90vh - 132px)',
     }),
   },
   formScrollContent: {
-    paddingBottom: 20,
+    paddingBottom: 12,
   },
-  formGroup: {
-    marginBottom: 18,
-  },
-  fieldLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#64748B',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  fieldInput: {
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    fontSize: 15,
-    color: '#0F172A',
-    backgroundColor: '#FFFFFF',
-    ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
-  },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  childChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    backgroundColor: '#FFFFFF',
-  },
-  childChipSelected: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#9ECFFB',
-  },
-  childChipText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#475569',
-  },
-  childChipTextSelected: {
-    color: '#0F172A',
-    fontWeight: '600',
-  },
-  gradeChipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  gradeChip: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-  },
-  gradeChipSelected: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#64748B',
-  },
-  gradeChipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#64748B',
-  },
-  gradeChipTextSelected: {
-    color: '#0F172A',
-  },
-  stackedFields: {
+  scopeRow: {
     flexDirection: 'row',
     gap: 12,
     flexWrap: 'wrap',
+    marginBottom: 4,
   },
   scopeField: {
     flex: 1,
     minWidth: 180,
-    marginBottom: 8,
-  },
-  dropdownButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    backgroundColor: '#FFFFFF',
-  },
-  dropdownButtonText: {
-    fontSize: 15,
-    color: '#0F172A',
-  },
-  dropdownOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  dropdownOptionSelected: {
-    backgroundColor: '#F8FAFC',
-  },
-  dropdownOptionText: {
-    fontSize: 14,
-    color: '#334155',
-  },
-  dropdownOptionTextSelected: {
-    fontWeight: '600',
-    color: '#0F172A',
   },
   loadingText: {
     fontSize: 14,
-    color: '#94A3B8',
+    color: '#6b7280',
+    fontStyle: 'italic',
+  },
+  childChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  childChipSelected: {
+    borderColor: '#85C4F2',
+    backgroundColor: 'rgba(133, 196, 242, 0.2)',
+  },
+  childChipText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  childChipTextSelected: {
+    color: '#6BB3E8',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  gradeChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    alignItems: 'center',
+  },
+  gradeChip: {
+    minWidth: 32,
+    height: 32,
+    paddingHorizontal: 6,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gradeChipSelected: {
+    borderColor: '#85C4F2',
+    backgroundColor: 'rgba(133, 196, 242, 0.2)',
+  },
+  gradeChipText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  gradeChipTextSelected: {
+    color: '#6BB3E8',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  menuOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  menuOptionSelected: {
+    backgroundColor: 'rgba(133, 196, 242, 0.12)',
+  },
+  menuOptionText: {
+    fontSize: 14,
+    color: '#374151',
+  },
+  menuOptionTextSelected: {
+    color: '#6BB3E8',
+    fontWeight: '600',
   },
 });

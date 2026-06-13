@@ -27,6 +27,7 @@ import { resolveSection, getSectionNavTab, getSectionsForTab, SECTION_TITLE_BY_T
 import SecondaryNavShell from './layout/SecondaryNavShell';
 import CalendarEventCreateModal from './create/CalendarEventCreateModal';
 import AssignmentCreateModal from './create/AssignmentCreateModal';
+import TaskCreateModal from './TaskCreateModal';
 import { resolveCreateModalKind, createPaneOptionToModalKind } from '../lib/create/resolveCreateModalKind';
 import AssignmentSubmittalRequestModal from './subjects/AssignmentSubmittalRequestModal';
 import EventModal from './events/EventModal';
@@ -67,6 +68,9 @@ import ProgressForecastModal from './planner/modals/ProgressForecastModal';
 import SchedulingAssistant from './planner/SchedulingAssistant';
 import PlannerSettingsPopover from './planner/PlannerSettingsPopover';
 import PlannerSmartActionsMenu from './planner/PlannerSmartActionsMenu';
+import AppModalShell from './ui/AppModalShell';
+import { ModalFooter } from './ui/ModalFooter';
+import { createModalStyles as exportModalStyles } from './create/shared/createModalStyles';
 import OnboardingModal from './onboarding/OnboardingModal';
 import ExplorerTourOverlay from './onboarding/ExplorerTourOverlay';
 import LearnerQuickStartModal from './onboarding/LearnerQuickStartModal';
@@ -86,6 +90,8 @@ import RebalanceModal from './year/RebalanceModal';
 import FamilyMessagesPane from './messages/FamilyMessagesPane';
 import FamilyCreatePane from './create/FamilyCreatePane';
 import PlannerCreateMenu from './create/PlannerCreateMenu';
+import { defaultPlannerExportColumnSelection, PLANNER_EXPORT_OPTIONAL_COLUMN_DEFS } from '../lib/plannerExportOptionalColumns';
+import { useHoverDropdown } from './ui/useHoverDropdown';
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
 import { AVATAR_KEYS } from '../assets/imageAssetMap';
 /**
@@ -189,6 +195,12 @@ function isFamilyShellTab(tab) {
     tab.startsWith('notes-pages-')
   );
 }
+
+const PLANNER_EVENT_TYPE_FILTERS = [
+  { key: 'Lesson', label: 'Lesson', color: '#E3F0FF' },
+  { key: 'Assignment', label: 'Assignment', color: '#DFF7E3' },
+  { key: 'Day Off', label: 'Day off', color: '#FFEDE2' },
+];
 
 export default function WebLayout({ navigation, routeParams, session: propSession = null, userRole: propUserRole = null }) {
   const { user, signOut } = useAuth();
@@ -474,6 +486,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const smartActionsButtonRef = useRef(null);
   const [showPlannerCreateMenu, setShowPlannerCreateMenu] = useState(false);
   const plannerCreateButtonRef = useRef(null);
+  const smartActionsHover = useHoverDropdown({
+    open: showSmartActionsMenu,
+    setOpen: setShowSmartActionsMenu,
+    onOpen: () => setShowPlannerCreateMenu(false),
+  });
+  const plannerCreateHover = useHoverDropdown({
+    open: showPlannerCreateMenu,
+    setOpen: setShowPlannerCreateMenu,
+    onOpen: () => setShowSmartActionsMenu(false),
+  });
   const [showAnalyticsDashboard, setShowAnalyticsDashboard] = useState(false);
   const [showProgressReport, setShowProgressReport] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -535,7 +557,28 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   const openCreateModal = useCallback((kind, detail = {}) => {
     if (kind === 'lesson') {
-      openUnitsAndLessonsModal(detail);
+      if (sessionRestricted && !familyUserControls.allowed('events')) {
+        Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
+        return;
+      }
+      const date = detail.date || new Date();
+      const incomingChildIds = detail.childIds && Array.isArray(detail.childIds)
+        ? detail.childIds
+        : (detail.childId ? [detail.childId] : []);
+      const primaryChildId = incomingChildIds.length > 0 ? incomingChildIds[0] : null;
+
+      setTaskModalDate(date);
+      setTaskModalChildIds(incomingChildIds);
+      setTaskModalChildId(primaryChildId);
+      setTaskModalDefaultSubjectId(detail.subjectId || null);
+      setTaskModalDefaultEventType('Lesson');
+      setTaskModalDefaultPlacement(detail.placement || 'calendar');
+      setTaskModalDefaultStartTime(detail.startTime || null);
+      setTaskModalDefaultTitle(detail.title ?? null);
+      setTaskModalDefaultMaterialId(detail.materialId || null);
+      setTaskModalSubmittalAfterCreate(false);
+      taskModalSubmittalAfterCreateRef.current = false;
+      setCreateModalKind('lesson');
       return;
     }
     const date = detail.date || new Date();
@@ -556,7 +599,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     setTaskModalSubmittalAfterCreate(!!detail.submittalAfterCreate);
     taskModalSubmittalAfterCreateRef.current = !!detail.submittalAfterCreate;
     setCreateModalKind(kind);
-  }, [openUnitsAndLessonsModal]);
+  }, [familyUserControls, sessionRestricted]);
 
   const openDoodleSearch = useCallback((options = {}) => {
     if (childDoodleBotDisabled) return;
@@ -662,6 +705,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [homeNeedsInitialData, homeInitialDataReady]);
 
   const [selectedCalendarChildren, setSelectedCalendarChildren] = useState(null);
+  const [selectedEventTypes, setSelectedEventTypes] = useState(null);
   const [filterExpanded, setFilterExpanded] = useState(false);
   const filterButtonRef = useRef(null);
   const [filterDropdownPosition, setFilterDropdownPosition] = useState({ top: 0, left: 0 });
@@ -672,6 +716,26 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const settingsButtonRef = useRef(null);
   const [filtersDropdownPosition, setFiltersDropdownPosition] = useState({ top: 0, left: 0 });
   const filtersDropdownRef = useRef(null);
+  const updateFiltersDropdownPosition = useCallback(() => {
+    if (Platform.OS !== 'web' || !topToolbarFiltersButtonRef.current) return;
+    const node = topToolbarFiltersButtonRef.current._nativeNode || topToolbarFiltersButtonRef.current;
+    if (node && typeof node.getBoundingClientRect === 'function') {
+      const rect = node.getBoundingClientRect();
+      setFiltersDropdownPosition({
+        top: rect.bottom + 4,
+        left: rect.left,
+      });
+    }
+  }, []);
+  const filtersHover = useHoverDropdown({
+    open: showFiltersDropdown,
+    setOpen: setShowFiltersDropdown,
+    onOpen: () => {
+      setShowSmartActionsMenu(false);
+      setShowPlannerCreateMenu(false);
+      updateFiltersDropdownPosition();
+    },
+  });
   const [googleCalendarConnected, setGoogleCalendarConnected] = useState(false);
   const connectedAccounts = useMemo(() => {
     const allowed = new Set(['google', 'apple']);
@@ -758,19 +822,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportStartDate, setExportStartDate] = useState('');
   const [exportEndDate, setExportEndDate] = useState('');
-  const [exportColumns, setExportColumns] = useState({
-    instructionalTime: false,
-    plan: false,
-    location: false,
-    mode: false,
-    instructor: false,
-    subject: false,
-    grade: false,
-    unit: false,
-    percentOfTotal: false,
-    attachmentTitle: false,
-    notes: false,
-  });
+  const [exportColumns, setExportColumns] = useState(defaultPlannerExportColumnSelection);
   const [showExportStartDatePicker, setShowExportStartDatePicker] = useState(false);
   const [showExportEndDatePicker, setShowExportEndDatePicker] = useState(false);
   const [exportStartCalendarMonth, setExportStartCalendarMonth] = useState(() => new Date());
@@ -791,6 +843,36 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     setExportModalSubjectName(null);
     setShowExportModal(true);
   }, [currentMonth]);
+
+  const closeExportPlannerModal = useCallback(() => {
+    setShowExportModal(false);
+    setExportModalSubjectId(null);
+    setExportModalSubjectName(null);
+  }, []);
+
+  const handleExportPlannerConfirm = useCallback(() => {
+    const start = exportStartDate.trim();
+    const end = exportEndDate.trim();
+    if (!start || !end) return;
+    const startD = new Date(start);
+    const endD = new Date(end);
+    if (Number.isNaN(startD.getTime()) || Number.isNaN(endD.getTime())) return;
+    if (startD > endD) return;
+    closeExportPlannerModal();
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const exportDetail = { startDate: startD, endDate: endD, columns: exportColumns };
+      if (exportModalSubjectId) exportDetail.subjectId = exportModalSubjectId;
+      if (exportModalSubjectName) exportDetail.subjectName = exportModalSubjectName;
+      window.dispatchEvent(new CustomEvent('plannerExportToExcel', { detail: exportDetail }));
+    }
+  }, [
+    exportStartDate,
+    exportEndDate,
+    exportColumns,
+    exportModalSubjectId,
+    exportModalSubjectName,
+    closeExportPlannerModal,
+  ]);
 
   const syncGoogleCalendarIntoPlanner = useCallback(async ({ showAlert = false } = {}) => {
     if (!googleCalendarConnected || syncingGoogleCalendarPullRef.current) return;
@@ -1104,16 +1186,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
     const openPlanWeek = () => setShowPlanWeekModal(true);
     const openFilters = () => {
-      if (topToolbarFiltersButtonRef.current) {
-        const node = topToolbarFiltersButtonRef.current._nativeNode || topToolbarFiltersButtonRef.current;
-        if (node && typeof node.getBoundingClientRect === 'function') {
-          const rect = node.getBoundingClientRect();
-          setFiltersDropdownPosition({
-            top: rect.bottom + 4,
-            left: rect.left,
-          });
-        }
-      }
+      updateFiltersDropdownPosition();
       setShowFiltersDropdown(true);
     };
     window.addEventListener('openPlanWeekModal', openPlanWeek);
@@ -1122,7 +1195,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       window.removeEventListener('openPlanWeekModal', openPlanWeek);
       window.removeEventListener('openPlannerFilters', openFilters);
     };
-  }, []);
+  }, [updateFiltersDropdownPosition]);
 
   const plannerSettingsPopoverRef = useRef(null);
   useEffect(() => {
@@ -3655,9 +3728,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   minWidth: 0,
                   justifyContent: 'flex-end',
                 }}>
-                  {children && children.length > 1 && showFiltersDropdown && Platform.OS === 'web' && (
+                  {showFiltersDropdown && Platform.OS === 'web' && (
                     <View
                       ref={filtersDropdownRef}
+                      {...filtersHover.panelProps}
                       style={{
                         position: 'fixed',
                         top: filtersDropdownPosition.top,
@@ -3673,6 +3747,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                       }}
                     >
+                      {children && children.length > 1 ? (
+                        <>
                       <View style={{
                         paddingVertical: 6,
                         paddingHorizontal: 10,
@@ -3789,28 +3865,122 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           </TouchableOpacity>
                         );
                       })}
+                        <View style={{
+                          height: 1,
+                          backgroundColor: 'rgba(15,23,42,0.06)',
+                          marginVertical: 4,
+                        }} />
+                        </>
+                      ) : null}
+
+                      <View style={{
+                        paddingVertical: 6,
+                        paddingHorizontal: 10,
+                        borderBottomWidth: 1,
+                        borderBottomColor: 'rgba(15,23,42,0.06)',
+                        marginBottom: 4,
+                      }}>
+                        <Text style={{
+                          fontSize: 13,
+                          color: 'rgba(107, 114, 128, 0.7)',
+                          fontWeight: '600',
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.5,
+                          fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }}>
+                          Event types
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 8,
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 4,
+                        }}
+                        onPress={() => {
+                          setSelectedEventTypes(null);
+                        }}
+                      >
+                        <View style={{
+                          width: 14,
+                          height: 14,
+                          borderRadius: 3,
+                          borderWidth: 1.5,
+                          borderColor: selectedEventTypes === null ? '#8B5CF6' : '#D1D5DB',
+                          backgroundColor: selectedEventTypes === null ? '#8B5CF6' : 'transparent',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                          {selectedEventTypes === null && (
+                            <Text style={{ color: '#ffffff', fontSize: 10, fontWeight: 'bold' }}>✓</Text>
+                          )}
+                        </View>
+                        <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+                          All event types
+                        </Text>
+                      </TouchableOpacity>
+                      {PLANNER_EVENT_TYPE_FILTERS.map(({ key, label, color }) => {
+                        const isSelected = selectedEventTypes?.includes(key);
+                        return (
+                          <TouchableOpacity
+                            key={key}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 8,
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 4,
+                              backgroundColor: color,
+                            }}
+                            onPress={() => {
+                              const current = selectedEventTypes || [];
+                              const newSelection = isSelected
+                                ? current.filter((type) => type !== key)
+                                : [...current, key];
+                              setSelectedEventTypes(newSelection.length > 0 ? newSelection : null);
+                            }}
+                          >
+                            <View
+                              style={{
+                                width: 14,
+                                height: 14,
+                                borderRadius: 3,
+                                borderWidth: 1.5,
+                                borderColor: isSelected ? '#8B5CF6' : '#D1D5DB',
+                                backgroundColor: isSelected ? '#8B5CF6' : 'transparent',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              {isSelected && (
+                                <Check size={10} color="#FFFFFF" />
+                              )}
+                            </View>
+                            <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+                              {label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </View>
                   )}
-                  {children && children.length > 1 ? (
-                    <TouchableOpacity
+                  <TouchableOpacity
                       ref={topToolbarFiltersButtonRef}
-                      onPress={() => {
+                      onPress={filtersHover.wrapClickToggle(() => {
                         if (showFiltersDropdown) {
                           setShowFiltersDropdown(false);
                           return;
                         }
-                        if (Platform.OS === 'web' && topToolbarFiltersButtonRef.current) {
-                          const node = topToolbarFiltersButtonRef.current._nativeNode || topToolbarFiltersButtonRef.current;
-                          if (node && typeof node.getBoundingClientRect === 'function') {
-                            const rect = node.getBoundingClientRect();
-                            setFiltersDropdownPosition({
-                              top: rect.bottom + 4,
-                              left: rect.left,
-                            });
-                          }
-                        }
+                        updateFiltersDropdownPosition();
+                        setShowSmartActionsMenu(false);
+                        setShowPlannerCreateMenu(false);
                         setShowFiltersDropdown(true);
-                      }}
+                      })}
+                      {...filtersHover.triggerProps}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
@@ -3839,7 +4009,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         <ChevronDown size={16} color="rgba(15,23,42,0.7)" />
                       )}
                     </TouchableOpacity>
-                  ) : null}
                   <TouchableOpacity
                     ref={smartActionsButtonRef}
                     style={{
@@ -3854,9 +4023,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       backgroundColor: '#FFFFFF',
                       flexShrink: 0,
                     }}
-                    onPress={() => setShowSmartActionsMenu((open) => !open)}
+                    onPress={smartActionsHover.wrapClickToggle(() => {
+                      setShowPlannerCreateMenu(false);
+                      setShowSmartActionsMenu((open) => !open);
+                    })}
+                    {...smartActionsHover.triggerProps}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
+                    <Sparkles size={16} color="rgba(15,23,42,0.85)" strokeWidth={2.25} />
                     <Text style={{
                       fontSize: 15,
                       color: 'rgba(15,23,42,0.85)',
@@ -3876,6 +4050,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     triggerRef={smartActionsButtonRef}
                     onClose={() => setShowSmartActionsMenu(false)}
                     showExport={showPlannerHeaderQuickActions}
+                    panelProps={smartActionsHover.panelProps}
                   />
                   {!denyFamilyEventEdit ? (
                     <TouchableOpacity
@@ -3892,19 +4067,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         backgroundColor: '#FFFFFF',
                         flexShrink: 0,
                       }}
-                      onPress={() => {
+                      onPress={plannerCreateHover.wrapClickToggle(() => {
                         setShowSmartActionsMenu(false);
                         setShowPlannerCreateMenu((open) => !open);
-                      }}
+                      })}
+                      {...plannerCreateHover.triggerProps}
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
+                      <Plus size={16} color="rgba(15,23,42,0.85)" strokeWidth={2.25} />
                       <Text style={{
                         fontSize: 15,
                         color: 'rgba(15,23,42,0.85)',
                         fontWeight: '500',
                         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                       }}>
-                        + Create
+                        Create
                       </Text>
                       {showPlannerCreateMenu ? (
                         <ChevronUp size={16} color="rgba(15,23,42,0.7)" />
@@ -3918,6 +4095,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     triggerRef={plannerCreateButtonRef}
                     onClose={() => setShowPlannerCreateMenu(false)}
                     onSelect={openPlannerCreateModal}
+                    panelProps={plannerCreateHover.panelProps}
                   />
                 </View>
               </View>
@@ -4042,6 +4220,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 onAddSyllabus={() => setShowSyllabusUpload(true)}
                 selectedCalendarChildren={selectedCalendarChildren}
                 onSelectedCalendarChildrenChange={setSelectedCalendarChildren}
+                selectedEventTypes={selectedEventTypes}
+                onSelectedEventTypesChange={setSelectedEventTypes}
                 onCurrentMonthChange={setCurrentMonth}
                 subjects={subjects}
                 fullSubjects={fullSubjects}
@@ -4245,6 +4425,25 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           defaultMaterialId={taskModalDefaultMaterialId}
           defaultEventType={taskModalDefaultEventType}
           requireParentApprovalDefault={taskModalSubmittalAfterCreate}
+          familyId={familyId}
+          familyMembers={familyMembersForEventing}
+        />
+      ) : null}
+
+      {createModalKind === 'lesson' ? (
+        <TaskCreateModal
+          visible
+          onClose={resetCreateModalState}
+          onCreated={handleCreateModalCreated}
+          defaultDate={taskModalDate}
+          defaultChildId={taskModalChildId}
+          defaultChildIds={taskModalChildIds}
+          defaultSubjectId={taskModalDefaultSubjectId}
+          defaultEventType="Lesson"
+          defaultPlacement={taskModalDefaultPlacement}
+          defaultStartTime={taskModalDefaultStartTime}
+          defaultTitle={taskModalDefaultTitle}
+          defaultMaterialId={taskModalDefaultMaterialId}
           familyId={familyId}
           familyMembers={familyMembersForEventing}
         />
@@ -4547,201 +4746,108 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         visible={showExportModal}
         transparent
         animationType="fade"
-        onRequestClose={() => {
-          setShowExportModal(false);
-          setExportModalSubjectId(null);
-          setExportModalSubjectName(null);
-        }}
+        onRequestClose={closeExportPlannerModal}
       >
-        <TouchableOpacity
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.4)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: 24,
-          }}
-          activeOpacity={1}
-          onPress={() => {
-            setShowExportModal(false);
-            setExportModalSubjectId(null);
-            setExportModalSubjectName(null);
-          }}
-        >
+        <View style={exportModalStyles.overlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeExportPlannerModal} />
           <TouchableOpacity
             activeOpacity={1}
             onPress={(e) => e.stopPropagation()}
-            style={{
-              backgroundColor: '#FFFFFF',
-              borderRadius: 12,
-              padding: 24,
-              width: '100%',
-              maxWidth: 480,
-              borderWidth: 1,
-              borderColor: '#E6EBF2',
-            }}
+            style={exportModalStyles.modalWrap}
           >
-            <Text style={{
-              fontSize: 18,
-              fontWeight: '600',
-              color: '#1E293B',
-              marginBottom: 16,
-              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            }}>
-              {exportModalSubjectName ? `Export planner - ${exportModalSubjectName}` : 'Export planner'}
-            </Text>
-            <Text style={{
-              fontSize: 14,
-              color: '#64748B',
-              marginBottom: 12,
-              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            }}>
-              Choose the date range and optional columns to export as CSV.
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16, alignItems: 'flex-end' }}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 13, fontWeight: '500', color: '#475569', marginBottom: 6, fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>Start date</Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    setExportStartCalendarMonth(exportStartDate ? new Date(exportStartDate + 'T12:00:00') : new Date());
-                    setShowExportStartDatePicker(true);
-                  }}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    height: 40,
-                    paddingHorizontal: 12,
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderColor: '#E6EBF2',
-                    backgroundColor: '#FFFFFF',
-                  }}
-                  activeOpacity={0.7}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={{ fontSize: 15, color: exportStartDate ? '#1E293B' : '#94A3B8', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-                    {exportStartDate ? (() => { const d = new Date(exportStartDate + 'T12:00:00'); return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); })() : 'Select start date'}
-                  </Text>
-                  <ChevronDown size={16} color="#64748B" />
-                </TouchableOpacity>
+            <AppModalShell
+              title={exportModalSubjectName ? `Export planner — ${exportModalSubjectName}` : 'Export planner'}
+              onClose={closeExportPlannerModal}
+              disableShellScroll
+              shellStyle={exportModalStyles.compactShell}
+              titleRowStyle={exportModalStyles.compactTitleRow}
+              contentContainerStyle={exportModalStyles.contentContainer}
+              bodyStyle={exportModalStyles.shellBody}
+              footer={(
+                <ModalFooter
+                  mode="add"
+                  primaryLabel="Export"
+                  onCancel={closeExportPlannerModal}
+                  onPrimary={handleExportPlannerConfirm}
+                  accent="#9ECFFB"
+                  visuallyDisabled={!exportStartDate.trim() || !exportEndDate.trim()}
+                />
+              )}
+            >
+              <Text style={exportModalStyles.fieldLabel}>
+                Choose the date range and optional columns to export as CSV.
+              </Text>
+              <View style={[exportModalStyles.dateTimeInlineRow, { marginBottom: 14 }]}>
+                <View style={[exportModalStyles.scheduleColumn, { flex: 1 }]}>
+                  <Text style={exportModalStyles.fieldLabel}>Start date</Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setExportStartCalendarMonth(exportStartDate ? new Date(exportStartDate + 'T12:00:00') : new Date());
+                      setShowExportStartDatePicker(true);
+                    }}
+                    style={exportModalStyles.select}
+                    activeOpacity={0.7}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={[exportModalStyles.selectText, !exportStartDate && exportModalStyles.selectPlaceholder]}>
+                      {exportStartDate
+                        ? new Date(exportStartDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                        : 'Select start date'}
+                    </Text>
+                    <ChevronDown size={16} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+                <View style={[exportModalStyles.scheduleColumn, { flex: 1 }]}>
+                  <Text style={exportModalStyles.fieldLabel}>End date</Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setExportEndCalendarMonth(exportEndDate ? new Date(exportEndDate + 'T12:00:00') : new Date());
+                      setShowExportEndDatePicker(true);
+                    }}
+                    style={exportModalStyles.select}
+                    activeOpacity={0.7}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={[exportModalStyles.selectText, !exportEndDate && exportModalStyles.selectPlaceholder]}>
+                      {exportEndDate
+                        ? new Date(exportEndDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                        : 'Select end date'}
+                    </Text>
+                    <ChevronDown size={16} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 13, fontWeight: '500', color: '#475569', marginBottom: 6, fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>End date</Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    setExportEndCalendarMonth(exportEndDate ? new Date(exportEndDate + 'T12:00:00') : new Date());
-                    setShowExportEndDatePicker(true);
-                  }}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    height: 40,
-                    paddingHorizontal: 12,
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderColor: '#E6EBF2',
-                    backgroundColor: '#FFFFFF',
-                  }}
-                  activeOpacity={0.7}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={{ fontSize: 15, color: exportEndDate ? '#1E293B' : '#94A3B8', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-                    {exportEndDate ? (() => { const d = new Date(exportEndDate + 'T12:00:00'); return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); })() : 'Select end date'}
-                  </Text>
-                  <ChevronDown size={16} color="#64748B" />
-                </TouchableOpacity>
-              </View>
-            </View>
-            <Text style={{ fontSize: 13, fontWeight: '600', color: '#475569', marginBottom: 8, fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>Optional columns (include when checked)</Text>
-            <ScrollView style={{ maxHeight: 220, marginBottom: 20 }} nestedScrollEnabled>
-              {[
-                { key: 'location', label: 'Location' },
-                { key: 'mode', label: 'Mode' },
-                { key: 'instructor', label: 'Instructor' },
-                { key: 'subject', label: 'Subject' },
-                { key: 'grade', label: 'Grade' },
-                { key: 'unit', label: 'Unit' },
-                { key: 'percentOfTotal', label: '% of total' },
-                { key: 'instructionalTime', label: 'Counted as instructional time' },
-                { key: 'plan', label: 'Part of structured class plan' },
-                { key: 'attachmentTitle', label: 'Attachment title' },
-                { key: 'notes', label: 'Notes' },
-              ].map(({ key, label }) => (
-                <TouchableOpacity
-                  key={key}
-                  onPress={() => setExportColumns((prev) => ({ ...prev, [key]: !prev[key] }))}
-                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 8 }}
-                  activeOpacity={0.7}
-                >
-                  <View style={{
-                    width: 18,
-                    height: 18,
-                    borderRadius: 4,
-                    borderWidth: 1.5,
-                    borderColor: exportColumns[key] ? '#1E293B' : '#CBD5E1',
-                    backgroundColor: exportColumns[key] ? '#1E293B' : 'transparent',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}>
-                    {exportColumns[key] && <Check size={12} color="#FFFFFF" strokeWidth={3} />}
-                  </View>
-                  <Text style={{ fontSize: 14, color: '#334155', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>{label}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
-              <TouchableOpacity
-                onPress={() => setShowExportModal(false)}
-                style={{
-                  paddingVertical: 10,
-                  paddingHorizontal: 16,
-                  borderRadius: 8,
-                  borderWidth: 1,
-                  borderColor: '#E6EBF2',
-                  backgroundColor: '#FFFFFF',
-                }}
-              >
-                <Text style={{ fontSize: 15, fontWeight: '500', color: '#64748B', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => {
-                  const start = exportStartDate.trim();
-                  const end = exportEndDate.trim();
-                  if (!start || !end) return;
-                  const startD = new Date(start);
-                  const endD = new Date(end);
-                  if (isNaN(startD.getTime()) || isNaN(endD.getTime())) return;
-                  if (startD > endD) return;
-                  setShowExportModal(false);
-                  if (typeof window !== 'undefined') {
-                    const exportDetail = { startDate: startD, endDate: endD, columns: exportColumns };
-                    if (exportModalSubjectId) exportDetail.subjectId = exportModalSubjectId;
-                    if (exportModalSubjectName) exportDetail.subjectName = exportModalSubjectName;
-                    window.dispatchEvent(new CustomEvent('plannerExportToExcel', { detail: exportDetail }));
-                  }
-                  setExportModalSubjectId(null);
-                  setExportModalSubjectName(null);
-                }}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 6,
-                  paddingVertical: 10,
-                  paddingHorizontal: 16,
-                  borderRadius: 8,
-                  backgroundColor: '#1E293B',
-                  borderWidth: 1,
-                  borderColor: '#1E293B',
-                }}
-              >
-                <ExternalLink size={16} color="#FFFFFF" />
-                <Text style={{ fontSize: 15, fontWeight: '500', color: '#FFFFFF', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>Export</Text>
-              </TouchableOpacity>
-            </View>
+              <Text style={[exportModalStyles.fieldLabel, { marginBottom: 8 }]}>
+                Optional columns (include when checked)
+              </Text>
+              <ScrollView style={{ maxHeight: 220 }} nestedScrollEnabled>
+                {PLANNER_EXPORT_OPTIONAL_COLUMN_DEFS.map(({ key, label }) => (
+                  <TouchableOpacity
+                    key={key}
+                    onPress={() => setExportColumns((prev) => ({ ...prev, [key]: !prev[key] }))}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 8 }}
+                    activeOpacity={0.7}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={{
+                      width: 18,
+                      height: 18,
+                      borderRadius: 4,
+                      borderWidth: 1.5,
+                      borderColor: exportColumns[key] ? '#9ECFFB' : '#CBD5E1',
+                      backgroundColor: exportColumns[key] ? '#9ECFFB' : 'transparent',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                      {exportColumns[key] ? <Check size={12} color="#FFFFFF" strokeWidth={3} /> : null}
+                    </View>
+                    <Text style={{ fontSize: 14, color: '#334155' }}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </AppModalShell>
           </TouchableOpacity>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* Export start date calendar picker */}

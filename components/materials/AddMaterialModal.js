@@ -1827,8 +1827,8 @@ const styles = StyleSheet.create({
     }),
   },
   dropdownOptionActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#9ECFFB',
+    backgroundColor: 'rgba(158, 207, 251, 0.25)',
   },
   dropdownOptionText: {
     color: '#6b7280',

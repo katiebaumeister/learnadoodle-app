@@ -7,7 +7,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, Platform, TouchableOpacity } from 'react-native';
-import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calendar } from 'lucide-react';
+import SchedulePanelNavGroup from '../home/SchedulePanelNavGroup';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import RoleHomeShell from '../home/RoleHomeShell';
@@ -297,29 +298,21 @@ export default function ChildHomeScreen({
   const renderSchedulePanel = (panelStyle) => (
     <View style={[styles.scheduleSection, panelStyle]}>
       <View style={styles.schedulePanelHeader}>
-        <View style={styles.scheduleNavGroup}>
-          <View style={styles.dayNavButtonGroup}>
-            <TouchableOpacity
-              style={styles.dayNavButton}
-              onPress={() => shiftSelectedDay(-1)}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <ChevronLeft size={16} color="#64748b" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.dayNavButton}
-              onPress={() => shiftSelectedDay(1)}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <ChevronRight size={16} color="#64748b" />
-            </TouchableOpacity>
-          </View>
+        <View style={styles.scheduleHeaderLeading}>
+          <SchedulePanelNavGroup
+            onPrevDay={() => shiftSelectedDay(-1)}
+            onNextDay={() => shiftSelectedDay(1)}
+            styles={styles}
+          />
           <TouchableOpacity
-            style={styles.scheduleTitleButton}
+            style={styles.scheduleHeaderTitleWrap}
             onPress={jumpToTodaySchedule}
+            activeOpacity={0.85}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <Text style={styles.sectionLabel}>{schedulePanelTitle}</Text>
+            <Text style={styles.sectionLabel} numberOfLines={1}>
+              {schedulePanelTitle}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -554,12 +547,23 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     gap: 12,
   },
+  scheduleHeaderLeading: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  scheduleHeaderTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
   scheduleNavGroup: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    flexShrink: 1,
-    minWidth: 0,
+    flexShrink: 0,
   },
   dayNavButtonGroup: {
     flexDirection: 'row',

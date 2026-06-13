@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import { ChevronDown } from 'lucide-react';
 import Dropdown from '../../ui/Dropdown';
-import { createModalStyles as styles, MUTED } from './createModalStyles';
+import { createModalStyles as styles, MUTED, ACCENT_TEXT, FG } from './createModalStyles';
 
 export default function SubjectSelectField({
   subjects = [],
@@ -14,10 +14,14 @@ export default function SubjectSelectField({
   placeholder = 'Select subject',
   disabled = false,
   emptyMessage = 'No subjects available',
+  allowEmpty = false,
+  noneLabel = 'No subject',
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef(null);
   const selected = subjects.find((s) => String(s.id) === String(subjectId));
+  const displayValue = selected?.name || (allowEmpty ? noneLabel : placeholder);
+  const showPlaceholderStyle = !selected && !allowEmpty;
 
   useEffect(() => {
     setOpen(false);
@@ -36,8 +40,8 @@ export default function SubjectSelectField({
         disabled={disabled}
         {...(Platform.OS === 'web' && { cursor: disabled ? 'not-allowed' : 'pointer' })}
       >
-        <Text style={[styles.selectText, !selected && styles.selectPlaceholder]}>
-          {selected?.name || placeholder}
+        <Text style={[styles.selectText, showPlaceholderStyle && styles.selectPlaceholder]}>
+          {displayValue}
         </Text>
         <ChevronDown size={16} color={MUTED} />
       </TouchableOpacity>
@@ -58,6 +62,29 @@ export default function SubjectSelectField({
             style: { maxHeight: 216, overflowY: 'auto' },
           })}
         >
+          {allowEmpty ? (
+            <TouchableOpacity
+              onPress={() => {
+                onSubjectChange?.(null);
+                setOpen(false);
+              }}
+              style={[
+                { paddingVertical: 10, paddingHorizontal: 12 },
+                subjectId == null ? styles.dropdownListItemActive : { backgroundColor: '#fff' },
+              ]}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text
+                style={{
+                  fontSize: 14,
+                  color: subjectId == null ? ACCENT_TEXT : FG,
+                  fontWeight: subjectId == null ? '600' : '400',
+                }}
+              >
+                {noneLabel}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
           {subjects.length === 0 ? (
             <View style={{ padding: 12 }}>
               <Text style={{ fontSize: 13, color: MUTED }}>{emptyMessage}</Text>
@@ -72,17 +99,16 @@ export default function SubjectSelectField({
                     onSubjectChange?.(subject.id);
                     setOpen(false);
                   }}
-                  style={{
-                    paddingVertical: 10,
-                    paddingHorizontal: 12,
-                    backgroundColor: active ? '#EFF6FF' : '#fff',
-                  }}
+                  style={[
+                    { paddingVertical: 10, paddingHorizontal: 12 },
+                    active ? styles.dropdownListItemActive : { backgroundColor: '#fff' },
+                  ]}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   <Text
                     style={{
                       fontSize: 14,
-                      color: active ? '#1D4ED8' : '#111827',
+                      color: active ? ACCENT_TEXT : FG,
                       fontWeight: active ? '600' : '400',
                     }}
                   >

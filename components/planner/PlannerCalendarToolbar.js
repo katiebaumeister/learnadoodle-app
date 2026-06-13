@@ -19,8 +19,7 @@ const VIEW_OPTIONS = [
 const EVENT_TYPE_OPTIONS = [
   { key: 'Lesson', label: 'Lessons' },
   { key: 'Assignment', label: 'Assignments' },
-  { key: 'Activity', label: 'Activities' },
-  { key: 'Project', label: 'Projects' },
+  { key: 'Day Off', label: 'Days off' },
 ];
 
 export default function PlannerCalendarToolbar({

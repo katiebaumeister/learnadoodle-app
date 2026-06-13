@@ -28,6 +28,7 @@ export default function Dropdown({
   width = 200,
   matchTriggerWidth = false,
   variant = 'default', // 'default' | 'context'
+  panelProps = null,
 }) {
   const [position, setPosition] = useState(null);
   const dropdownRef = useRef(null);
@@ -188,6 +189,7 @@ export default function Dropdown({
     const dropdownContent = (
       <View
         ref={dropdownRef}
+        {...(panelProps || {})}
         style={[
           styles.dropdown,
           variant === 'context' && styles.dropdownContext,

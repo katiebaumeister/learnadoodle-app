@@ -32,6 +32,7 @@ import { getAttendanceLogs } from '../../lib/services/recordsClient';
 import { generateAttendanceReport } from '../../lib/services/attendanceClient';
 import { exportCurriculumPlan, exportReportCard } from '../../lib/services/exportClient';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
+import { defaultPlannerExportColumnSelection } from '../../lib/plannerExportOptionalColumns';
 import { supabase } from '../../lib/supabase';
 import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
 import { useSession } from '../../contexts/SessionContext';
@@ -1319,19 +1320,7 @@ export default function SubjectsPage({
                 startDate,
                 endDate,
                 childIds: selectedChildIds,
-                columns: {
-                  instructionalTime: false,
-                  plan: false,
-                  location: false,
-                  mode: false,
-                  instructor: false,
-                  subject: false,
-                  grade: false,
-                  unit: false,
-                  percentOfTotal: false,
-                  attachmentTitle: false,
-                  notes: false,
-                },
+                columns: defaultPlannerExportColumnSelection(),
               },
             }));
           }

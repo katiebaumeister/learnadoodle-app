@@ -15,7 +15,7 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { Search, FileText, X, ExternalLink, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload } from 'lucide-react';
+import { Search, X, ExternalLink, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
 import { useSession } from '../../contexts/SessionContext';
@@ -36,6 +36,15 @@ import ConfirmDialog from '../ConfirmDialog';
 import MaterialDocViewerModal, { resolveMaterialDocViewerUrl } from './MaterialDocViewerModal';
 import { getSubjectIdsAffectedByMaterial } from '../../lib/materialsSubjectLinkUtils';
 import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
+
+function resolveMaterialSubjectLabel(material, subjects = []) {
+  const key = String(material?.subject_key || '').trim();
+  if (key) return key;
+  const subjectId = material?.subject_id != null ? String(material.subject_id) : '';
+  if (!subjectId) return null;
+  const match = subjects.find((s) => String(s.id) === subjectId);
+  return match?.name || null;
+}
 
 /**
  * Web-only: invalidate subject detail caches + broadcast refreshes.
@@ -719,29 +728,6 @@ export default function MaterialsLibrary({
     // This could extract key information, create summaries, generate lesson plans, etc.
   };
 
-  const handleCreateAssignmentFromMaterial = (item) => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const material = item?.data || null;
-    if (!material?.id) {
-      toast.push('Unable to use this material for assignment creation.', 'error');
-      return;
-    }
-    const materialChildren = Array.isArray(material?.material_children) ? material.material_children : [];
-    const childIds = materialChildren
-      .map((entry) => String(entry?.child_id || '').trim())
-      .filter(Boolean);
-    window.dispatchEvent(
-      new CustomEvent('openTaskModal', {
-        detail: {
-          date: new Date(),
-          eventType: 'Assignment',
-          materialId: material.id,
-          childIds,
-        },
-      })
-    );
-  };
-
   const showContextMenu = (item, clientX, clientY) => {
     if (typeof window === 'undefined') return;
     
@@ -753,10 +739,9 @@ export default function MaterialsLibrary({
     
     const menuItems = [
       { text: 'Edit Material', action: () => handleEditAttachment(item), icon: Edit2 },
-       { text: 'Create assignment from material', action: () => handleCreateAssignmentFromMaterial(item), icon: FileText },
-       { text: 'Open in new tab', action: () => handleOpenInNewTab(item), icon: ExternalLink },
-       { text: 'Delete', action: () => handleDeleteItem(item), isDelete: true, icon: Trash2 }
-     ];
+      { text: 'Open in new tab', action: () => handleOpenInNewTab(item), icon: ExternalLink },
+      { text: 'Delete', action: () => handleDeleteItem(item), isDelete: true, icon: Trash2 }
+    ];
     
     // Calculate menu height
     const estimatedMenuHeight = menuItems.length * 48 + 16;
@@ -845,9 +830,7 @@ export default function MaterialsLibrary({
         
         // Add path based on icon type (lucide-react icon paths)
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        if (menuItem.icon === FileText) {
-          path.setAttribute('d', 'M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8');
-        } else if (menuItem.icon === Edit2) {
+        if (menuItem.icon === Edit2) {
           path.setAttribute('d', 'M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7 M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z');
         } else if (menuItem.icon === Sparkles) {
           path.setAttribute('d', 'M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z M20 3v4 M22 5h-4');
@@ -1553,27 +1536,28 @@ export default function MaterialsLibrary({
                               })
                               .filter(Boolean);
                             const hasChildren = childNames.length > 0;
-                            
-                            if (!hasChildren) return null;
-                            
-                            // Add child dots if there are children
-                            if (hasChildren) {
-                              return (
-                                <View style={styles.listItemSubtitleRow}>
+                            const subjectLabel = resolveMaterialSubjectLabel(
+                              data,
+                              mergedSubjectsForMaterialLookup,
+                            );
+
+                            if (!hasChildren && !subjectLabel) return null;
+
+                            return (
+                              <View style={styles.listItemSubtitleRow}>
+                                {hasChildren ? (
                                   <ChildAvatarCluster
                                     childIds={childIds.slice(0, 3)}
                                     familyChildren={effectiveChildren}
                                     size={18}
                                     overlap={-5}
                                   />
-                                  <Text style={styles.listItemSubtitle} numberOfLines={1}>
-                                    {childNames.join(', ')}
-                                  </Text>
-                                </View>
-                              );
-                            }
-                            
-                            return null;
+                                ) : null}
+                                <Text style={styles.listItemSubtitle} numberOfLines={1}>
+                                  {[childNames.join(', '), subjectLabel].filter(Boolean).join(' · ')}
+                                </Text>
+                              </View>
+                            );
                           })()}
                         </View>
                       </View>
@@ -3025,6 +3009,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: colors.muted,
     fontWeight: '400',
+    flexShrink: 1,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

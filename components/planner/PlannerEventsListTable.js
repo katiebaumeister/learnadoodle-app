@@ -7,7 +7,6 @@ import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import { supabase } from '../../lib/supabase';
 import {
   resolveEventDateValue,
-  formatEventTypeLabel,
   formatTimeRangeLabel,
   formatChildNamesCommaLine,
   resolveChildIdsForEvent,
@@ -15,7 +14,6 @@ import {
   getEventMaterialIds,
   resolveMaterialDisplayLabel,
   formatEventGradeLabel,
-  getPlannerEventTypeColors,
   isPlannerHolidayOrBreakType,
   mergeAssignmentsByEventId,
 } from './plannerListTableUtils';
@@ -485,13 +483,11 @@ export default function PlannerEventsListTable({
   const renderDenseEventRow = useCallback((event) => {
     const eventId = String(event?.id || '');
     const isDone = resolveIsDone(event);
-    const typeLabel = formatEventTypeLabel(event);
     const timeLabel = formatTimeRangeLabel(event);
     const eventChildIds = resolveChildIdsForEvent(event);
     const childLabel = eventChildIds.length > 0
       ? formatChildNamesCommaLine(eventChildIds, children)
       : '';
-    const { chipBg, chipText } = getPlannerEventTypeColors(event);
     const unitLessonLabel = getEventUnitLessonLabel(event);
     const gradeLabel = formatEventGradeLabel(event);
     const materialIds = getEventMaterialIds(event);
@@ -574,11 +570,6 @@ export default function PlannerEventsListTable({
                 {timeLabel}
               </Text>
             ) : null}
-            <View style={[styles.denseTypeChip, { backgroundColor: chipBg }]}>
-              <Text style={[styles.denseTypeChipText, { color: chipText }]} numberOfLines={1}>
-                {typeLabel}
-              </Text>
-            </View>
             {eventChildIds.length > 0 ? (
               <View style={styles.denseChildLabel}>
                 <ChildAvatarCluster
@@ -973,18 +964,6 @@ const styles = StyleSheet.create({
     gap: 6,
     flexShrink: 1,
     minWidth: 0,
-  },
-  denseTypeChip: {
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  denseTypeChipText: {
-    fontSize: 11,
-    fontWeight: '600',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   denseSublineMeta: {
     fontSize: 12,

@@ -18,6 +18,7 @@ import { createFileMaterial } from '../../lib/services/materialsClient';
 import {
   ASSIGNMENT_SELECT,
   buildSendPayload,
+  buildSendPayloads,
   formatChatEventDateLabel,
   insertFamilyDirectMessage,
   isDirectMessageRecipient,
@@ -27,7 +28,9 @@ import {
   messageMatchesParticipant,
   queryFamilyDirectMessages,
   resolveAssignmentChildContext,
+  resolveGroupThreadParticipant,
   resolveLinkedEventId,
+  sendGroupDirectMessage,
   familyDirectMessagesSupportAttachments,
 } from '../../lib/familyDmClient';
 import DmAttachEventModal from './DmAttachEventModal';
@@ -82,9 +85,11 @@ export default function FamilyDmChat({
   viewerRole = 'parent',
   viewerChildId = null,
   familyChildren = [],
+  familyMembers = [],
   childInviteSummaries = null,
   onClosePane = null,
   onBack,
+  onGroupThreadCreated = null,
 }) {
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState([]);
@@ -109,6 +114,8 @@ export default function FamilyDmChat({
   participantRef.current = participant;
   const participantId = String(participant?.id || '').trim();
   const participantType = participant?.type || '';
+  const isMultiRecipient = participantType === 'group' || participantType === 'multicast';
+  const isGroupThread = participantType === 'group';
 
   const { swipeStyle, panHandlers: swipeBackHandlers, webHandlers: swipeBackWebHandlers } = useSwipeBackGesture({
     onBack,
@@ -120,9 +127,10 @@ export default function FamilyDmChat({
     [participant, viewerChildId, viewerRole]
   );
 
-  const canAttachEvent = Boolean(childCtx?.childId && familyId && attachmentsSupported);
+  const canAttachEvent = Boolean(childCtx?.childId && familyId && attachmentsSupported && !isMultiRecipient);
 
   const childInviteGate = useMemo(() => {
+    if (isMultiRecipient) return null;
     if (participant?.type !== 'child') return null;
     if (viewerRole !== 'parent' && viewerRole !== 'tutor') return null;
     const childId = String(participant?.id || '').trim();
@@ -138,7 +146,7 @@ export default function FamilyDmChat({
       childName,
       status: status === 'pending' ? 'pending' : 'none',
     };
-  }, [participant, viewerRole, childInviteSummaries]);
+  }, [participant, viewerRole, childInviteSummaries, isMultiRecipient]);
 
   const openInviteChildModal = useCallback(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -202,8 +210,8 @@ export default function FamilyDmChat({
   }, []);
 
   const loadMessages = useCallback(async ({ silent = false } = {}) => {
-    const activeParticipant = participantRef.current;
-    if (!familyId || !currentUserId || !activeParticipant) {
+    const baseParticipant = participantRef.current;
+    if (!familyId || !currentUserId || !baseParticipant) {
       setMessages([]);
       chatReadyRef.current = false;
       setLoading(false);
@@ -214,6 +222,16 @@ export default function FamilyDmChat({
     const showLoadingUi = !silent && !chatReadyRef.current;
     if (showLoadingUi) setLoading(true);
     try {
+      let activeParticipant = await resolveGroupThreadParticipant(supabase, {
+        familyId,
+        participant: baseParticipant,
+        children: familyChildren,
+        members: familyMembers,
+      });
+      if (activeParticipant?.threadId && activeParticipant.threadId !== participantRef.current?.threadId) {
+        participantRef.current = activeParticipant;
+      }
+
       const { data: dmRows, error: dmError, attachmentsSupported: dmAttachmentsSupported } =
         await queryFamilyDirectMessages(supabase, {
         familyId,
@@ -222,15 +240,19 @@ export default function FamilyDmChat({
       });
       setAttachmentsSupported(dmAttachmentsSupported);
 
-      const assignmentsPromise = childCtx?.childId
-        ? supabase
+      const assignmentsPromise = (
+        isGroupThread
+        || participantType === 'multicast'
+        || !childCtx?.childId
+      )
+        ? Promise.resolve({ data: [], error: null })
+        : supabase
           .from('assignments')
           .select(ASSIGNMENT_SELECT)
           .eq('family_id', familyId)
           .eq('child_id', childCtx.childId)
           .order('updated_at', { ascending: false })
-          .limit(200)
-        : Promise.resolve({ data: [], error: null });
+          .limit(200);
 
       const { data: assignmentRows, error: asgError } = await assignmentsPromise;
 
@@ -248,7 +270,7 @@ export default function FamilyDmChat({
         .filter((row) => messageMatchesParticipant(row, activeParticipant, currentUserId, viewerChildId))
         .filter((row) => String(row.sender_user_id) !== String(currentUserId))
         .filter((row) => !row.read_at)
-        .filter((row) => isDirectMessageRecipient(row, currentUserId, viewerChildId));
+        .filter((row) => isDirectMessageRecipient(row, currentUserId, viewerChildId, activeParticipant));
 
       if (unreadForMe.length > 0) {
         try {
@@ -301,7 +323,7 @@ export default function FamilyDmChat({
       if (showLoadingUi) setLoading(false);
       loadInFlightRef.current = false;
     }
-  }, [childCtx?.childId, currentUserId, enrichMessages, familyId, participantId, participantType, viewerChildId, viewerRole]);
+  }, [childCtx?.childId, currentUserId, enrichMessages, familyChildren, familyId, familyMembers, isGroupThread, participantId, participantType, viewerChildId, viewerRole]);
 
   const loadMessagesRef = useRef(loadMessages);
   loadMessagesRef.current = loadMessages;
@@ -384,32 +406,68 @@ export default function FamilyDmChat({
     const hasContent = Boolean(trimmed || pendingEvent?.id || pendingMaterial?.id);
     if (!hasContent) return;
 
-    const payload = buildSendPayload(
-      familyId,
-      participant,
-      composerText,
-      currentUserId,
-      {
-        linkedEventId: pendingEvent?.id || null,
-        materialId: pendingMaterial?.id || null,
-      },
-    );
-    if (!payload) {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.alert?.('Could not send this message. Please try again.');
-      }
-      return;
-    }
     sendInFlightRef.current = true;
     setSending(true);
     try {
-      const { error } = await insertFamilyDirectMessage(supabase, payload);
-      if (error) {
-        console.error('[FamilyDmChat] send error:', error);
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.alert?.(`Could not send message: ${error.message || 'Unknown error'}`);
+      if (isGroupThread) {
+        const { error, threadId } = await sendGroupDirectMessage(supabase, {
+          familyId,
+          participant,
+          body: composerText,
+          currentUserId,
+          linkedEventId: pendingEvent?.id || null,
+          materialId: pendingMaterial?.id || null,
+        });
+        if (error) {
+          console.error('[FamilyDmChat] group send error:', error);
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.alert?.(`Could not send message: ${error.message || 'Unknown error'}`);
+          }
+          return;
         }
-        return;
+        if (threadId) {
+          participantRef.current = { ...participantRef.current, threadId: String(threadId) };
+          onGroupThreadCreated?.(threadId);
+        }
+      } else {
+        const payload = buildSendPayload(
+          familyId,
+          participant,
+          composerText,
+          currentUserId,
+          {
+            linkedEventId: pendingEvent?.id || null,
+            materialId: pendingMaterial?.id || null,
+          },
+        );
+        const payloads = participantType === 'multicast'
+          ? buildSendPayloads(
+            familyId,
+            participant,
+            composerText,
+            currentUserId,
+            {
+              linkedEventId: pendingEvent?.id || null,
+              materialId: pendingMaterial?.id || null,
+            },
+          )
+          : (payload ? [payload] : []);
+        if (payloads.length === 0) {
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.alert?.('Could not send this message. Please try again.');
+          }
+          return;
+        }
+        for (const item of payloads) {
+          const { error } = await insertFamilyDirectMessage(supabase, item);
+          if (error) {
+            console.error('[FamilyDmChat] send error:', error);
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.alert?.(`Could not send message: ${error.message || 'Unknown error'}`);
+            }
+            return;
+          }
+        }
       }
       setComposerText('');
       setPendingEvent(null);
@@ -430,8 +488,11 @@ export default function FamilyDmChat({
     composerText,
     currentUserId,
     familyId,
+    isGroupThread,
     loadMessages,
+    onGroupThreadCreated,
     participant,
+    participantType,
     pendingEvent?.id,
     pendingMaterial?.id,
     sending,
@@ -654,6 +715,16 @@ export default function FamilyDmChat({
           <View style={styles.introBlock}>
             <Image source={avatarSource} style={styles.introAvatar} />
             <Text style={styles.introName}>{participant?.name}</Text>
+            {participantType === 'multicast' ? (
+              <Text style={styles.introSubtitle}>
+                Your message will be sent to each person separately.
+              </Text>
+            ) : null}
+            {participantType === 'group' ? (
+              <Text style={styles.introSubtitle}>
+                Group conversation — messages here go to everyone in this group.
+              </Text>
+            ) : null}
           </View>
 
           {childInviteGate ? (
@@ -958,6 +1029,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#0F172A',
+  },
+  introSubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#64748B',
+    textAlign: 'center',
+    paddingHorizontal: 16,
   },
   inviteCard: {
     width: '100%',

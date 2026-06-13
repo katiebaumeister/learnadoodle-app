@@ -9,11 +9,17 @@ import {
   Platform,
   Image,
 } from 'react-native';
-import { ArrowLeft, Search } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Search } from 'lucide-react';
 import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
 import { participantKey } from '../../lib/familyDmClient';
-import MessagesPaneCloseButton from './MessagesPaneCloseButton';
+import {
+  ACCENT,
+  ACCENT_TEXT,
+  ACCENT_CHIP_BORDER,
+  ACCENT_CHIP_BG,
+  ACCENT_LIST_ACTIVE_BG,
+} from '../create/shared/createModalStyles';
 
 function avatarSourceForParticipant(participant) {
   if (!participant) return resolveBundledAvatarSource('prof1');
@@ -30,10 +36,10 @@ export default function FamilyNewMessagePicker({
   participants = [],
   onBack,
   onNext,
-  onClosePane = null,
 }) {
   const [searchText, setSearchText] = useState('');
-  const [selectedKey, setSelectedKey] = useState(null);
+  const [selectedKeys, setSelectedKeys] = useState(() => new Set());
+  const [deliveryMode, setDeliveryMode] = useState('group');
 
   const filtered = useMemo(() => {
     const query = String(searchText || '').trim().toLowerCase();
@@ -41,10 +47,31 @@ export default function FamilyNewMessagePicker({
     return participants.filter((p) => String(p.name || '').toLowerCase().includes(query));
   }, [participants, searchText]);
 
-  const selectedParticipant = useMemo(
-    () => participants.find((p) => participantKey(p) === selectedKey) || null,
-    [participants, selectedKey]
+  const selectedParticipants = useMemo(
+    () => participants.filter((p) => selectedKeys.has(participantKey(p))),
+    [participants, selectedKeys],
   );
+
+  const canProceed = selectedParticipants.length > 0;
+  const showDeliveryMode = selectedParticipants.length > 1;
+
+  const toggleParticipant = (participant) => {
+    const key = participantKey(participant);
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const handleNext = () => {
+    if (!canProceed) return;
+    onNext?.({
+      participants: selectedParticipants,
+      deliveryMode: showDeliveryMode ? deliveryMode : 'single',
+    });
+  };
 
   return (
     <View style={styles.container}>
@@ -59,28 +86,30 @@ export default function FamilyNewMessagePicker({
         </TouchableOpacity>
         <Text style={styles.headerTitle}>New message</Text>
         <View style={styles.headerRight}>
-          {typeof onClosePane === 'function' ? (
-            <MessagesPaneCloseButton onPress={onClosePane} />
-          ) : null}
           <TouchableOpacity
             style={styles.headerSide}
-            onPress={() => selectedParticipant && onNext?.(selectedParticipant)}
-            disabled={!selectedParticipant}
+            onPress={handleNext}
+            disabled={!canProceed}
             activeOpacity={0.8}
-            {...(Platform.OS === 'web' && { cursor: selectedParticipant ? 'pointer' : 'default' })}
+            {...(Platform.OS === 'web' && { cursor: canProceed ? 'pointer' : 'default' })}
           >
             <View style={[
               styles.nextButton,
-              !selectedParticipant && styles.nextButtonDisabled,
+              !canProceed && styles.nextButtonDisabled,
             ]}
             >
               <Text style={[
                 styles.nextButtonText,
-                !selectedParticipant && styles.nextButtonTextDisabled,
+                !canProceed && styles.nextButtonTextDisabled,
               ]}
               >
                 Next
               </Text>
+              <ArrowRight
+                size={16}
+                color={canProceed ? '#FFFFFF' : '#94A3B8'}
+                strokeWidth={2.5}
+              />
             </View>
           </TouchableOpacity>
         </View>
@@ -97,20 +126,64 @@ export default function FamilyNewMessagePicker({
         />
       </View>
 
+      {showDeliveryMode ? (
+        <View style={styles.deliveryModeWrap}>
+          <Text style={styles.deliveryModeLabel}>Send as</Text>
+          <View style={styles.deliveryModeRow}>
+            <TouchableOpacity
+              style={[
+                styles.deliveryModeChip,
+                deliveryMode === 'group' && styles.deliveryModeChipActive,
+              ]}
+              onPress={() => setDeliveryMode('group')}
+              activeOpacity={0.8}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={[
+                styles.deliveryModeChipText,
+                deliveryMode === 'group' && styles.deliveryModeChipTextActive,
+              ]}
+              >
+                Group conversation
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.deliveryModeChip,
+                deliveryMode === 'separate' && styles.deliveryModeChipActive,
+              ]}
+              onPress={() => setDeliveryMode('separate')}
+              activeOpacity={0.8}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={[
+                styles.deliveryModeChipText,
+                deliveryMode === 'separate' && styles.deliveryModeChipTextActive,
+              ]}
+              >
+                Separate chats
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.sectionLabel}>Family</Text>
+        <Text style={styles.sectionLabel}>
+          {showDeliveryMode ? `Selected (${selectedParticipants.length})` : 'Family'}
+        </Text>
         {filtered.map((participant) => {
           const key = participantKey(participant);
-          const selected = key === selectedKey;
+          const selected = selectedKeys.has(key);
           return (
             <TouchableOpacity
               key={key}
               style={[styles.row, selected && styles.rowSelected]}
-              onPress={() => setSelectedKey(key)}
+              onPress={() => toggleParticipant(participant)}
               activeOpacity={0.8}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
@@ -119,6 +192,9 @@ export default function FamilyNewMessagePicker({
                 style={styles.avatar}
               />
               <Text style={styles.name} numberOfLines={1}>{participant.name}</Text>
+              <View style={[styles.checkWrap, selected && styles.checkWrapSelected]}>
+                {selected ? <Check size={14} color="#FFFFFF" strokeWidth={3} /> : null}
+              </View>
             </TouchableOpacity>
           );
         })}
@@ -159,8 +235,11 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   nextButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     alignSelf: 'flex-end',
-    backgroundColor: 'rgba(99, 102, 241, 1)',
+    backgroundColor: ACCENT,
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 6,
@@ -184,7 +263,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#6366F1',
+    borderColor: ACCENT_CHIP_BORDER,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -194,6 +273,43 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#0F172A',
     ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
+  },
+  deliveryModeWrap: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  deliveryModeLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  deliveryModeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  deliveryModeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  deliveryModeChipActive: {
+    borderColor: ACCENT_CHIP_BORDER,
+    backgroundColor: ACCENT_CHIP_BG,
+  },
+  deliveryModeChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  deliveryModeChipTextActive: {
+    color: ACCENT_TEXT,
   },
   scroll: {
     flex: 1,
@@ -217,7 +333,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   rowSelected: {
-    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+    backgroundColor: ACCENT_LIST_ACTIVE_BG,
   },
   avatar: {
     width: 48,
@@ -229,5 +345,18 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#0F172A',
+  },
+  checkWrap: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkWrapSelected: {
+    borderColor: ACCENT_CHIP_BORDER,
+    backgroundColor: ACCENT_TEXT,
   },
 });

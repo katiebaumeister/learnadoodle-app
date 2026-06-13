@@ -11,6 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import {
+  ArrowUpRight,
   BookOpen,
   CheckCircle2,
   FileText,
@@ -60,11 +61,17 @@ export default function BulletinStreamCard({
   const iconColor = ICON_COLOR_BY_TYPE[entry.cardType] || '#64748B';
   const iconBg = ICON_BG_BY_TYPE[entry.cardType] || '#F8FAFC';
   const clickable = Boolean(entry.clickable && onPress);
-  const CardWrap = clickable ? TouchableOpacity : View;
   const showSubjectChip = Boolean(
     showSubjectName && entry.subjectName && entry.subjectId,
   );
   const subjectChipClickable = Boolean(showSubjectChip && onSubjectPress);
+
+  const subjectChipLabel = (
+    <View style={styles.subjectPillInner}>
+      <ArrowUpRight size={11} color="#475569" strokeWidth={2.5} />
+      <Text style={styles.subjectPillText}>{entry.subjectName}</Text>
+    </View>
+  );
 
   const subjectChip = showSubjectChip ? (
     subjectChipClickable ? (
@@ -79,25 +86,41 @@ export default function BulletinStreamCard({
         activeOpacity={0.85}
         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
       >
-        <Text style={styles.subjectPillText}>{entry.subjectName}</Text>
+        {subjectChipLabel}
       </TouchableOpacity>
     ) : (
       <View style={styles.subjectPill}>
-        <Text style={styles.subjectPillText}>{entry.subjectName}</Text>
+        {subjectChipLabel}
       </View>
     )
   ) : null;
 
+  const cardBody = (
+    <>
+      {entry.title ? (
+        <Text style={styles.title} numberOfLines={entry.showFormattedBody ? undefined : 2}>
+          {entry.title}
+        </Text>
+      ) : null}
+      {entry.meta ? <Text style={styles.meta}>{entry.meta}</Text> : null}
+      {entry.showFormattedBody && entry.fullBody ? (
+        <BulletinLearnadoodleBody body={entry.fullBody} />
+      ) : null}
+      {!entry.showFormattedBody && entry.excerpt ? (
+        <Text style={styles.excerpt} numberOfLines={3}>
+          {entry.excerpt.startsWith('"') ? entry.excerpt : `"${entry.excerpt}"`}
+        </Text>
+      ) : null}
+      {clickable && entry.actionHint ? (
+        <Text style={styles.actionHint}>{entry.actionHint}</Text>
+      ) : null}
+    </>
+  );
+
   return (
     <View style={styles.wrap}>
       <Text style={styles.timeDivider}>{formatStreamTimestamp(entry.createdAt)}</Text>
-      <CardWrap
-        style={[styles.card, clickable && styles.cardClickable]}
-        onPress={clickable ? () => onPress(entry) : undefined}
-        accessibilityRole={clickable ? 'button' : undefined}
-        activeOpacity={0.92}
-        {...(clickable && Platform.OS === 'web' && { cursor: 'pointer' })}
-      >
+      <View style={[styles.card, clickable && styles.cardClickable]}>
         <View style={styles.cardTop}>
           <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
             <Icon size={18} color={iconColor} strokeWidth={2.25} />
@@ -112,26 +135,22 @@ export default function BulletinStreamCard({
                 </View>
               ) : null}
             </View>
-            {entry.title ? (
-              <Text style={styles.title} numberOfLines={entry.showFormattedBody ? undefined : 2}>
-                {entry.title}
-              </Text>
-            ) : null}
-            {entry.meta ? <Text style={styles.meta}>{entry.meta}</Text> : null}
-            {entry.showFormattedBody && entry.fullBody ? (
-              <BulletinLearnadoodleBody body={entry.fullBody} />
-            ) : null}
-            {!entry.showFormattedBody && entry.excerpt ? (
-              <Text style={styles.excerpt} numberOfLines={3}>
-                {entry.excerpt.startsWith('"') ? entry.excerpt : `"${entry.excerpt}"`}
-              </Text>
-            ) : null}
-            {clickable && entry.actionHint ? (
-              <Text style={styles.actionHint}>{entry.actionHint}</Text>
-            ) : null}
+            {clickable ? (
+              <TouchableOpacity
+                onPress={() => onPress(entry)}
+                accessibilityRole="button"
+                activeOpacity={0.92}
+                style={styles.cardPressArea}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                {cardBody}
+              </TouchableOpacity>
+            ) : (
+              cardBody
+            )}
           </View>
         </View>
-      </CardWrap>
+      </View>
     </View>
   );
 }
@@ -185,6 +204,9 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     gap: 4,
+  },
+  cardPressArea: {
+    alignSelf: 'stretch',
   },
   labelRow: {
     flexDirection: 'row',
@@ -240,6 +262,8 @@ const styles = StyleSheet.create({
     }),
   },
   subjectPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 999,
@@ -247,6 +271,11 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       transition: 'background-color 0.12s ease',
     }),
+  },
+  subjectPillInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
   },
   subjectPillText: {
     fontSize: 11,

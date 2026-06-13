@@ -47,6 +47,7 @@ const STANDALONE_DAY_ATTENDANCE_MINUTES = 300;
 const FAMILY_HEATMAP_CHILD_ID = '__family__';
 const YEAR_PLANNER_MODE_ATTENDANCE = 'attendance';
 const YEAR_PLANNER_MODE_EVENTS = 'events';
+const YEAR_PLANNER_MODE_ORDER = [YEAR_PLANNER_MODE_EVENTS, YEAR_PLANNER_MODE_ATTENDANCE];
 const YEAR_PLANNER_MODE_COPY = {
   [YEAR_PLANNER_MODE_ATTENDANCE]: {
     label: 'Attendance check',
@@ -253,7 +254,7 @@ export default function AttendanceView({
   const [markingRangeAttended, setMarkingRangeAttended] = useState(false);
   const [confirmRangeVisible, setConfirmRangeVisible] = useState(false);
   const [selectedHeatmapChildId, setSelectedHeatmapChildId] = useState(null);
-  const [yearPlannerInteractionMode, setYearPlannerInteractionMode] = useState(YEAR_PLANNER_MODE_ATTENDANCE);
+  const [yearPlannerInteractionMode, setYearPlannerInteractionMode] = useState(YEAR_PLANNER_MODE_EVENTS);
   const [yearPlannerDayPanelVisible, setYearPlannerDayPanelVisible] = useState(false);
 
   const toast = useToast();
@@ -1289,9 +1290,11 @@ export default function AttendanceView({
     ? (visibleHeatmapChildren.length === children.length ? 'all children' : 'the filtered children')
     : (selectedBulkChild?.first_name || selectedBulkChild?.name || 'the selected child');
 
-  const attendanceDateRangePicker = (
-    <View style={styles.rangeRowWrap}>
-      <Text style={styles.rangeRowLabel}>Attendance range</Text>
+  const attendanceDateRangePicker = (options = {}) => {
+    const { showLabel = true, style = null } = options;
+    return (
+    <View style={[styles.rangeRowWrap, style]}>
+      {showLabel ? <Text style={styles.rangeRowLabel}>Attendance range</Text> : null}
       <View style={styles.dateRangeRow}>
         <View style={styles.dateRangeSide}>
           <TouchableOpacity
@@ -1346,11 +1349,12 @@ export default function AttendanceView({
         </View>
       </View>
     </View>
-  );
+    );
+  };
 
   const rangeRow = (
     <View style={styles.topToolbar}>
-      {attendanceDateRangePicker}
+      {attendanceDateRangePicker()}
       <View style={styles.childFilterChips}>
         {children.map((child) => {
           const selected = selectedHeatmapChildId === child.id;
@@ -1394,7 +1398,7 @@ export default function AttendanceView({
     <View style={styles.yearPlannerToolbar}>
       <View style={styles.yearPlannerTopRow}>
         <View style={styles.yearPlannerModeSwitch}>
-          {[YEAR_PLANNER_MODE_ATTENDANCE, YEAR_PLANNER_MODE_EVENTS].map((mode) => {
+          {YEAR_PLANNER_MODE_ORDER.map((mode) => {
             const selected = yearPlannerInteractionMode === mode;
             return (
               <TouchableOpacity
@@ -1719,8 +1723,8 @@ export default function AttendanceView({
       )}
       <Modal animationType="fade" transparent visible={confirmRangeVisible} onRequestClose={() => setConfirmRangeVisible(false)}>
         <TouchableOpacity style={styles.confirmOverlay} activeOpacity={1} onPress={() => setConfirmRangeVisible(false)}>
-          <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.confirmModal}>
-            <View style={styles.confirmHeader}>
+          <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={[styles.confirmModal, styles.confirmRangeModal]}>
+            <View style={[styles.confirmHeader, styles.confirmRangeHeader]}>
               <Text style={styles.confirmTitle}>Mark full range attended?</Text>
               <TouchableOpacity
                 style={styles.confirmCloseBtn}
@@ -1733,10 +1737,13 @@ export default function AttendanceView({
                 <X size={18} color="#6B7280" />
               </TouchableOpacity>
             </View>
-            <Text style={styles.confirmBody}>
-              This will mark all days from {rangeStartStr ? formatDateDisplay(rangeStartStr) : 'the start date'} to {rangeEndStr ? formatDateDisplay(rangeEndStr) : 'the end date'} as attended for {bulkTargetChildId ? selectedBulkChildName : 'all children'}.
+            <View style={styles.confirmRangePickerWrap}>
+              {attendanceDateRangePicker({ showLabel: false })}
+            </View>
+            <Text style={[styles.confirmBody, styles.confirmRangeBody]}>
+              This will mark all days in the selected range as attended for {bulkTargetChildId ? selectedBulkChildName : 'all children'}.
             </Text>
-            <View style={styles.confirmActions}>
+            <View style={[styles.confirmActions, styles.confirmRangeActions]}>
               <TouchableOpacity
                 style={styles.confirmCancelBtn}
                 onPress={() => setConfirmRangeVisible(false)}
@@ -1746,8 +1753,11 @@ export default function AttendanceView({
                 <Text style={styles.confirmCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.confirmPrimaryBtn, markingRangeAttended && styles.confirmPrimaryBtnDisabled]}
-                disabled={markingRangeAttended}
+                style={[
+                  styles.confirmPrimaryBtn,
+                  (markingRangeAttended || !rangeStartStr || !rangeEndStr) && styles.confirmPrimaryBtnDisabled,
+                ]}
+                disabled={markingRangeAttended || !rangeStartStr || !rangeEndStr}
                 onPress={async () => {
                   setConfirmRangeVisible(false);
                   await handleMarkAllRangeAttended();
@@ -2023,7 +2033,7 @@ const styles = StyleSheet.create({
   },
   confirmModal: {
     width: '100%',
-    maxWidth: 460,
+    maxWidth: 520,
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     borderWidth: 1,
@@ -2032,6 +2042,26 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 12px 24px -8px rgba(0, 0, 0, 0.08)',
     }),
+  },
+  confirmRangeModal: {
+    paddingHorizontal: 32,
+    paddingTop: 28,
+    paddingBottom: 28,
+  },
+  confirmRangePickerWrap: {
+    marginTop: 12,
+    marginBottom: 16,
+  },
+  confirmRangeHeader: {
+    marginBottom: 4,
+  },
+  confirmRangeBody: {
+    marginTop: 0,
+    marginBottom: 4,
+  },
+  confirmRangeActions: {
+    marginTop: 24,
+    gap: 12,
   },
   confirmHeader: {
     flexDirection: 'row',

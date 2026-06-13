@@ -199,6 +199,7 @@ export default function CenterPane({
 
         if (!eventType) return false;
         if (selected.includes(eventType)) return true;
+        if (selectedLower.includes(typeLower)) return true;
         // Treat "Schedule Block" and "Scheduled Class Day" as the same
         if ((typeLower === 'schedule block' && selectedLower.includes('scheduled class day')) ||
             (typeLower === 'scheduled class day' && selectedLower.includes('schedule block'))) return true;

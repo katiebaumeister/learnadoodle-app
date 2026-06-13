@@ -8,7 +8,7 @@ import {
   Platform,
 } from 'react-native';
 import { X, Plus } from 'lucide-react';
-import { createModalStyles as styles } from '../../create/shared/createModalStyles';
+import { createModalStyles as styles, ACCENT_TEXT } from '../../create/shared/createModalStyles';
 import {
   GRADING_CALC_METHOD,
   GRADING_CALC_METHOD_OPTIONS,
@@ -36,55 +36,22 @@ export const gradingFieldStyles = {
   fieldRow: {
     marginBottom: 8,
   },
-  fieldLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#64748B',
-    marginBottom: 6,
-  },
   percentInputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    minWidth: 88,
+    maxWidth: 120,
   },
   percentInput: {
-    fontSize: 15,
-    color: '#0F172A',
-    paddingVertical: 10,
-    minWidth: 36,
+    flex: 1,
+    minWidth: 48,
     textAlign: 'right',
-    ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
   },
   percentSuffix: {
     fontSize: 14,
     color: '#64748B',
-    marginLeft: 2,
-  },
-  methodChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    backgroundColor: '#FFFFFF',
-  },
-  methodChipActive: {
-    borderColor: '#9ECFFB',
-    backgroundColor: '#EFF6FF',
-  },
-  methodChipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#64748B',
-  },
-  methodChipTextActive: {
-    color: '#0F172A',
+    marginLeft: 4,
+    paddingBottom: 10,
   },
   categoryRow: {
     flexDirection: 'row',
@@ -99,33 +66,16 @@ export const gradingFieldStyles = {
   },
   categoryNameInput: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: '#0F172A',
-    backgroundColor: '#FFFFFF',
-    ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
   },
   categoryPercentWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    minWidth: 72,
-    backgroundColor: '#FFFFFF',
+    maxWidth: 96,
   },
   categoryPercentInput: {
-    fontSize: 14,
-    color: '#0F172A',
-    paddingVertical: 10,
-    minWidth: 28,
+    flex: 1,
+    minWidth: 36,
     textAlign: 'right',
-    ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
   },
   categoryFooter: {
     flexDirection: 'row',
@@ -146,7 +96,7 @@ export const gradingFieldStyles = {
   addCategoryText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#2563EB',
+    color: ACCENT_TEXT,
   },
 };
 
@@ -163,46 +113,6 @@ export default function SubjectGradingFields({
 
   return (
     <View>
-      <Text style={styles.sectionHeading}>Missing work policy</Text>
-      <Text style={localStyles.helpText}>
-        When work is past due or marked missing, Learnadoodle can apply a draft grade automatically.
-        Students will not see it until you return the work.
-      </Text>
-      <View style={[styles.inlineSwitchRow, localStyles.switchBlock]}>
-        <Text style={localStyles.switchLabel}>
-          Automatically apply a draft grade to missing assignments
-        </Text>
-        <Switch
-          value={draft.auto_draft_missing}
-          onValueChange={(value) => onUpdateDraft({ auto_draft_missing: value })}
-          trackColor={{ false: '#CBD5E1', true: '#9ECFFB' }}
-          thumbColor="#FFFFFF"
-        />
-      </View>
-      {draft.auto_draft_missing ? (
-        <View style={localStyles.fieldRow}>
-          <Text style={localStyles.fieldLabel}>Default grade</Text>
-          <View style={localStyles.percentInputWrap}>
-            <TextInput
-              style={localStyles.percentInput}
-              value={String(draft.missing_default_grade_percent ?? 0)}
-              onChangeText={(text) => {
-                const digits = text.replace(/[^\d]/g, '');
-                onUpdateDraft({
-                  missing_default_grade_percent: digits === '' ? 0 : Number(digits),
-                });
-              }}
-              keyboardType="number-pad"
-              maxLength={3}
-              {...(Platform.OS === 'web' && { cursor: 'text' })}
-            />
-            <Text style={localStyles.percentSuffix}>%</Text>
-          </View>
-        </View>
-      ) : null}
-
-      <View style={styles.sectionDivider} />
-
       <Text style={styles.sectionHeading}>Grade calculation</Text>
       <Text style={localStyles.helpText}>Choose how overall grades are calculated for this subject.</Text>
       <View style={styles.modeChipRow}>
@@ -211,11 +121,21 @@ export default function SubjectGradingFields({
           return (
             <TouchableOpacity
               key={option.value}
-              style={[localStyles.methodChip, active && localStyles.methodChipActive]}
+              style={[
+                styles.dropdownOption,
+                styles.assigneePill,
+                active && styles.dropdownOptionActive,
+              ]}
               onPress={() => onUpdateDraft({ calculation_method: option.value })}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={[localStyles.methodChipText, active && localStyles.methodChipTextActive]}>
+              <Text
+                style={[
+                  styles.dropdownOptionText,
+                  styles.assigneePillText,
+                  active && [styles.assigneePillTextActive, styles.dropdownOptionTextActive],
+                ]}
+              >
                 {option.label}
               </Text>
             </TouchableOpacity>
@@ -245,7 +165,7 @@ export default function SubjectGradingFields({
             <View key={category.id || `cat-${index}`} style={localStyles.categoryRow}>
               <View style={localStyles.categoryFields}>
                 <TextInput
-                  style={localStyles.categoryNameInput}
+                  style={[styles.fieldInput, localStyles.categoryNameInput]}
                   placeholder="Grade category"
                   placeholderTextColor="#94A3B8"
                   value={category.name}
@@ -254,7 +174,7 @@ export default function SubjectGradingFields({
                 />
                 <View style={localStyles.categoryPercentWrap}>
                   <TextInput
-                    style={localStyles.categoryPercentInput}
+                    style={[styles.fieldInput, localStyles.categoryPercentInput]}
                     value={String(category.weight_percent ?? 0)}
                     onChangeText={(text) => {
                       const digits = text.replace(/[^\d]/g, '');
@@ -287,7 +207,7 @@ export default function SubjectGradingFields({
               onPress={onAddCategory}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Plus size={14} color="#2563EB" />
+              <Plus size={14} color={ACCENT_TEXT} />
               <Text style={localStyles.addCategoryText}>Add grade category</Text>
             </TouchableOpacity>
           </View>

@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, Modal, Platform } from 'react
 import { ChevronDown, Plus } from 'lucide-react';
 import RubricBuilder from '../../rubrics/RubricBuilder';
 import { getRubrics } from '../../../lib/services/gradebookClient';
-import { createModalStyles as styles, MUTED, PLACEHOLDER } from './createModalStyles';
+import { createModalStyles as styles, MUTED, PLACEHOLDER, ACCENT_TEXT, FG } from './createModalStyles';
 
 function normalizeRubricsResponse(result) {
   const rows = result?.data || (result?.error ? [] : (Array.isArray(result) ? result : []));
@@ -71,11 +71,11 @@ export default function RubricSelectField({
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setShowRubricBuilder(true)}
-            style={[styles.dropdownOption, { flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+            style={[styles.dropdownOption, styles.addNewButton]}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <Plus size={14} color="#2563EB" />
-            <Text style={[styles.dropdownOptionText, { color: '#2563EB' }]}>Add New</Text>
+            <Plus size={14} color={ACCENT_TEXT} />
+            <Text style={styles.addNewButtonText}>Add New</Text>
           </TouchableOpacity>
         </View>
         {open ? (
@@ -100,10 +100,13 @@ export default function RubricSelectField({
                       onRubricChange?.(rubric.id);
                       setOpen(false);
                     }}
-                    style={{ paddingVertical: 10, paddingHorizontal: 12, backgroundColor: active ? '#EFF6FF' : '#fff' }}
+                    style={[
+                      { paddingVertical: 10, paddingHorizontal: 12 },
+                      active ? styles.dropdownListItemActive : { backgroundColor: '#fff' },
+                    ]}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Text style={{ fontSize: 14, color: active ? '#1D4ED8' : '#111827' }}>
+                    <Text style={{ fontSize: 14, color: active ? ACCENT_TEXT : FG }}>
                       {rubric.title || 'Untitled rubric'}
                     </Text>
                   </TouchableOpacity>

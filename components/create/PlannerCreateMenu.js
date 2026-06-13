@@ -8,7 +8,7 @@ const CREATE_OPTIONS = [
   { id: 'assignment', label: 'Assignment', icon: FileText },
 ];
 
-export default function PlannerCreateMenu({ visible, triggerRef, onClose, onSelect }) {
+export default function PlannerCreateMenu({ visible, triggerRef, onClose, onSelect, panelProps = null }) {
   const handleSelect = (kind) => {
     onClose?.();
     onSelect?.(kind);
@@ -21,8 +21,9 @@ export default function PlannerCreateMenu({ visible, triggerRef, onClose, onSele
       onClose={onClose}
       placement="bottom-end"
       width={220}
-      maxHeight={160}
+      maxHeight={220}
       variant="context"
+      panelProps={panelProps}
     >
       <View style={styles.menu}>
         {CREATE_OPTIONS.map((option, index) => (

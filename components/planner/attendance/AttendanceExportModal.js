@@ -7,9 +7,24 @@ import {
   ScrollView,
   StyleSheet,
   Platform,
-  TextInput,
 } from 'react-native';
-import { X, Pencil, Check } from 'lucide-react';
+import { X, Download } from 'lucide-react';
+import ScheduleDateFields from '../../create/shared/ScheduleDateFields';
+import { AppCalendarDatePickerModal, parseLocalYyyyMmDd } from '../../ui/AppCalendarDatePickerModal';
+import { toYmd } from '../../../lib/create/eventTimeUtils';
+
+function keyToDate(key) {
+  if (!key) return null;
+  return parseLocalYyyyMmDd(String(key).slice(0, 10));
+}
+
+function clampDateKey(date, minKey, maxKey) {
+  const key = toYmd(date);
+  if (!key) return minKey || maxKey || '';
+  if (minKey && key < minKey) return minKey;
+  if (maxKey && key > maxKey) return maxKey;
+  return key;
+}
 
 export function getStatusDisplay(status) {
   if (status === 'present' || status === 'partial') return { label: 'Attended', variant: 'present' };
@@ -25,19 +40,29 @@ export function buildPrintHtml(exportRows, children, options = {}) {
     generatedAt = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
     singleChild = null,
   } = options;
+  const { visibleChildren, overflowChildren } = splitAttendanceChildren(children);
   const headerLabels = children.length === 1
     ? ['Date', 'Status']
-    : ['Date', ...children.map((c) => c.first_name || c.name || 'Child')];
+    : [
+      'Date',
+      ...visibleChildren.map((c) => c.first_name || c.name || 'Child'),
+      ...(overflowChildren.length > 0 ? ['…'] : []),
+    ];
   const headerCells = headerLabels.map((h) => `<th>${escapeHtml(h)}</th>`).join('');
   const rows = exportRows
     .map(
       (row) => {
-        const cells = children.map((c) => {
+        const cells = visibleChildren.map((c) => {
           const status = row.childStatuses[c.id];
           const d = getStatusDisplay(status);
           const cls = d.variant === 'present' ? 'status-present' : d.variant === 'absent' ? 'status-absent' : 'status-none';
           return `<td class="${cls}">${escapeHtml(d.label)}</td>`;
         });
+        if (overflowChildren.length > 0) {
+          const d = summarizeOverflowAttendance(row, overflowChildren);
+          const cls = d.variant === 'present' ? 'status-present' : d.variant === 'absent' ? 'status-absent' : 'status-none';
+          cells.push(`<td class="${cls}">${escapeHtml(d.label)}</td>`);
+        }
         return `<tr><td class="col-date">${escapeHtml(row.dateLabel)}</td>${cells.join('')}</tr>`;
       }
     )
@@ -89,6 +114,34 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+export const MAX_VISIBLE_ATTENDANCE_CHILDREN = 3;
+
+export function splitAttendanceChildren(children = []) {
+  const list = Array.isArray(children) ? children : [];
+  return {
+    visibleChildren: list.slice(0, MAX_VISIBLE_ATTENDANCE_CHILDREN),
+    overflowChildren: list.slice(MAX_VISIBLE_ATTENDANCE_CHILDREN),
+  };
+}
+
+export function summarizeOverflowAttendance(row, overflowChildren = []) {
+  if (!row || overflowChildren.length === 0) {
+    return { label: '…', variant: 'none' };
+  }
+  const statuses = overflowChildren.map((c) => row.childStatuses?.[c.id]);
+  const attended = statuses.filter((s) => s === 'present' || s === 'partial').length;
+  const absent = statuses.filter((s) => s === 'absent').length;
+  const scheduled = attended + absent;
+  if (scheduled === 0) return { label: '…', variant: 'none' };
+  if (absent > 0 && attended === 0) {
+    return { label: `${absent} unattended`, variant: 'absent' };
+  }
+  if (attended > 0 && absent === 0) {
+    return { label: `${attended} attended`, variant: 'present' };
+  }
+  return { label: 'Mixed', variant: 'none' };
+}
+
 export function formatPeriodLabelFromRange(startKey, endKey) {
   if (!startKey || !endKey) return '';
   const d1 = new Date(startKey + 'T12:00:00');
@@ -125,7 +178,7 @@ export default function AttendanceExportModal({
   const maxDateKey = exportRows.length ? exportRows[exportRows.length - 1].dateKey : '';
   const [displayStartKey, setDisplayStartKey] = useState(minDateKey);
   const [displayEndKey, setDisplayEndKey] = useState(maxDateKey);
-  const [isEditingRange, setIsEditingRange] = useState(false);
+  const [datePickerTarget, setDatePickerTarget] = useState(null);
 
   useEffect(() => {
     if (visible && exportRows.length) {
@@ -135,8 +188,14 @@ export default function AttendanceExportModal({
   }, [visible, minDateKey, maxDateKey]);
 
   useEffect(() => {
-    if (!visible) setIsEditingRange(false);
+    if (!visible) setDatePickerTarget(null);
   }, [visible]);
+
+  const startDateObj = useMemo(() => keyToDate(displayStartKey), [displayStartKey]);
+  const endDateObj = useMemo(() => keyToDate(displayEndKey), [displayEndKey]);
+  const datePickerValue = datePickerTarget === 'end' ? endDateObj : startDateObj;
+  const minDateObj = useMemo(() => keyToDate(minDateKey), [minDateKey]);
+  const maxDateObj = useMemo(() => keyToDate(maxDateKey), [maxDateKey]);
 
   const filteredExportRows = useMemo(() => {
     if (!displayStartKey || !displayEndKey || displayStartKey > displayEndKey) return exportRows;
@@ -165,41 +224,32 @@ export default function AttendanceExportModal({
     };
   });
 
-  const handleStartDateChange = (val) => {
-    const key = (val || '').trim().slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) { setDisplayStartKey(key || minDateKey); return; }
-    const clamped = key < minDateKey ? minDateKey : key > maxDateKey ? maxDateKey : key;
+  const handleStartDateChange = (date) => {
+    const clamped = clampDateKey(date, minDateKey, maxDateKey);
     setDisplayStartKey(clamped);
     if (displayEndKey && clamped > displayEndKey) setDisplayEndKey(clamped);
   };
-  const handleEndDateChange = (val) => {
-    const key = (val || '').trim().slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) { setDisplayEndKey(key || maxDateKey); return; }
-    const clamped = key > maxDateKey ? maxDateKey : key < minDateKey ? minDateKey : key;
+  const handleEndDateChange = (date) => {
+    const clamped = clampDateKey(date, minDateKey, maxDateKey);
     setDisplayEndKey(clamped);
     if (displayStartKey && clamped < displayStartKey) setDisplayStartKey(clamped);
   };
 
   const metadataParts = [`${displayChildren.length} Student${displayChildren.length !== 1 ? 's' : ''}`, `${daysWithAnyRecord}/${totalDays} Days Recorded`].filter(Boolean);
   const metadataLine = metadataParts.join(' • ');
+  const { visibleChildren, overflowChildren } = splitAttendanceChildren(displayChildren);
+  const showOverflowColumn = overflowChildren.length > 0;
 
-  const handlePrint = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const html = buildPrintHtml(effectiveRows, displayChildren, {
-        pageTitle: reportTitle,
-        periodLabel,
-        familyName: familyName || undefined,
-        generatedAt,
-      });
-      const w = window.open('', '_blank');
-      if (w) {
-        w.document.write(html);
-        w.document.close();
-        w.focus();
-        setTimeout(() => w.print(), 300);
-      }
-    }
-  };
+  const renderStatusCell = (label, variant, key) => (
+    <View key={key} style={[styles.cell, styles.statusCell]}>
+      <View style={[styles.statusChip, styles[`statusChip_${variant}`]]}>
+        <View style={[styles.statusDot, styles[`statusDot_${variant}`]]} />
+        <Text style={[styles.statusChipText, styles[`statusChipText_${variant}`]]} numberOfLines={1}>
+          {label}
+        </Text>
+      </View>
+    </View>
+  );
 
   const handleDownloadPdf = () => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -227,57 +277,33 @@ export default function AttendanceExportModal({
           <View style={styles.header}>
             <View style={styles.headerContent}>
               <Text style={styles.title}>{reportTitle}</Text>
-              <View style={styles.rangeRow}>
-                {isEditingRange ? (
-                  <>
-                    <Text style={styles.rangeLabel}>From</Text>
-                    <TextInput
-                      style={styles.dateInput}
-                      value={displayStartKey}
-                      onChangeText={handleStartDateChange}
-                      placeholder="YYYY-MM-DD"
-                      placeholderTextColor="#9CA3AF"
-                      {...(Platform.OS === 'web' && { type: 'date', min: minDateKey, max: maxDateKey })}
-                    />
-                    <Text style={styles.rangeLabel}>to</Text>
-                    <TextInput
-                      style={styles.dateInput}
-                      value={displayEndKey}
-                      onChangeText={handleEndDateChange}
-                      placeholder="YYYY-MM-DD"
-                      placeholderTextColor="#9CA3AF"
-                      {...(Platform.OS === 'web' && { type: 'date', min: minDateKey, max: maxDateKey })}
-                    />
-                    <TouchableOpacity
-                      onPress={() => setIsEditingRange(false)}
-                      style={styles.rangeEditButton}
-                      hitSlop={8}
-                    >
-                      <Check size={18} color="#059669" />
-                    </TouchableOpacity>
-                  </>
-                ) : (
-                  <>
-                    <Text style={styles.rangeStatic}>{periodLabel || 'Select range'}</Text>
-                    <TouchableOpacity
-                      onPress={() => setIsEditingRange(true)}
-                      style={styles.rangeEditButton}
-                      hitSlop={8}
-                    >
-                      <Pencil size={16} color="#6B7280" />
-                    </TouchableOpacity>
-                  </>
-                )}
-              </View>
-              {metadataLine ? (
-                <Text style={styles.metadata}>{metadataLine}</Text>
-              ) : null}
             </View>
             <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.closeIcon}>
               <X size={20} color="#9CA3AF" />
             </TouchableOpacity>
           </View>
           <View style={styles.divider} />
+
+          <View style={styles.dateSection}>
+            <View style={styles.dateFieldsWrap}>
+              <ScheduleDateFields
+                startDate={startDateObj || minDateObj}
+                onStartDateChange={handleStartDateChange}
+                endDate={endDateObj || maxDateObj}
+                onEndDateChange={handleEndDateChange}
+                showEndDate
+                showTimes={false}
+                endDateRequired
+                onOpenStartDatePicker={() => setDatePickerTarget('start')}
+                onOpenEndDatePicker={() => setDatePickerTarget('end')}
+              />
+            </View>
+            {metadataLine ? (
+              <Text style={styles.metadata}>{metadataLine}</Text>
+            ) : null}
+          </View>
+
+          <View style={styles.sectionDivider} />
 
           <ScrollView
             style={styles.scroll}
@@ -294,15 +320,22 @@ export default function AttendanceExportModal({
               </View>
             )}
 
-            <ScrollView horizontal showsHorizontalScrollIndicator style={styles.tableScroll}>
+            <View style={styles.tableContainer}>
               <View style={styles.table}>
                 <View style={[styles.tableRow, styles.tableRowHeader]}>
                   <Text style={[styles.cell, styles.headerCell, styles.dateCol]}>Date</Text>
-                  {displayChildren.map((c) => (
-                    <Text key={c.id} style={[styles.cell, styles.headerCell]}>
+                  {visibleChildren.map((c) => (
+                    <Text
+                      key={c.id}
+                      style={[styles.cell, styles.headerCell, styles.childCol]}
+                      numberOfLines={1}
+                    >
                       {displayChildren.length === 1 ? 'Status' : (c.first_name || c.name || 'Child')}
                     </Text>
                   ))}
+                  {showOverflowColumn ? (
+                    <Text style={[styles.cell, styles.headerCell, styles.overflowCol]}>…</Text>
+                  ) : null}
                 </View>
                 {effectiveRows.map((row, rowIndex) => (
                   <View
@@ -313,50 +346,66 @@ export default function AttendanceExportModal({
                       Platform.OS === 'web' && styles.tableRowHover,
                     ]}
                   >
-                    <Text style={[styles.cell, styles.dateCol, styles.dateCell]}>{row.dateLabel}</Text>
-                    {displayChildren.map((c) => {
+                    <Text style={[styles.cell, styles.dateCol, styles.dateCell]} numberOfLines={1}>
+                      {row.dateLabel}
+                    </Text>
+                    {visibleChildren.map((c) => {
                       const status = row.childStatuses[c.id];
                       const { label, variant } = getStatusDisplay(status);
-                      return (
-                        <View key={c.id} style={[styles.cell, styles.statusCell]}>
-                          <View style={[styles.statusChip, styles[`statusChip_${variant}`]]}>
-                            <View style={[styles.statusDot, styles[`statusDot_${variant}`]]} />
-                            <Text style={[styles.statusChipText, styles[`statusChipText_${variant}`]]}>{label}</Text>
-                          </View>
-                        </View>
-                      );
+                      return renderStatusCell(label, variant, c.id);
                     })}
+                    {showOverflowColumn ? (() => {
+                      const { label, variant } = summarizeOverflowAttendance(row, overflowChildren);
+                      return renderStatusCell(label, variant, 'overflow');
+                    })() : null}
                   </View>
                 ))}
               </View>
-            </ScrollView>
+            </View>
           </ScrollView>
 
           <View style={styles.footer}>
-            <TouchableOpacity onPress={onClose} style={styles.ghostButton}>
-              <Text style={styles.ghostButtonText}>Close</Text>
-            </TouchableOpacity>
+            <View style={styles.footerLeft} />
             <View style={styles.footerRight}>
+              <TouchableOpacity
+                onPress={onClose}
+                style={styles.cancelButton}
+                activeOpacity={0.9}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.cancelButtonText}>Close</Text>
+              </TouchableOpacity>
               {Platform.OS === 'web' && (
-                <>
-                  <TouchableOpacity style={styles.primaryButton} onPress={handleDownloadPdf}>
-                    <Text style={styles.primaryButtonText}>Download PDF</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.outlineButton} onPress={handlePrint}>
-                    <Text style={styles.outlineButtonText}>Print</Text>
-                  </TouchableOpacity>
-                </>
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={handleDownloadPdf}
+                  activeOpacity={0.9}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Download size={16} color="#FFFFFF" />
+                  <Text style={styles.primaryButtonText}>Download PDF</Text>
+                </TouchableOpacity>
               )}
             </View>
           </View>
         </TouchableOpacity>
       </TouchableOpacity>
+
+      <AppCalendarDatePickerModal
+        visible={!!datePickerTarget}
+        onClose={() => setDatePickerTarget(null)}
+        selectedDate={datePickerValue || minDateObj || new Date()}
+        minDate={minDateObj}
+        maxDate={maxDateObj}
+        onSelectDate={(d) => {
+          if (datePickerTarget === 'end') handleEndDateChange(d);
+          else handleStartDateChange(d);
+          setDatePickerTarget(null);
+        }}
+      />
     </Modal>
   );
 }
-
-const dateColWidth = 118;
-const studentColWidth = 112;
 
 const styles = StyleSheet.create({
   overlay: {
@@ -370,8 +419,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 20,
     maxWidth: '95%',
-    width: 520,
-    maxHeight: '85%',
+    width: 760,
+    maxHeight: '90%',
     flexDirection: 'column',
     ...(Platform.OS === 'web' && {
       boxShadow: '0 8px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06)',
@@ -390,46 +439,29 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     color: '#111827',
-    marginBottom: 4,
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", -apple-system, sans-serif' }),
   },
-  rangeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'nowrap',
-    gap: 8,
-    marginTop: 8,
+  dateSection: {
+    paddingHorizontal: 24,
+    paddingTop: 4,
+    paddingBottom: 2,
+  },
+  dateFieldsWrap: {
+    alignSelf: 'flex-start',
+    maxWidth: 480,
+    width: '100%',
+  },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: '#E5E7EB',
+    marginHorizontal: 24,
     marginBottom: 4,
-  },
-  rangeLabel: {
-    fontSize: 13,
-    color: '#6B7280',
-    ...(Platform.OS === 'web' && { fontFamily: 'system-ui, sans-serif' }),
-  },
-  rangeStatic: {
-    fontSize: 13,
-    color: '#374151',
-    ...(Platform.OS === 'web' && { fontFamily: 'system-ui, sans-serif' }),
-  },
-  rangeEditButton: {
-    padding: 4,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  dateInput: {
-    fontSize: 13,
-    color: '#111827',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    width: 112,
-    minWidth: 112,
-    ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
   },
   metadata: {
     fontSize: 13,
     color: '#6B7280',
+    marginTop: 2,
+    marginBottom: 4,
     ...(Platform.OS === 'web' && { fontFamily: 'system-ui, sans-serif' }),
   },
   closeIcon: { padding: 4 },
@@ -439,15 +471,20 @@ const styles = StyleSheet.create({
     marginHorizontal: 24,
   },
   scroll: {
-    height: 340,
-    maxHeight: 420,
+    height: 440,
+    maxHeight: 520,
   },
   scrollContent: { flexGrow: 1, paddingBottom: 8 },
-  tableScroll: {},
+  tableContainer: {
+    width: '100%',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    paddingBottom: 8,
+  },
   summaryBlock: {
     paddingHorizontal: 24,
-    paddingTop: 16,
-    paddingBottom: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
   },
   summaryLine: {
     fontSize: 13,
@@ -456,13 +493,12 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { fontFamily: 'system-ui, sans-serif' }),
   },
   table: {
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    paddingBottom: 8,
+    width: '100%',
   },
   tableRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    width: '100%',
     minHeight: 40,
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
@@ -482,12 +518,26 @@ const styles = StyleSheet.create({
     },
   }),
   cell: {
+    flex: 1,
+    minWidth: 0,
     paddingVertical: 6,
-    paddingHorizontal: 12,
-    width: studentColWidth,
+    paddingHorizontal: 10,
     justifyContent: 'center',
   },
-  dateCol: { width: dateColWidth },
+  dateCol: {
+    flex: 0.9,
+    minWidth: 108,
+    maxWidth: 140,
+  },
+  childCol: {
+    flex: 1.2,
+    minWidth: 0,
+  },
+  overflowCol: {
+    flex: 0.75,
+    minWidth: 72,
+    maxWidth: 120,
+  },
   dateCell: {
     fontSize: 13,
     fontWeight: '600',
@@ -505,10 +555,12 @@ const styles = StyleSheet.create({
   statusChip: {
     flexDirection: 'row',
     alignItems: 'center',
+    alignSelf: 'flex-start',
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 12,
     gap: 6,
+    flexShrink: 0,
   },
   statusChip_present: {
     backgroundColor: 'rgba(5, 150, 105, 0.12)',
@@ -532,56 +584,60 @@ const styles = StyleSheet.create({
   statusChipText_absent: { color: '#DC2626' },
   statusChipText_none: { color: '#6B7280' },
   footer: {
+    width: '100%',
+    minHeight: 64,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 24,
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    paddingTop: 8,
+    paddingBottom: 16,
+  },
+  footerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   footerRight: {
     flexDirection: 'row',
-    gap: 10,
+    alignItems: 'center',
+    gap: 12,
+    marginLeft: 'auto',
   },
-  ghostButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 16,
+  cancelButton: {
+    minHeight: 50,
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  ghostButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#6B7280',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  outlineButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 18,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#D1D5DB',
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  outlineButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
     color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
   },
   primaryButton: {
-    backgroundColor: '#85C4F2',
-    paddingVertical: 6,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
-    }),
+    height: 50,
+    borderRadius: 16,
+    paddingHorizontal: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#9ECFFB',
   },
   primaryButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
     color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
   },
 });

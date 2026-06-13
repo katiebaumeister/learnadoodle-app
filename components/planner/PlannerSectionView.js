@@ -194,6 +194,7 @@ export default function PlannerSectionView({
               onPress={openSmartActions}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
+              <Sparkles size={16} color="rgba(15,23,42,0.85)" strokeWidth={2.25} />
               <Text style={styles.smartActionsText}>Smart Actions</Text>
               {showSmartActionsMenu ? (
                 <ChevronUp size={16} color="rgba(15,23,42,0.7)" />

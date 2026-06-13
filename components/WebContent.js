@@ -639,6 +639,7 @@ import {
   prefetchPlannerAttendanceSnapshot,
   prefetchPlanEditListForFamily,
 } from '../lib/services/plannerPrefetch'
+import { buildPlannerExportOptionalColumns } from '../lib/plannerExportOptionalColumns'
 import { getPlanDefaultsFromSettings } from '../lib/services/plannerSettingsClient'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
@@ -5860,24 +5861,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         return s === 'done' ? 'Attended' : 'Unattended';
       };
       const cols = detail.columns || {};
-      const optCols = [
-        { key: 'instructionalTime', label: 'Count as instructional time', get: (ev) => {
-          if (ev.counts_toward_plan === true) return 'Yes';
-          if (ev.instructional_status === 'MANUAL_COUNTS' || ev.instructional_status === 'PLAN_LOCKED' || ev.instructional_status === 'PLAN_PLACEHOLDER') return 'Yes';
-          if (ev.academic_year_id) return 'Yes';
-          return 'No';
-        } },
-        { key: 'plan', label: 'Schedule source', get: (ev) => ev.academic_year_name || ev.plan_name || (ev.academic_year_id ? 'Yes' : '') || '' },
-        { key: 'location', label: 'Location', get: (ev) => ev.location || '' },
-        { key: 'mode', label: 'Mode', get: (ev) => ev.mode || '' },
-        { key: 'instructor', label: 'Instructor', get: (ev) => ev.instructor || '' },
-        { key: 'subject', label: 'Subject', get: (ev) => ev.subject_name || ev.subjectName || ev.topic || '' },
-        { key: 'grade', label: 'Grade', get: (ev) => ev.grade || '' },
-        { key: 'unit', label: 'Unit', get: (ev) => ev.unit || '' },
-        { key: 'percentOfTotal', label: '% of total', get: (ev) => (ev.percent_of_total_grade != null && ev.percent_of_total_grade !== '' ? String(ev.percent_of_total_grade) : '') },
-        { key: 'attachmentTitle', label: 'Attachment title', get: (ev) => ev.material_title || ev.attachment_title || (ev.materials_attachment_title || (Array.isArray(ev.materials_attachment_ids) && ev.materials_attachment_ids.length ? '(attachment)' : '')) || '' },
-        { key: 'notes', label: 'Notes', get: (ev) => ev.description || ev.notes || '' },
-      ].filter((c) => cols[c.key]);
+      const optCols = buildPlannerExportOptionalColumns(cols);
 
       let merged = {};
       let holidays = [];

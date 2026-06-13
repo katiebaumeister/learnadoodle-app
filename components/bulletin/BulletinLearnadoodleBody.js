@@ -23,13 +23,16 @@ function parseBulletLine(line) {
   };
 }
 
-function renderInlineFormattedText(text, baseStyle, keyPrefix = 'inline') {
+function renderInlineFormattedText(text, baseStyle, keyPrefix = 'inline', extraStyles = null) {
   const content = String(text || '');
   if (!content) return null;
 
   const children = [];
   let remaining = content;
   let tokenKey = 0;
+  const boldStyle = extraStyles?.bold || styles.bold;
+  const italicStyle = extraStyles?.italic || styles.italic;
+  const underlineStyle = extraStyles?.underline || styles.underline;
 
   const pushPlain = (plain) => {
     if (plain) children.push(plain);
@@ -39,7 +42,7 @@ function renderInlineFormattedText(text, baseStyle, keyPrefix = 'inline') {
     const boldMatch = remaining.match(/^\*\*(.+?)\*\*/);
     if (boldMatch) {
       children.push(
-        <Text key={`${keyPrefix}-${tokenKey++}`} style={[baseStyle, styles.bold]}>
+        <Text key={`${keyPrefix}-${tokenKey++}`} style={[baseStyle, boldStyle]}>
           {boldMatch[1]}
         </Text>,
       );
@@ -50,8 +53,8 @@ function renderInlineFormattedText(text, baseStyle, keyPrefix = 'inline') {
     const underlineMatch = remaining.match(/^__(.+?)__/);
     if (underlineMatch) {
       children.push(
-        <Text key={`${keyPrefix}-${tokenKey++}`} style={[baseStyle, styles.underline]}>
-          {underlineMatch[1]}
+        <Text key={`${keyPrefix}-${tokenKey++}`} style={[baseStyle, underlineStyle]}>
+          {renderInlineFormattedText(underlineMatch[1], baseStyle, `${keyPrefix}-u-${tokenKey}`, extraStyles)}
         </Text>,
       );
       remaining = remaining.slice(underlineMatch[0].length);
@@ -61,8 +64,8 @@ function renderInlineFormattedText(text, baseStyle, keyPrefix = 'inline') {
     const italicMatch = remaining.match(/^_(.+?)_/);
     if (italicMatch) {
       children.push(
-        <Text key={`${keyPrefix}-${tokenKey++}`} style={[baseStyle, styles.italic]}>
-          {italicMatch[1]}
+        <Text key={`${keyPrefix}-${tokenKey++}`} style={[baseStyle, italicStyle]}>
+          {renderInlineFormattedText(italicMatch[1], baseStyle, `${keyPrefix}-i-${tokenKey}`, extraStyles)}
         </Text>,
       );
       remaining = remaining.slice(italicMatch[0].length);
@@ -83,7 +86,13 @@ function renderInlineFormattedText(text, baseStyle, keyPrefix = 'inline') {
     remaining = remaining.slice(nextSpecial);
   }
 
-  return <Text style={baseStyle}>{children.length ? children : content}</Text>;
+  if (!children.length) {
+    return <Text style={baseStyle}>{content}</Text>;
+  }
+  if (children.length === 1 && typeof children[0] === 'string') {
+    return <Text style={baseStyle}>{children[0]}</Text>;
+  }
+  return <Text style={baseStyle}>{children}</Text>;
 }
 
 export default function BulletinLearnadoodleBody({ body, textStyle = null }) {

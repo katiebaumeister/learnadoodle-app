@@ -7,7 +7,6 @@ import { createModalStyles as styles } from '../create/shared/createModalStyles'
 import SubjectScheduleFields from './subjectSettings/SubjectScheduleFields';
 import {
   APPLY_SCOPE_FULL_YEAR,
-  APPLY_SCOPE_FORWARD,
   buildInitialScheduleForm,
   applySubjectScheduleToCalendar,
 } from '../../lib/subjectConfigureSchedule';
@@ -24,16 +23,14 @@ export default function ConfigureSubjectScheduleModal({
   academicYearId = null,
 }) {
   const toast = useToast();
-  const [weekdays, setWeekdays] = useState([1, 3, 5]);
-  const [startTime, setStartTime] = useState('09:00');
-  const [durationMinutes, setDurationMinutes] = useState('60');
+  const [weekdays, setWeekdays] = useState([]);
+  const [startTime, setStartTime] = useState('');
+  const [durationMinutes, setDurationMinutes] = useState('');
   const [startDate, setStartDate] = useState(null);
   const [endDate, setEndDate] = useState(null);
   const [datePickerTarget, setDatePickerTarget] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [validationBanner, setValidationBanner] = useState('');
-  const [applyScope, setApplyScope] = useState(APPLY_SCOPE_FULL_YEAR);
-  const [hasExistingBlock, setHasExistingBlock] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
@@ -43,12 +40,14 @@ export default function ConfigureSubjectScheduleModal({
       academicYearId,
     });
     setWeekdays(initial.weekdays);
-    setStartTime(initial.startTime);
-    setDurationMinutes(String(initial.durationMinutes));
+    setStartTime(initial.startTime || '');
+    setDurationMinutes(
+      initial.durationMinutes === '' || initial.durationMinutes == null
+        ? ''
+        : String(initial.durationMinutes),
+    );
     setStartDate(initial.startDate);
     setEndDate(initial.endDate);
-    setHasExistingBlock(!!initial.hasExistingBlock);
-    setApplyScope(initial.hasExistingBlock ? APPLY_SCOPE_FORWARD : APPLY_SCOPE_FULL_YEAR);
     setValidationBanner('');
   }, [visible, subject, subjectPlanData, academicYearId]);
 
@@ -90,7 +89,7 @@ export default function ConfigureSubjectScheduleModal({
         endDate,
         academicYearId,
         planData: subjectPlanData,
-        applyScope: hasExistingBlock ? applyScope : APPLY_SCOPE_FULL_YEAR,
+        applyScope: APPLY_SCOPE_FULL_YEAR,
       });
       toast.push(`Generated ${result?.created ?? 0} calendar events`, 'success');
       onSaved?.(result);
@@ -136,9 +135,6 @@ export default function ConfigureSubjectScheduleModal({
             onEndDateChange={setEndDate}
             onOpenStartDatePicker={() => setDatePickerTarget('start')}
             onOpenEndDatePicker={() => setDatePickerTarget('end')}
-            hasExistingBlock={hasExistingBlock}
-            applyScope={applyScope}
-            onApplyScopeChange={setApplyScope}
           />
         </CreateModalShell>
       </Modal>

@@ -9,6 +9,11 @@ export const PLACEHOLDER = '#94A3B8';
 export const BORDER = '#e5e7eb';
 export const SUB = '#6b7280';
 export const ACCENT = '#9ECFFB';
+export const ACCENT_TEXT = '#6BB3E8';
+export const ACCENT_CHIP_BORDER = '#9ECFFB';
+export const ACCENT_CHIP_BG = 'rgba(158, 207, 251, 0.25)';
+export const ACCENT_SOFT_BG = 'rgba(158, 207, 251, 0.12)';
+export const ACCENT_LIST_ACTIVE_BG = 'rgba(158, 207, 251, 0.18)';
 
 export const createModalStyles = StyleSheet.create({
   overlay: {
@@ -116,8 +121,8 @@ export const createModalStyles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   dropdownOptionActive: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#93C5FD',
+    backgroundColor: ACCENT_CHIP_BG,
+    borderColor: ACCENT_CHIP_BORDER,
   },
   dropdownOptionText: {
     fontSize: 14,
@@ -125,7 +130,7 @@ export const createModalStyles = StyleSheet.create({
     fontWeight: '500',
   },
   dropdownOptionTextActive: {
-    color: '#1D4ED8',
+    color: ACCENT_TEXT,
   },
   assigneePill: {
     minHeight: 36,
@@ -134,7 +139,7 @@ export const createModalStyles = StyleSheet.create({
     fontSize: 14,
   },
   assigneePillTextActive: {
-    color: '#1D4ED8',
+    color: ACCENT_TEXT,
   },
   accordionContent: {
     marginTop: 12,
@@ -416,13 +421,13 @@ export const createModalStyles = StyleSheet.create({
     justifyContent: 'center',
   },
   radioOuterActive: {
-    borderColor: '#2563EB',
+    borderColor: ACCENT_TEXT,
   },
   radioInner: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#2563EB',
+    backgroundColor: ACCENT_TEXT,
   },
   radioLabel: {
     fontSize: 14,
@@ -441,6 +446,24 @@ export const createModalStyles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     backgroundColor: '#fff',
+  },
+  attachActionButtonActive: {
+    backgroundColor: ACCENT_CHIP_BG,
+    borderColor: ACCENT_CHIP_BORDER,
+  },
+  addNewButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderColor: ACCENT_CHIP_BORDER,
+  },
+  addNewButtonText: {
+    fontSize: 14,
+    color: ACCENT_TEXT,
+    fontWeight: '500',
+  },
+  dropdownListItemActive: {
+    backgroundColor: ACCENT_LIST_ACTIVE_BG,
   },
   attachActionText: {
     fontSize: 13,
@@ -477,12 +500,12 @@ export const createModalStyles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   checkboxBoxChecked: {
-    borderColor: '#2563EB',
-    backgroundColor: '#EFF6FF',
+    borderColor: ACCENT_CHIP_BORDER,
+    backgroundColor: ACCENT_SOFT_BG,
   },
   checkboxMark: {
     fontSize: 12,
-    color: '#2563EB',
+    color: ACCENT_TEXT,
     fontWeight: '700',
   },
 });

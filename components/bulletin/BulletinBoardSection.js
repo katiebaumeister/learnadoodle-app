@@ -13,14 +13,13 @@ import {
   ScrollView,
   ActivityIndicator,
   Image,
-  Modal as RNModal,
+  Modal,
 } from 'react-native';
 import {
-  ChevronDown,
   FileText,
   MoreVertical,
+  Pencil,
   Plus,
-  Paperclip,
   Send,
   Trash2,
   X,
@@ -34,6 +33,7 @@ import {
   createBulletinPost,
   deleteBulletinComment,
   deleteBulletinPost,
+  updateBulletinPost,
   displayNameForUser,
   fetchAuthorProfiles,
   fetchBulletinPosts,
@@ -47,10 +47,14 @@ import { sourceForChild } from '../ui/ChildAvatarCluster';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import ConfirmDialog from '../ConfirmDialog';
-import AppModalShell from '../ui/AppModalShell';
-import { ModalFooter } from '../ui/ModalFooter';
-import { createModalStyles as modalFieldStyles, ACCENT as MODAL_ACCENT } from '../create/shared/createModalStyles';
+import CreateModalShell from '../create/shared/CreateModalShell';
+import {
+  createModalStyles as modalFieldStyles,
+  CREATE_EVENT_MODAL_MAX_WIDTH,
+} from '../create/shared/createModalStyles';
 import InstructionsEditor from '../create/shared/InstructionsEditor';
+import SubjectSelectField from '../create/shared/SubjectSelectField';
+import EventAttachmentsField from '../create/shared/EventAttachmentsField';
 import useAssignmentActivity from './useAssignmentActivity';
 import BulletinLearnadoodleBody from './BulletinLearnadoodleBody';
 import BulletinStreamCard from './BulletinStreamCard';
@@ -420,16 +424,23 @@ function BulletinPostCard({
   );
 }
 
-function StreamPostMenu({ post, onDelete }) {
+function StreamPostMenu({ post, onEdit, onDelete }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef(null);
 
+  const stopCardPress = (e) => {
+    if (Platform.OS === 'web' && e?.stopPropagation) e.stopPropagation();
+  };
+
   return (
-    <View style={styles.postMenuWrap}>
+    <View style={styles.postMenuWrap} onStartShouldSetResponder={() => true}>
       <TouchableOpacity
         ref={menuBtnRef}
         style={[styles.postMenuBtn, menuOpen && styles.postMenuBtnActive]}
-        onPress={() => setMenuOpen((open) => !open)}
+        onPress={(e) => {
+          stopCardPress(e);
+          setMenuOpen((open) => !open);
+        }}
         accessibilityLabel="Post options"
         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
       >
@@ -440,9 +451,17 @@ function StreamPostMenu({ post, onDelete }) {
         triggerRef={menuBtnRef}
         onClose={() => setMenuOpen(false)}
         placement="bottom-end"
-        width={200}
+        width={168}
         variant="context"
       >
+        <DropdownItem
+          icon={Pencil}
+          label="Edit"
+          onPress={() => {
+            setMenuOpen(false);
+            onEdit?.(post);
+          }}
+        />
         <DropdownItem
           icon={Trash2}
           label="Delete"
@@ -492,14 +511,13 @@ export default function BulletinBoardSection({
   const [selectedUserIds, setSelectedUserIds] = useState([]);
   const [selectedChildIds, setSelectedChildIds] = useState([]);
   const [subjectId, setSubjectId] = useState(filterSubjectId || null);
-  const [subjectMenuOpen, setSubjectMenuOpen] = useState(false);
   const [pendingMaterials, setPendingMaterials] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState(null);
   const [pendingDeletePost, setPendingDeletePost] = useState(null);
   const [deletingPost, setDeletingPost] = useState(false);
-  const subjectMenuRef = useRef(null);
+  const [editingPost, setEditingPost] = useState(null);
   const feedScrollRef = useRef(null);
 
   const subjectById = useMemo(() => {
@@ -626,14 +644,6 @@ export default function BulletinBoardSection({
     openBulletinActivityItem(entry.payload);
   }, [onAssignmentActivityPress]);
 
-  useEffect(() => {
-    if (!expandedLayout || loading || activityLoading) return undefined;
-    const timer = setTimeout(() => {
-      feedScrollRef.current?.scrollToEnd?.({ animated: false });
-    }, 50);
-    return () => clearTimeout(timer);
-  }, [expandedLayout, loading, activityLoading, mergedStreamItems.length]);
-
   const toggleParticipant = (participant) => {
     if (participant.type === 'child') {
       const id = String(participant.id);
@@ -661,13 +671,33 @@ export default function BulletinBoardSection({
     setSelectedUserIds([]);
     setSelectedChildIds([]);
     setSubjectId(filterSubjectId || null);
-    setSubjectMenuOpen(false);
     setPendingMaterials([]);
+    setEditingPost(null);
     if (useModalComposer || !expandedLayout) {
       setComposerOpenState(false);
     }
     setError(null);
   };
+
+  const openEditPost = useCallback((post) => {
+    if (!post?.id) return;
+    setEditingPost(post);
+    setBody(post.body || '');
+    setSubjectId(post.subjectId || filterSubjectId || null);
+    setVisibility(post.visibility || VISIBILITY_ALL);
+    setSelectedUserIds((post.audienceUserIds || []).map(String));
+    setSelectedChildIds((post.audienceChildIds || []).map(String));
+    setPendingMaterials(
+      (post.materials || [])
+        .map((entry) => ({
+          id: entry.materialId || entry.material?.id,
+          title: entry.material?.title || 'Attachment',
+        }))
+        .filter((material) => material.id)
+    );
+    setError(null);
+    setComposerOpenState(true);
+  }, [filterSubjectId, setComposerOpenState]);
 
   const handleAttachFile = () => {
     if (Platform.OS !== 'web' || typeof document === 'undefined' || uploading) return;
@@ -697,7 +727,7 @@ export default function BulletinBoardSection({
     input.click();
   };
 
-  const handleCreatePost = async () => {
+  const handleSavePost = async () => {
     const trimmed = body.trim();
     if (!trimmed || posting || !familyId) return;
     if (visibility === VISIBILITY_SELECTED && selectedUserIds.length === 0 && selectedChildIds.length === 0) {
@@ -707,36 +737,52 @@ export default function BulletinBoardSection({
     setPosting(true);
     setError(null);
     try {
-      const { data, error: createError } = await createBulletinPost({
-        familyId,
-        body: trimmed,
-        subjectId,
-        visibility,
-        audienceUserIds: visibility === VISIBILITY_SELECTED ? selectedUserIds : [],
-        audienceChildIds: visibility === VISIBILITY_SELECTED ? selectedChildIds : [],
-        materialIds: pendingMaterials.map((m) => m.id),
-      });
-      if (createError) throw createError;
-      if (data) {
-        setPosts((prev) => [data, ...prev]);
-        const nextProfiles = new Map(profileMap);
-        if (currentUserId && profile) {
-          nextProfiles.set(String(currentUserId), {
-            id: currentUserId,
-            firstName: profile.first_name,
-            name: profile.name || profile.first_name,
-          });
+      if (editingPost?.id) {
+        const { data, error: updateError } = await updateBulletinPost({
+          postId: editingPost.id,
+          body: trimmed,
+          subjectId,
+          visibility,
+          audienceUserIds: visibility === VISIBILITY_SELECTED ? selectedUserIds : [],
+          audienceChildIds: visibility === VISIBILITY_SELECTED ? selectedChildIds : [],
+          materialIds: pendingMaterials.map((m) => m.id),
+        });
+        if (updateError) throw updateError;
+        if (data) {
+          setPosts((prev) => prev.map((post) => (post.id === editingPost.id ? data : post)));
         }
-        setProfileMap(nextProfiles);
+      } else {
+        const { data, error: createError } = await createBulletinPost({
+          familyId,
+          body: trimmed,
+          subjectId,
+          visibility,
+          audienceUserIds: visibility === VISIBILITY_SELECTED ? selectedUserIds : [],
+          audienceChildIds: visibility === VISIBILITY_SELECTED ? selectedChildIds : [],
+          materialIds: pendingMaterials.map((m) => m.id),
+        });
+        if (createError) throw createError;
+        if (data) {
+          setPosts((prev) => [data, ...prev]);
+          const nextProfiles = new Map(profileMap);
+          if (currentUserId && profile) {
+            nextProfiles.set(String(currentUserId), {
+              id: currentUserId,
+              firstName: profile.first_name,
+              name: profile.name || profile.first_name,
+            });
+          }
+          setProfileMap(nextProfiles);
+        }
+        if (expandedLayout) {
+          setTimeout(() => {
+            feedScrollRef.current?.scrollTo?.({ y: 0, animated: true });
+          }, 80);
+        }
       }
       resetComposer();
-      if (expandedLayout) {
-        setTimeout(() => {
-          feedScrollRef.current?.scrollToEnd?.({ animated: true });
-        }, 80);
-      }
     } catch (err) {
-      setError(err?.message || 'Could not post note');
+      setError(err?.message || (editingPost ? 'Could not update note' : 'Could not post note'));
     } finally {
       setPosting(false);
     }
@@ -813,45 +859,14 @@ export default function BulletinBoardSection({
               <Text style={styles.subjectLockedText}>{selectedSubjectLabel}</Text>
             </View>
           ) : (
-            <View style={modalFieldStyles.formGroup}>
-              <Text style={modalFieldStyles.fieldLabel}>Subject</Text>
-              <View style={styles.subjectPickerWrap}>
-                <TouchableOpacity
-                  ref={subjectMenuRef}
-                  style={styles.subjectPickerBtn}
-                  onPress={() => setSubjectMenuOpen((open) => !open)}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={styles.subjectPickerText}>{selectedSubjectLabel}</Text>
-                  <ChevronDown size={14} color="#64748B" />
-                </TouchableOpacity>
-                <Dropdown
-                  visible={subjectMenuOpen}
-                  triggerRef={subjectMenuRef}
-                  onClose={() => setSubjectMenuOpen(false)}
-                  placement="bottom-start"
-                  width={220}
-                >
-                  <DropdownItem
-                    label="No subject"
-                    onPress={() => {
-                      setSubjectId(null);
-                      setSubjectMenuOpen(false);
-                    }}
-                  />
-                  {(subjects || []).map((subject) => (
-                    <DropdownItem
-                      key={subject.id}
-                      label={subject.name || 'Subject'}
-                      onPress={() => {
-                        setSubjectId(subject.id);
-                        setSubjectMenuOpen(false);
-                      }}
-                    />
-                  ))}
-                </Dropdown>
-              </View>
-            </View>
+            <SubjectSelectField
+              subjects={subjects}
+              subjectId={subjectId}
+              onSubjectChange={setSubjectId}
+              label="Subject"
+              allowEmpty
+              noneLabel="No subject"
+            />
           )}
 
           <View style={modalFieldStyles.formGroup}>
@@ -864,14 +879,17 @@ export default function BulletinBoardSection({
               ].map((opt) => (
                 <TouchableOpacity
                   key={opt.key}
-                  style={[styles.optionChip, visibility === opt.key && styles.optionChipSelected]}
+                  style={[
+                    modalFieldStyles.dropdownOption,
+                    visibility === opt.key && modalFieldStyles.dropdownOptionActive,
+                  ]}
                   onPress={() => setVisibility(opt.key)}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   <Text
                     style={[
-                      styles.optionChipText,
-                      visibility === opt.key && styles.optionChipTextSelected,
+                      modalFieldStyles.dropdownOptionText,
+                      visibility === opt.key && modalFieldStyles.dropdownOptionTextActive,
                     ]}
                   >
                     {opt.label}
@@ -889,14 +907,17 @@ export default function BulletinBoardSection({
                   return (
                     <TouchableOpacity
                       key={`${participant.type}:${participant.id}`}
-                      style={[styles.optionChip, selected && styles.optionChipSelected]}
+                      style={[
+                        modalFieldStyles.dropdownOption,
+                        selected && modalFieldStyles.dropdownOptionActive,
+                      ]}
                       onPress={() => toggleParticipant(participant)}
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
                       <Text
                         style={[
-                          styles.optionChipText,
-                          selected && styles.optionChipTextSelected,
+                          modalFieldStyles.dropdownOptionText,
+                          selected && modalFieldStyles.dropdownOptionTextActive,
                         ]}
                       >
                         {participant.name}
@@ -913,52 +934,66 @@ export default function BulletinBoardSection({
       <InstructionsEditor
         value={body}
         onChangeText={setBody}
-        label={null}
+        label="Message"
         placeholder={
           filterSubjectId
             ? 'Share an announcement with your class...'
             : 'Share an announcement with your family...'
         }
         autoFocus={useModalComposer && Platform.OS === 'web'}
-        textAreaStyle={styles.composerTextArea}
+        textAreaStyle={[modalFieldStyles.fieldInput, modalFieldStyles.notesPlainInput]}
       />
 
-      {pendingMaterials.length > 0 ? (
-        <View style={styles.pendingAttachments}>
-          {pendingMaterials.map((material) => (
-            <View key={material.id} style={styles.pendingAttachmentChip}>
-              <FileText size={14} color="#6BB3E8" />
-              <Text style={styles.pendingAttachmentText} numberOfLines={1}>
-                {material.title}
-              </Text>
-              <TouchableOpacity
-                onPress={() =>
-                  setPendingMaterials((prev) => prev.filter((m) => m.id !== material.id))
-                }
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <X size={14} color="#94A3B8" />
-              </TouchableOpacity>
+      {familyId ? (
+        <>
+          <EventAttachmentsField
+            familyId={familyId}
+            allowMultiple
+            selectedMaterialIds={pendingMaterials.map((material) => material.id)}
+            onAddExistingMaterial={(material) => {
+              setPendingMaterials((prev) => {
+                if (prev.some((entry) => String(entry.id) === String(material.id))) return prev;
+                return [
+                  ...prev,
+                  {
+                    id: material.id,
+                    title: material.title || material.name || 'Attachment',
+                  },
+                ];
+              });
+            }}
+            onAddNew={uploading ? null : handleAttachFile}
+          />
+          {pendingMaterials.length > 0 ? (
+            <View style={styles.pendingAttachments}>
+              {pendingMaterials.map((material) => (
+                <View key={material.id} style={styles.pendingAttachmentChip}>
+                  <FileText size={14} color="#6BB3E8" />
+                  <Text style={styles.pendingAttachmentText} numberOfLines={1}>
+                    {material.title}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() =>
+                      setPendingMaterials((prev) => prev.filter((m) => m.id !== material.id))
+                    }
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <X size={14} color="#94A3B8" />
+                  </TouchableOpacity>
+                </View>
+              ))}
             </View>
-          ))}
-        </View>
+          ) : null}
+          {uploading ? (
+            <View style={styles.uploadingRow}>
+              <ActivityIndicator size="small" color="#6BB3E8" />
+              <Text style={styles.uploadingText}>Uploading attachment…</Text>
+            </View>
+          ) : null}
+        </>
       ) : null}
 
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-      <TouchableOpacity
-        style={styles.attachBtn}
-        onPress={handleAttachFile}
-        disabled={uploading}
-        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-      >
-        {uploading ? (
-          <ActivityIndicator size="small" color="#64748B" />
-        ) : (
-          <Paperclip size={18} color="#64748B" />
-        )}
-        <Text style={styles.attachBtnText}>Attach file</Text>
-      </TouchableOpacity>
+      {error && !useModalComposer ? <Text style={styles.errorText}>{error}</Text> : null}
     </>
   );
 
@@ -986,51 +1021,27 @@ export default function BulletinBoardSection({
       ) : null}
 
       {useModalComposer ? (
-        <RNModal
+        <Modal
           visible={isComposerOpen}
           transparent
           animationType="fade"
           onRequestClose={resetComposer}
         >
-          <View style={styles.composerModalOverlay}>
-            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={resetComposer} />
-            <TouchableOpacity
-              activeOpacity={1}
-              onPress={(e) => e.stopPropagation()}
-              style={styles.composerModalWrap}
-            >
-              <AppModalShell
-                title="New announcement"
-                onClose={resetComposer}
-                shellStyle={styles.composerModalShell}
-                titleRowStyle={modalFieldStyles.compactTitleRow}
-                contentContainerStyle={modalFieldStyles.contentContainer}
-                bodyStyle={modalFieldStyles.shellBody}
-                footer={(
-                  <ModalFooter
-                    mode="add"
-                    primaryLabel={posting ? 'Posting…' : 'Post'}
-                    onCancel={resetComposer}
-                    onPrimary={handleCreatePost}
-                    accent={MODAL_ACCENT}
-                    disabled={posting}
-                    visuallyDisabled={!body.trim()}
-                    loading={posting}
-                  />
-                )}
-              >
-                <ScrollView
-                  style={styles.composerScroll}
-                  contentContainerStyle={styles.composerForm}
-                  showsVerticalScrollIndicator={false}
-                  keyboardShouldPersistTaps="handled"
-                >
-                  {composerFormFields}
-                </ScrollView>
-              </AppModalShell>
-            </TouchableOpacity>
+          <View style={styles.composerModalRoot}>
+            <CreateModalShell
+            title={editingPost ? 'Edit announcement' : 'New announcement'}
+            onClose={resetComposer}
+            onSave={handleSavePost}
+            saving={posting}
+            saveLabel={editingPost ? 'Save' : 'Post'}
+            saveDisabled={!body.trim()}
+            validationBanner={error || null}
+            maxWidth={CREATE_EVENT_MODAL_MAX_WIDTH}
+          >
+            {composerFormFields}
+          </CreateModalShell>
           </View>
-        </RNModal>
+        </Modal>
       ) : null}
 
       {loading || activityLoading ? (
@@ -1059,9 +1070,9 @@ export default function BulletinBoardSection({
             ) : (
               mergedStreamItems.map((entry) => {
                 const post = entry.kind === 'post' ? entry.payload : null;
-                const canDeletePost = post
+                const isPostAuthor = post
                   && post.source !== 'learnadoodle'
-                  && (canDeleteAny || String(post.authorUserId) === String(currentUserId));
+                  && String(post.authorUserId) === String(currentUserId);
                 return (
                   <BulletinStreamCard
                     key={entry.id}
@@ -1070,8 +1081,12 @@ export default function BulletinBoardSection({
                     onPress={entry.kind === 'activity' ? handleStreamCardPress : undefined}
                     onSubjectPress={onSubjectPress}
                     headerRight={
-                      canDeletePost ? (
-                        <StreamPostMenu post={post} onDelete={setPendingDeletePost} />
+                      isPostAuthor ? (
+                        <StreamPostMenu
+                          post={post}
+                          onEdit={openEditPost}
+                          onDelete={setPendingDeletePost}
+                        />
                       ) : null
                     }
                   />
@@ -1115,88 +1130,16 @@ const styles = StyleSheet.create({
       maxHeight: '100%',
     }),
   },
-  composerScroll: {
-    flexGrow: 0,
-    ...(Platform.OS === 'web' && {
-      maxHeight: '60vh',
-    }),
-  },
-  composerForm: {
-    gap: 0,
-    paddingBottom: 4,
-  },
-  composerModalOverlay: {
+  composerModalRoot: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  composerModalWrap: {
-    width: '100%',
-    maxWidth: 640,
-  },
-  composerModalShell: {
-    height: 'auto',
-    maxHeight: Platform.OS === 'web' ? '90vh' : '86%',
-    borderRadius: 28,
-    overflow: 'hidden',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
-    }),
-  },
-  composerTextArea: {
-    minHeight: 96,
-  },
-  optionChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-  },
-  optionChipSelected: {
-    borderColor: '#85C4F2',
-    backgroundColor: 'rgba(133, 196, 242, 0.2)',
-  },
-  optionChipText: {
-    fontSize: 12,
-    color: '#6b7280',
-    fontWeight: '400',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  optionChipTextSelected: {
-    color: '#6BB3E8',
-    fontWeight: '700',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      minHeight: '100vh',
+      minWidth: '100vw',
     }),
   },
   participantScroll: {
     maxHeight: 44,
     marginBottom: 14,
-  },
-  subjectPickerWrap: {
-    position: 'relative',
-  },
-  subjectPickerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.24)',
-    backgroundColor: '#F8FAFC',
-  },
-  subjectPickerText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#334155',
   },
   subjectLockedText: {
     fontSize: 14,
@@ -1205,6 +1148,17 @@ const styles = StyleSheet.create({
   },
   pendingAttachments: {
     gap: 8,
+    marginTop: 8,
+  },
+  uploadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+  },
+  uploadingText: {
+    fontSize: 13,
+    color: '#64748B',
   },
   pendingAttachmentChip: {
     flexDirection: 'row',
@@ -1221,18 +1175,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     color: '#334155',
-  },
-  attachBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    alignSelf: 'flex-start',
-    marginTop: 4,
-  },
-  attachBtnText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#64748B',
   },
   errorText: {
     fontSize: 13,

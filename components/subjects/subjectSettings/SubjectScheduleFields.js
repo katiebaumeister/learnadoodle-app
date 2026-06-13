@@ -4,8 +4,6 @@ import { createModalStyles as styles } from '../../create/shared/createModalStyl
 import ScheduleDateFields from '../../create/shared/ScheduleDateFields';
 import {
   WEEKDAY_OPTIONS,
-  APPLY_SCOPE_FULL_YEAR,
-  APPLY_SCOPE_FORWARD,
   normalizeHm,
 } from '../../../lib/subjectConfigureSchedule';
 
@@ -29,13 +27,9 @@ export default function SubjectScheduleFields({
   onEndDateChange,
   onOpenStartDatePicker,
   onOpenEndDatePicker,
-  hasExistingBlock = false,
-  applyScope,
-  onApplyScopeChange,
-  showGenerateButton = false,
-  onGenerate,
-  generating = false,
-  generateDisabled = false,
+  showRemoveEventsButton = false,
+  onRemoveAllEvents,
+  removingEvents = false,
   embeddedInForm = false,
 }) {
   return (
@@ -44,12 +38,12 @@ export default function SubjectScheduleFields({
         <>
           <Text style={styles.sectionHeading}>Recurring schedule</Text>
           <Text style={scheduleHelpStyles.helpText}>
-            Set when this subject meets, then generate or update planner events on the calendar.
+            Set when this subject meets. Saving applies schedule changes to the planner calendar.
           </Text>
         </>
       ) : (
         <Text style={scheduleHelpStyles.helpTextEmbedded}>
-          Set when this subject meets, then generate or update planner events on the calendar.
+          Set when this subject meets. Saving applies schedule changes to the planner calendar.
         </Text>
       )}
 
@@ -89,7 +83,7 @@ export default function SubjectScheduleFields({
           <Text style={styles.fieldLabel}>Time</Text>
           <TextInput
             value={startTime}
-            onChangeText={(text) => onStartTimeChange(normalizeHm(text.replace(/[^\d:]/g, ''), startTime))}
+            onChangeText={(text) => onStartTimeChange(normalizeHm(text.replace(/[^\d:]/g, ''), startTime || ''))}
             placeholder="09:00"
             style={styles.fieldInput}
           />
@@ -97,7 +91,7 @@ export default function SubjectScheduleFields({
         <View style={[styles.scheduleColumn, { flex: 1 }]}>
           <Text style={styles.fieldLabel}>Duration (min)</Text>
           <TextInput
-            value={String(durationMinutes)}
+            value={durationMinutes === '' || durationMinutes == null ? '' : String(durationMinutes)}
             onChangeText={(text) => onDurationMinutesChange(text.replace(/[^\d]/g, ''))}
             placeholder="60"
             keyboardType="numeric"
@@ -118,64 +112,18 @@ export default function SubjectScheduleFields({
         onOpenEndDatePicker={onOpenEndDatePicker}
       />
 
-      {hasExistingBlock ? (
-        <View style={styles.formGroup}>
-          <Text style={styles.fieldLabel}>Apply changes</Text>
-          <View style={styles.chipRow}>
-            <TouchableOpacity
-              onPress={() => onApplyScopeChange(APPLY_SCOPE_FORWARD)}
-              style={[
-                styles.dropdownOption,
-                styles.assigneePill,
-                applyScope === APPLY_SCOPE_FORWARD && styles.dropdownOptionActive,
-              ]}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text
-                style={[
-                  styles.dropdownOptionText,
-                  styles.assigneePillText,
-                  applyScope === APPLY_SCOPE_FORWARD && [styles.assigneePillTextActive, styles.dropdownOptionTextActive],
-                ]}
-              >
-                From today forward
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => onApplyScopeChange(APPLY_SCOPE_FULL_YEAR)}
-              style={[
-                styles.dropdownOption,
-                styles.assigneePill,
-                applyScope === APPLY_SCOPE_FULL_YEAR && styles.dropdownOptionActive,
-              ]}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text
-                style={[
-                  styles.dropdownOptionText,
-                  styles.assigneePillText,
-                  applyScope === APPLY_SCOPE_FULL_YEAR && [styles.assigneePillTextActive, styles.dropdownOptionTextActive],
-                ]}
-              >
-                Entire school year
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : null}
-
-      {showGenerateButton ? (
+      {showRemoveEventsButton ? (
         <TouchableOpacity
           style={[
-            scheduleHelpStyles.generateBtn,
-            (generating || generateDisabled) && scheduleHelpStyles.generateBtnDisabled,
+            scheduleHelpStyles.removeBtn,
+            removingEvents && scheduleHelpStyles.removeBtnDisabled,
           ]}
-          onPress={onGenerate}
-          disabled={generating || generateDisabled}
-          {...(Platform.OS === 'web' && { cursor: generating || generateDisabled ? 'default' : 'pointer' })}
+          onPress={onRemoveAllEvents}
+          disabled={removingEvents}
+          {...(Platform.OS === 'web' && { cursor: removingEvents ? 'default' : 'pointer' })}
         >
-          <Text style={scheduleHelpStyles.generateBtnText}>
-            {generating ? 'Generating…' : 'Generate / update planner events'}
+          <Text style={scheduleHelpStyles.removeBtnText}>
+            {removingEvents ? 'Removing…' : 'Remove all events'}
           </Text>
         </TouchableOpacity>
       ) : null}
@@ -194,22 +142,29 @@ const scheduleHelpStyles = {
     fontSize: 13,
     lineHeight: 19,
     color: '#64748B',
-    marginBottom: 14,
+    marginBottom: 12,
   },
-  generateBtn: {
-    marginTop: 8,
+  removeBtn: {
+    marginTop: 4,
     alignSelf: 'flex-start',
-    paddingHorizontal: 18,
-    paddingVertical: 11,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
     borderRadius: 999,
-    backgroundColor: '#4F46E5',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
-  generateBtnDisabled: {
+  removeBtnDisabled: {
     opacity: 0.5,
+    ...(Platform.OS === 'web' && { cursor: 'default' }),
   },
-  generateBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
+  removeBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#B91C1C',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 };

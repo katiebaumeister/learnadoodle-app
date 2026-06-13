@@ -39,6 +39,9 @@ export default function DayEventsPanel({
     return ta - tb;
   });
   const totalMins = events.reduce((sum, e) => sum + (getEventMinutes ? getEventMinutes(e) : 0), 0);
+  const allEventsPresent =
+    sortedEvents.length > 0
+    && sortedEvents.every((e) => attendanceByEventId[e.id] === 'present');
 
   return (
     <View style={styles.panel}>
@@ -74,7 +77,7 @@ export default function DayEventsPanel({
                 {sortedEvents.length} {sortedEvents.length === 1 ? 'event' : 'events'}
                 {totalMins ? ` • ${totalMins} min` : ''}
               </Text>
-              {onMarkAllAttended && sortedEvents.length > 0 && dayStatus !== 'present' && (
+              {onMarkAllAttended && sortedEvents.length > 0 && !allEventsPresent && (
                 <TouchableOpacity
                   onPress={onMarkAllAttended}
                   style={styles.markAllBtn}

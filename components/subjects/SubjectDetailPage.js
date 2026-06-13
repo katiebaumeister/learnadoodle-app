@@ -3080,6 +3080,9 @@ export default function SubjectDetailPage({
     );
   }
 
+  const isBulletinLayout = classroomTab === 'bulletin';
+  const PageScroll = isBulletinLayout ? View : ScrollView;
+
   return (
     <View style={styles.container}>
       {layoutVariant === 'learning' ? (
@@ -3135,17 +3138,17 @@ export default function SubjectDetailPage({
           canManageMaterials={canManageMaterials}
         />
       ) : (
-      <ScrollView
+      <PageScroll
         style={[
           styles.scrollView,
-          classroomTab === 'bulletin' && styles.scrollViewBulletinFill,
+          isBulletinLayout && styles.scrollViewBulletinFill,
+          isBulletinLayout && styles.scrollContent,
+          isBulletinLayout && styles.scrollContentBulletinFill,
         ]}
-        contentContainerStyle={[
-          styles.scrollContent,
-          classroomTab === 'bulletin' && styles.scrollContentBulletinFill,
-        ]}
-        scrollEnabled={classroomTab !== 'bulletin'}
-        showsVerticalScrollIndicator={classroomTab !== 'bulletin'}
+        {...(!isBulletinLayout ? {
+          contentContainerStyle: styles.scrollContent,
+          showsVerticalScrollIndicator: true,
+        } : {})}
       >
         {/* Header */}
         <View style={styles.header}>
@@ -3190,6 +3193,7 @@ export default function SubjectDetailPage({
             subjects={[subject]}
             filterSubjectId={subject.id}
             expandedLayout
+            feedTitle="Bulletin Board"
             onAssignmentActivityPress={handleAssignmentActivityPress}
           />
         </View>
@@ -3734,7 +3738,7 @@ export default function SubjectDetailPage({
         </View>
         ) : null}
 
-      </ScrollView>
+      </PageScroll>
       )}
       <Modal
         visible={showAttendanceSuggestionConfirmModal}
@@ -4066,17 +4070,25 @@ export default function SubjectDetailPage({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    minHeight: 0,
     backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
-      minHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      overflow: 'hidden',
     }),
   },
   scrollView: {
     flex: 1,
+    minHeight: 0,
   },
   scrollViewBulletinFill: {
     ...(Platform.OS === 'web' && {
       overflow: 'hidden',
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column',
     }),
   },
   scrollContent: {
@@ -4088,11 +4100,12 @@ const styles = StyleSheet.create({
     }),
   },
   scrollContentBulletinFill: {
-    flexGrow: 1,
+    flex: 1,
+    minHeight: 0,
     ...(Platform.OS === 'web' && {
-      minHeight: 'calc(100vh - 48px)',
       display: 'flex',
       flexDirection: 'column',
+      height: '100%',
     }),
   },
   loadingContainer: {
@@ -4442,8 +4455,9 @@ const styles = StyleSheet.create({
   },
   bulletinBoardSection: {
     flex: 1,
+    flexBasis: 0,
     minHeight: 0,
-    marginBottom: 24,
+    marginBottom: 0,
     marginTop: 2,
     paddingTop: 4,
     borderRadius: 12,
@@ -4456,6 +4470,8 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
+      height: '100%',
+      maxHeight: '100%',
     }),
   },
   sectionHeader: {

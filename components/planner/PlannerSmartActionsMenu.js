@@ -10,7 +10,7 @@ const SMART_ACTION_ICONS = {
   export: Download,
 };
 
-export default function PlannerSmartActionsMenu({ visible, triggerRef, onClose, showExport = false }) {
+export default function PlannerSmartActionsMenu({ visible, triggerRef, onClose, showExport = false, panelProps = null }) {
   const handleSelect = (modeId) => {
     onClose?.();
     dispatchPlannerSmartAction(modeId);
@@ -30,6 +30,7 @@ export default function PlannerSmartActionsMenu({ visible, triggerRef, onClose, 
       width={240}
       maxHeight={520}
       variant="context"
+      panelProps={panelProps}
     >
       <View style={styles.menu}>
         {utilities.map((mode, index) => (

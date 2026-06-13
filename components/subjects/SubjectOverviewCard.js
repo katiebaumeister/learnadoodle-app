@@ -158,18 +158,6 @@ export default function SubjectOverviewCard({
     }
   };
 
-  const handleConfigureSchedule = () => {
-    if (onConfigureSchedule) {
-      onConfigureSchedule(subject);
-    }
-  };
-
-  const handleEditUnits = () => {
-    if (onEditUnits) {
-      onEditUnits(subject);
-    }
-  };
-
   const handleNewAssignment = () => {
     if (onNewAssignment) {
       onNewAssignment(subject);
@@ -427,42 +415,60 @@ export default function SubjectOverviewCard({
   );
 
   if (isSearchResultCompact) {
+    const CompactOuter = Platform.OS === 'web' ? View : TouchableOpacity;
+    const compactProps = Platform.OS === 'web'
+      ? {
+          style: [styles.card, styles.cardCompactSearch],
+          ...(onCardClick ? {
+            onClick: () => onCardClick(subject),
+            cursor: 'pointer',
+          } : {}),
+        }
+      : {
+          style: [styles.card, styles.cardCompactSearch],
+          onPress: onCardClick ? () => onCardClick(subject) : undefined,
+          activeOpacity: 0.7,
+        };
+
     return (
-      <TouchableOpacity
-        style={[styles.card, styles.cardCompactSearch]}
-        onPress={() => onCardClick?.(subject)}
-        activeOpacity={0.7}
-      >
+      <CompactOuter {...compactProps}>
         <View style={styles.searchCompactHeader}>
           <Text style={styles.searchCompactSubjectName} numberOfLines={2}>
             {subject.name}
           </Text>
         </View>
         {searchPreviewContent}
-      </TouchableOpacity>
+      </CompactOuter>
     );
   }
 
+  const CardOuter = Platform.OS === 'web' ? View : TouchableOpacity;
+  const cardOuterProps = Platform.OS === 'web'
+    ? {
+        style: styles.card,
+        ...(onCardClick ? {
+          onClick: () => onCardClick(subject),
+          cursor: 'pointer',
+        } : {}),
+      }
+    : {
+        style: styles.card,
+        onPress: onCardClick ? () => onCardClick(subject) : undefined,
+        activeOpacity: 0.7,
+      };
+
   return (
-    <TouchableOpacity
-      style={styles.card}
-      onPress={() => onCardClick?.(subject)}
-      activeOpacity={0.7}
-    >
+    <CardOuter {...cardOuterProps}>
       {/* Header */}
       <SubjectCardHeader
         subjectName={subject.name}
         subject={subject}
         assignedChildIds={assignedChildren}
         familyChildren={children}
-        unitsEditorLabel={unitsEditorLabel}
         isParentViewer={isParentViewer}
         stopPropagationOnMenu
         needsHelpBadge={needsHelpBadge}
         onEditSubject={isParentViewer ? handleEditSubject : null}
-        onConfigureSchedule={onConfigureSchedule ? handleConfigureSchedule : null}
-        onEditUnits={onEditUnits ? handleEditUnits : null}
-        onNewAssignment={isParentViewer ? handleNewAssignment : null}
       />
       {subjectIntent ? (
         <Text style={styles.subjectIntent}>{subjectIntent}</Text>
@@ -561,7 +567,7 @@ export default function SubjectOverviewCard({
       </View>
       ) : null}
       {searchPreviewContent}
-    </TouchableOpacity>
+    </CardOuter>
   );
 }
 

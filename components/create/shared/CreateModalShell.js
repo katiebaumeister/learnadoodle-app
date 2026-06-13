@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { View, Text, StyleSheet, Platform, Pressable } from 'react-native';
 import AppModalShell from '../../ui/AppModalShell';
 import { ModalFooter } from '../../ui/ModalFooter';
 import { createModalStyles as styles, CREATE_MODAL_MAX_WIDTH } from './createModalStyles';
@@ -18,8 +18,14 @@ export default function CreateModalShell({
 }) {
   return (
     <View style={shellStyles.overlay}>
-      <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
-      <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={[shellStyles.modalWrap, { maxWidth }]}>
+      <Pressable
+        style={shellStyles.backdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close dialog"
+        {...(Platform.OS === 'web' && { cursor: 'default' })}
+      />
+      <View style={[shellStyles.modalWrap, { maxWidth }]}>
         <AppModalShell
           title={title}
           onClose={onClose}
@@ -47,7 +53,7 @@ export default function CreateModalShell({
           ) : null}
           {children}
         </AppModalShell>
-      </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -55,15 +61,29 @@ export default function CreateModalShell({
 const shellStyles = StyleSheet.create({
   overlay: {
     ...(Platform.OS === 'web'
-      ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10050 }
+      ? {
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          width: '100vw',
+          height: '100vh',
+          zIndex: 10050,
+        }
       : { flex: 1 }),
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 0,
+  },
   modalWrap: {
     width: '100%',
     maxWidth: CREATE_MODAL_MAX_WIDTH,
+    zIndex: 1,
   },
 });

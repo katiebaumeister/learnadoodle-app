@@ -5086,7 +5086,7 @@ export default function TaskCreateModal({
                     style={styles.addMaterialButton}
                     onPress={() => setShowAddMaterialModal(true)}
                   >
-                    <Plus size={14} color="#5B6880" />
+                    <Plus size={14} color="#6BB3E8" />
                     <Text style={styles.addMaterialText}>Add New</Text>
                   </TouchableOpacity>
                 </View>
@@ -7450,8 +7450,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   dropdownOptionActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#9ECFFB',
+    backgroundColor: 'rgba(158, 207, 251, 0.25)',
   },
   dropdownOptionText: {
     color: '#6b7280',
@@ -7669,13 +7669,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#F8FAFC',
+    borderColor: '#9ECFFB',
+    backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   addMaterialText: {
     fontSize: 14,
-    color: '#5B6880',
+    color: '#6BB3E8',
     fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
