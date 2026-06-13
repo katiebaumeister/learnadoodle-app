@@ -57,7 +57,9 @@ export default function EventAttachmentsField({
 
   return (
     <View style={styles.formGroup}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+      {label != null && label !== '' ? (
+        <Text style={styles.fieldLabel}>{label}</Text>
+      ) : null}
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
         <TouchableOpacity
           ref={triggerRef}

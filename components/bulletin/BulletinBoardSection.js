@@ -941,7 +941,7 @@ export default function BulletinBoardSection({
             : 'Share an announcement with your family...'
         }
         autoFocus={useModalComposer && Platform.OS === 'web'}
-        textAreaStyle={[modalFieldStyles.fieldInput, modalFieldStyles.notesPlainInput]}
+        textAreaStyle={modalFieldStyles.notesTextArea}
       />
 
       {familyId ? (

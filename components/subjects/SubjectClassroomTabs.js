@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native
 
 const TABS = [
   { id: 'bulletin', label: 'Bulletin Board' },
-  { id: 'classwork', label: 'Classwork' },
+  { id: 'classwork', label: 'Learning Schedule' },
   { id: 'grades', label: 'Grades' },
 ];
 

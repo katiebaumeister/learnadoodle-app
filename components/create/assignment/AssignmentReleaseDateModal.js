@@ -22,10 +22,10 @@ export default function AssignmentReleaseDateModal({
       selectedDate={selectedDate || minDate}
       minDate={minDate}
       title="Release date"
-      subtitle="Students can start this assignment on the date you choose."
+      requireConfirm
+      confirmLabel="Set date & save"
       onSelectDate={(date) => {
         onConfirm?.(date);
-        onClose?.();
       }}
     />
   );

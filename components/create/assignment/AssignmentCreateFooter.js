@@ -1,16 +1,15 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { CalendarClock, Check, Save, X } from 'lucide-react';
+import { CalendarClock, Check, X } from 'lucide-react';
+import { modalButtonStyles, MODAL_ACCENT_TEXT } from '../../ui/modalButtonStyles';
 
 export default function AssignmentCreateFooter({
   onCancel,
   onSchedule,
-  onSaveDraft,
   onAssign,
   saving = false,
   assignDisabled = false,
   scheduleDisabled = false,
-  draftDisabled = false,
   onBlockedAction,
 }) {
   const handlePress = (disabled, action) => {
@@ -41,26 +40,14 @@ export default function AssignmentCreateFooter({
         <TouchableOpacity
           onPress={() => handlePress(scheduleDisabled, onSchedule)}
           disabled={saving}
-          style={[styles.middleButton, saving && styles.buttonDisabled]}
+          style={[modalButtonStyles.secondaryButton, saving && modalButtonStyles.buttonDisabled]}
           activeOpacity={0.9}
           accessibilityRole="button"
           accessibilityLabel="Schedule assignment"
           {...(Platform.OS === 'web' && { cursor: saving ? 'not-allowed' : 'pointer' })}
         >
-          <CalendarClock size={16} color="#1E40AF" />
-          <Text style={styles.middleButtonText}>Schedule</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => handlePress(draftDisabled, onSaveDraft)}
-          disabled={saving}
-          style={[styles.middleButton, saving && styles.buttonDisabled]}
-          activeOpacity={0.9}
-          accessibilityRole="button"
-          accessibilityLabel="Save draft"
-          {...(Platform.OS === 'web' && { cursor: saving ? 'not-allowed' : 'pointer' })}
-        >
-          <Save size={16} color="#1E40AF" />
-          <Text style={styles.middleButtonText}>{saving ? 'Saving…' : 'Save draft'}</Text>
+          <CalendarClock size={16} color={MODAL_ACCENT_TEXT} />
+          <Text style={modalButtonStyles.secondaryButtonText}>Schedule</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => handlePress(assignDisabled, onAssign)}
@@ -113,27 +100,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#374151',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", sans-serif',
-    }),
-  },
-  middleButton: {
-    minHeight: 50,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 16,
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    justifyContent: 'center',
-  },
-  middleButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1E40AF',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", sans-serif',
     }),

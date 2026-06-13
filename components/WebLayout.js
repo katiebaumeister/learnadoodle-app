@@ -68,6 +68,8 @@ import ProgressForecastModal from './planner/modals/ProgressForecastModal';
 import SchedulingAssistant from './planner/SchedulingAssistant';
 import PlannerSettingsPopover from './planner/PlannerSettingsPopover';
 import PlannerSmartActionsMenu from './planner/PlannerSmartActionsMenu';
+import SchoolYearSettingsModal from './settings/SchoolYearSettingsModal';
+import { resolveSchoolYearLabelFromAnchor } from './planner/plannerYearRange';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
 import { createModalStyles as exportModalStyles } from './create/shared/createModalStyles';
@@ -484,6 +486,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [schedulingAssistantWeekStart, setSchedulingAssistantWeekStart] = useState(() => startOfWeek(new Date()));
   const [showSmartActionsMenu, setShowSmartActionsMenu] = useState(false);
   const smartActionsButtonRef = useRef(null);
+  const plannerAnchorRef = useRef(new Date());
+  const [showEditSchoolYearModal, setShowEditSchoolYearModal] = useState(false);
+  const [editSchoolYearInitialLabel, setEditSchoolYearInitialLabel] = useState(null);
   const [showPlannerCreateMenu, setShowPlannerCreateMenu] = useState(false);
   const plannerCreateButtonRef = useRef(null);
   const smartActionsHover = useHoverDropdown({
@@ -2590,6 +2595,33 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
     const handler = (event) => {
+      const detailDate = event?.detail;
+      if (detailDate instanceof Date && !Number.isNaN(detailDate.getTime())) {
+        plannerAnchorRef.current = detailDate;
+      }
+    };
+    window.addEventListener('plannerMonthChange', handler);
+    return () => window.removeEventListener('plannerMonthChange', handler);
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const openEditSchoolYear = (schoolYearLabel) => {
+      const label = String(schoolYearLabel || '').trim()
+        || resolveSchoolYearLabelFromAnchor(plannerAnchorRef.current || new Date());
+      setEditSchoolYearInitialLabel(label);
+      setShowEditSchoolYearModal(true);
+    };
+    const handler = (event) => {
+      openEditSchoolYear(event?.detail?.schoolYearLabel);
+    };
+    window.addEventListener('openEditSchoolYearModal', handler);
+    return () => window.removeEventListener('openEditSchoolYearModal', handler);
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const handler = (event) => {
       const modeId = event?.detail?.modeId;
       switch (modeId) {
         case 'rebalance':
@@ -2647,6 +2679,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               window.dispatchEvent(new CustomEvent('openPlannerExportAttendance'));
             }, 150);
           }
+          break;
+        }
+        case 'edit-school-year': {
+          const label = resolveSchoolYearLabelFromAnchor(plannerAnchorRef.current || new Date());
+          setEditSchoolYearInitialLabel(label);
+          setShowEditSchoolYearModal(true);
           break;
         }
         case 'export':
@@ -4670,6 +4708,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       />
 
       {/* AI Tool Modals */}
+      <SchoolYearSettingsModal
+        visible={showEditSchoolYearModal}
+        onClose={() => {
+          setShowEditSchoolYearModal(false);
+          setEditSchoolYearInitialLabel(null);
+        }}
+        familyId={familyId}
+        initialSchoolYearLabel={editSchoolYearInitialLabel}
+      />
+
       <PackWeekModal
         visible={showPackWeekModal}
         onClose={() => setShowPackWeekModal(false)}

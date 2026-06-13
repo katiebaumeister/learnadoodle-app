@@ -1,4 +1,5 @@
 import { StyleSheet } from 'react-native';
+import { MODAL_ACCENT, MODAL_ACCENT_TEXT } from './modalButtonStyles';
 
 export const modalFieldStyles = StyleSheet.create({
   label: {
@@ -84,14 +85,14 @@ export const modalFieldStyles = StyleSheet.create({
     minHeight: 38,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#D9E0EA',
-    backgroundColor: '#F8FAFD',
+    borderColor: MODAL_ACCENT,
+    backgroundColor: '#FFFFFF',
     paddingHorizontal: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
   secondaryActionText: {
-    color: '#5E6C84',
+    color: MODAL_ACCENT_TEXT,
     fontSize: 13,
     fontWeight: '700',
   },

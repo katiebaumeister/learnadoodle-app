@@ -13,6 +13,7 @@ import {
 import { X, CheckCircle2, Trash2 } from 'lucide-react';
 import { completeEvent } from '../../lib/services/attendanceClient';
 import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
+import { MODAL_ACCENT, MODAL_ACCENT_TEXT } from '../ui/modalButtonStyles';
 import { getAttendanceRecordsForEventIds } from '../../lib/services/recordsClient';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
 import { useToast } from '../Toast';
@@ -719,7 +720,7 @@ export default function SubjectPastEventsAttendanceModal({
                   accessibilityLabel="Mark all listed lessons as attended"
                   {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
                 >
-                  <CheckCircle2 size={18} color="#64748b" strokeWidth={2} />
+                  <CheckCircle2 size={18} color={MODAL_ACCENT_TEXT} strokeWidth={2} />
                   <Text style={[styles.secondaryOutlineBtnText, styles.secondaryOutlineBtnTextInRow]} numberOfLines={2}>
                     Mark all as attended
                   </Text>
@@ -1033,9 +1034,9 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingVertical: 11,
     paddingHorizontal: 10,
-    borderRadius: 10,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: MODAL_ACCENT,
     backgroundColor: '#fff',
     marginBottom: 0,
   },
@@ -1048,13 +1049,13 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   secondaryOutlineBtnActive: {
-    borderColor: '#94a3b8',
-    backgroundColor: '#f8fafc',
+    borderColor: MODAL_ACCENT,
+    backgroundColor: 'rgba(158, 207, 251, 0.12)',
   },
   secondaryOutlineBtnText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#475569',
+    color: MODAL_ACCENT_TEXT,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

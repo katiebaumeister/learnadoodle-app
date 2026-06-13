@@ -917,8 +917,8 @@ const styles = StyleSheet.create({
     minHeight: 36,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#D9E0EA',
-    backgroundColor: '#F8FAFD',
+    borderColor: '#9ECFFB',
+    backgroundColor: '#FFFFFF',
     paddingHorizontal: 13,
     alignItems: 'center',
     justifyContent: 'center',
@@ -932,7 +932,7 @@ const styles = StyleSheet.create({
   secondaryActionText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#5E6C84',
+    color: '#6BB3E8',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

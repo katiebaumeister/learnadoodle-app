@@ -2,7 +2,8 @@ import { Platform, StyleSheet } from 'react-native';
 
 export const CREATE_MODAL_MAX_WIDTH = 740;
 export const CREATE_EVENT_MODAL_MAX_WIDTH = 880;
-export const CREATE_ASSIGNMENT_MODAL_MAX_WIDTH = 820;
+export const CREATE_ASSIGNMENT_MODAL_MAX_WIDTH = 1320;
+export const CREATE_ASSIGNMENT_MODAL_HEIGHT = 700;
 export const FG = '#111827';
 export const MUTED = '#6b7280';
 export const PLACEHOLDER = '#94A3B8';
@@ -57,6 +58,155 @@ export const createModalStyles = StyleSheet.create({
   formGroup: {
     marginBottom: 14,
   },
+  assignmentFormRow: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    alignItems: 'stretch',
+    width: '100%',
+    gap: 24,
+    flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
+  },
+  assignmentFormColumnMain: {
+    flex: 1,
+    flexBasis: 320,
+    flexGrow: 1,
+    minWidth: 280,
+    maxWidth: '100%',
+    minHeight: 0,
+    gap: 16,
+    alignSelf: 'stretch',
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  assignmentFormColumnSide: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 260,
+    width: 260,
+    maxWidth: '100%',
+    minHeight: 0,
+    alignSelf: 'stretch',
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  assignmentSidePanel: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 16,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.04)',
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+    }),
+  },
+  assignmentContentPanel: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+  },
+  assignmentContentPanelMain: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    flex: 1,
+    flexGrow: 1,
+    minHeight: 0,
+    alignSelf: 'stretch',
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  assignmentContentPanelScroll: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      overflowY: 'auto',
+      overflowX: 'hidden',
+    }),
+  },
+  assignmentContentPanelScrollInner: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+    gap: 0,
+  },
+  assignmentAttachPanel: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+    flexShrink: 0,
+    flexGrow: 0,
+    alignSelf: 'stretch',
+  },
+  assignmentInstructionsArea: {
+    minHeight: 140,
+  },
+  assignmentModalShell: {
+    ...(Platform.OS === 'web'
+      ? {
+          height: CREATE_ASSIGNMENT_MODAL_HEIGHT,
+          minHeight: CREATE_ASSIGNMENT_MODAL_HEIGHT,
+          maxHeight: CREATE_ASSIGNMENT_MODAL_HEIGHT,
+          borderRadius: 28,
+          boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
+        }
+      : {
+          height: '88%',
+          maxHeight: '88%',
+          minHeight: CREATE_ASSIGNMENT_MODAL_HEIGHT,
+        }),
+    overflow: 'hidden',
+  },
+  assignmentSideFields: {
+    gap: 16,
+  },
+  assignmentPanelFormGroup: {
+    marginBottom: 12,
+  },
+  webInstructionsEditorWrap: {
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  assignmentModalBody: {
+    flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
   fieldLabel: {
     fontSize: 12,
     fontWeight: '500',
@@ -95,6 +245,12 @@ export const createModalStyles = StyleSheet.create({
     color: '#ef4444',
     fontSize: 12,
     marginTop: 4,
+  },
+  fieldHint: {
+    color: PLACEHOLDER,
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 6,
   },
   validationBannerContainer: {
     backgroundColor: '#FEF2F2',
@@ -151,23 +307,24 @@ export const createModalStyles = StyleSheet.create({
   notesTextArea: {
     borderWidth: 1,
     borderColor: 'rgba(15, 23, 42, 0.08)',
-    borderRadius: 8,
-    paddingHorizontal: 10,
+    borderRadius: 12,
+    paddingHorizontal: 12,
     paddingTop: 12,
     paddingBottom: 12,
     backgroundColor: '#ffffff',
     fontSize: 14,
     color: FG,
-    minHeight: 80,
+    minHeight: 140,
     textAlignVertical: 'top',
     width: '100%',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       outlineStyle: 'none',
+      overflow: 'hidden',
     }),
   },
   notesPlainInput: {
-    minHeight: 80,
+    minHeight: 140,
     textAlignVertical: 'top',
   },
   chip: {
@@ -209,11 +366,13 @@ export const createModalStyles = StyleSheet.create({
         }),
   },
   scheduleColumnCompact: {
-    alignSelf: 'flex-start',
-    flexGrow: 0,
-    flexShrink: 0,
-    minWidth: 240,
-    maxWidth: 280,
+    alignSelf: 'stretch',
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 'auto',
+    width: '100%',
+    maxWidth: '100%',
+    minWidth: 0,
   },
   dateTimeInlineRow: {
     flexDirection: 'row',
@@ -387,6 +546,22 @@ export const createModalStyles = StyleSheet.create({
   selectPlaceholder: {
     color: PLACEHOLDER,
   },
+  studentResponseSelect: {
+    alignSelf: 'flex-start',
+    width: 176,
+    maxWidth: '100%',
+    gap: 6,
+    paddingRight: 10,
+  },
+  studentResponseSelectText: {
+    flex: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web' && {
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+    }),
+  },
   sectionHeading: {
     fontSize: 13,
     fontWeight: '700',
@@ -401,6 +576,19 @@ export const createModalStyles = StyleSheet.create({
     height: 1,
     backgroundColor: 'rgba(148, 163, 184, 0.35)',
     marginVertical: 18,
+  },
+  settingsSectionPanel: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 16,
+    marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.04)',
+    }),
   },
   radioGroup: {
     gap: 8,

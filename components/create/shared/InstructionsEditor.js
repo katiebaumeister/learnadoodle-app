@@ -1,12 +1,36 @@
-import React, { useRef, useEffect, useLayoutEffect, useCallback, useState } from 'react';
+import React, {
+  useRef,
+  useLayoutEffect,
+  useCallback,
+  useState,
+  useEffect,
+} from 'react';
 import { View, Text, TextInput, TouchableOpacity, Platform } from 'react-native';
 import { Bold, Italic, Underline, List } from 'lucide-react';
-import { createModalStyles as styles, PLACEHOLDER, ACCENT_TEXT } from './createModalStyles';
+import { createModalStyles as styles, PLACEHOLDER, ACCENT_TEXT, FG } from './createModalStyles';
+import { htmlToMarkdown, markdownToHtml } from '../../../lib/instructionTextFormat';
 
 const FORMAT_MODES = {
   bold: { wrapper: '**', emptyMarker: '****' },
   italic: { wrapper: '_', emptyMarker: '__' },
   underline: { wrapper: '__', emptyMarker: '____' },
+};
+
+const WEB_EDITOR_INNER_STYLE = {
+  border: 'none',
+  outline: 'none',
+  backgroundColor: 'transparent',
+  fontSize: 14,
+  lineHeight: '20px',
+  color: FG,
+  minHeight: 116,
+  fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  width: '100%',
+  boxSizing: 'border-box',
+  padding: 0,
+  flex: 1,
 };
 
 function resolveWebTextInputElement(inputRef) {
@@ -128,74 +152,251 @@ function prefixCurrentLine(text, selection, prefix = '• ') {
   return { next, selectionStart: cursor, selectionEnd: cursor };
 }
 
-export default function InstructionsEditor({
+function readWebFormatState() {
+  try {
+    return {
+      bold: document.queryCommandState('bold'),
+      italic: document.queryCommandState('italic'),
+      underline: document.queryCommandState('underline'),
+    };
+  } catch (_) {
+    return { bold: false, italic: false, underline: false };
+  }
+}
+
+function FormatToolbar({ activeFormats, onPress, detectedFormats }) {
+  return (
+    <View data-format-toolbar="true" style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
+      {[
+        { mode: 'bold', Icon: Bold, label: 'Bold' },
+        { mode: 'italic', Icon: Italic, label: 'Italic' },
+        { mode: 'underline', Icon: Underline, label: 'Underline' },
+        { mode: 'list', Icon: List, label: 'Bulleted list' },
+      ].map(({ mode, Icon, label: actionLabel }) => {
+        const isActive = mode !== 'list' && (detectedFormats?.[mode] || activeFormats[mode]);
+        const buttonStyle = [
+          styles.attachActionButton,
+          isActive && styles.attachActionButtonActive,
+          Platform.OS === 'web' && { cursor: 'pointer' },
+        ];
+        const iconColor = isActive ? ACCENT_TEXT : '#374151';
+
+        if (Platform.OS === 'web') {
+          return (
+            <View
+              key={mode}
+              accessibilityRole="button"
+              accessibilityLabel={actionLabel}
+              accessibilityState={{ selected: isActive }}
+              onMouseDown={(event) => onPress(mode, event)}
+              style={buttonStyle}
+            >
+              <Icon size={14} color={iconColor} />
+            </View>
+          );
+        }
+
+        return (
+          <TouchableOpacity
+            key={mode}
+            onPress={() => onPress(mode)}
+            style={buttonStyle}
+            accessibilityLabel={actionLabel}
+            accessibilityState={{ selected: isActive }}
+          >
+            <Icon size={14} color={iconColor} />
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+function WebInstructionsEditor({
   value,
   onChangeText,
-  label = 'Instructions',
-  placeholder = 'Add instructions for students…',
-  autoFocus = false,
-  hideToolbar = false,
-  textAreaStyle = null,
+  label,
+  placeholder,
+  autoFocus,
+  hideToolbar,
+  textAreaStyle,
+}) {
+  const containerRef = useRef(null);
+  const editableRef = useRef(null);
+  const skipExternalSyncRef = useRef(false);
+  const [activeFormats, setActiveFormats] = useState({ bold: false, italic: false, underline: false });
+
+  const syncPlaceholder = useCallback((el) => {
+    if (!el) return;
+    const empty = !el.textContent?.replace(/\u200B/g, '').trim() && !el.querySelector('ul,ol');
+    if (empty) {
+      el.setAttribute('data-placeholder', placeholder || '');
+    } else {
+      el.removeAttribute('data-placeholder');
+    }
+  }, [placeholder]);
+
+  const emitMarkdown = useCallback((el) => {
+    if (!el) return;
+    const markdown = htmlToMarkdown(el).replace(/\u200B/g, '');
+    skipExternalSyncRef.current = true;
+    onChangeText?.(markdown);
+    syncPlaceholder(el);
+  }, [onChangeText, syncPlaceholder]);
+
+  const refreshFormatState = useCallback(() => {
+    setActiveFormats(readWebFormatState());
+  }, []);
+
+  const applyMarkdownToEditor = useCallback((el, markdown) => {
+    if (!el) return;
+    el.innerHTML = markdownToHtml(markdown);
+    syncPlaceholder(el);
+  }, [syncPlaceholder]);
+
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return undefined;
+
+    const container = containerRef.current;
+    if (!container) return undefined;
+
+    const host = container._nativeNode || container;
+    if (!host || typeof host.appendChild !== 'function') return undefined;
+
+    const el = document.createElement('div');
+    el.className = 'instructions-wysiwyg-editor';
+    el.contentEditable = 'true';
+    el.setAttribute('role', 'textbox');
+    el.setAttribute('aria-multiline', 'true');
+    el.setAttribute('aria-label', label || 'Instructions');
+    Object.assign(el.style, WEB_EDITOR_INNER_STYLE);
+
+    const handleInput = () => {
+      emitMarkdown(el);
+      refreshFormatState();
+    };
+
+    const onSelectionActivity = () => refreshFormatState();
+
+    el.addEventListener('input', handleInput);
+    el.addEventListener('keyup', onSelectionActivity);
+    el.addEventListener('mouseup', onSelectionActivity);
+    el.addEventListener('focus', onSelectionActivity);
+    document.addEventListener('selectionchange', onSelectionActivity);
+
+    host.appendChild(el);
+    editableRef.current = el;
+    applyMarkdownToEditor(el, value);
+
+    if (autoFocus) {
+      requestAnimationFrame(() => el.focus());
+    }
+
+    return () => {
+      el.removeEventListener('input', handleInput);
+      el.removeEventListener('keyup', onSelectionActivity);
+      el.removeEventListener('mouseup', onSelectionActivity);
+      el.removeEventListener('focus', onSelectionActivity);
+      document.removeEventListener('selectionchange', onSelectionActivity);
+      if (el.parentNode) el.parentNode.removeChild(el);
+      editableRef.current = null;
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = editableRef.current;
+    if (!el || skipExternalSyncRef.current) {
+      skipExternalSyncRef.current = false;
+      return;
+    }
+    const current = htmlToMarkdown(el).replace(/\u200B/g, '');
+    const next = String(value ?? '');
+    if (current !== next) {
+      applyMarkdownToEditor(el, next);
+    }
+  }, [value, applyMarkdownToEditor]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return undefined;
+
+    const styleId = 'instructions-wysiwyg-placeholder-style';
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = `
+        .instructions-wysiwyg-editor[data-placeholder]:empty:before {
+          content: attr(data-placeholder);
+          color: ${PLACEHOLDER};
+          pointer-events: none;
+        }
+        .instructions-wysiwyg-editor strong,
+        .instructions-wysiwyg-editor b { font-weight: 700; }
+        .instructions-wysiwyg-editor em,
+        .instructions-wysiwyg-editor i { font-style: italic; }
+        .instructions-wysiwyg-editor u { text-decoration: underline; }
+      `;
+      document.head.appendChild(style);
+    }
+
+    return undefined;
+  }, []);
+
+  const handleToolbarPress = useCallback((mode, event) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    const el = editableRef.current;
+    if (!el) return;
+    el.focus();
+
+    if (mode === 'bold') document.execCommand('bold');
+    else if (mode === 'italic') document.execCommand('italic');
+    else if (mode === 'underline') document.execCommand('underline');
+    else if (mode === 'list') document.execCommand('insertUnorderedList');
+
+    emitMarkdown(el);
+    refreshFormatState();
+  }, [emitMarkdown, refreshFormatState]);
+
+  return (
+    <View style={styles.formGroup}>
+      {label != null && label !== '' ? (
+        <Text style={styles.fieldLabel}>{label}</Text>
+      ) : null}
+      <View
+        ref={containerRef}
+        style={[styles.webInstructionsEditorWrap, styles.notesTextArea, textAreaStyle]}
+      />
+      {!hideToolbar ? (
+        <FormatToolbar activeFormats={activeFormats} onPress={handleToolbarPress} />
+      ) : null}
+    </View>
+  );
+}
+
+function NativeInstructionsEditor({
+  value,
+  onChangeText,
+  label,
+  placeholder,
+  autoFocus,
+  hideToolbar,
+  textAreaStyle,
 }) {
   const inputRef = useRef(null);
   const selectionRef = useRef({ start: 0, end: 0 });
   const pendingSelectionRef = useRef(null);
-  const toolbarRef = useRef(null);
   const [activeFormats, setActiveFormats] = useState({ bold: false, italic: false, underline: false });
 
-  const persistSelectionFromElement = useCallback((el) => {
-    if (!el || typeof el.selectionStart !== 'number') return;
-    selectionRef.current = {
-      start: el.selectionStart,
-      end: el.selectionEnd ?? el.selectionStart,
-    };
-    setActiveFormats(detectActiveFormats(String(value || ''), el.selectionStart));
-  }, [value]);
+  const textValue = String(value ?? '');
 
-  useEffect(() => {
-    if (Platform.OS !== 'web') return undefined;
-
-    let el = null;
-    let saveSelection = null;
-    let cancelled = false;
-
-    const attach = () => {
-      if (cancelled) return;
-      el = resolveWebTextInputElement(inputRef);
-      if (!el) return;
-      saveSelection = () => persistSelectionFromElement(el);
-      el.addEventListener('select', saveSelection);
-      el.addEventListener('keyup', saveSelection);
-      el.addEventListener('mouseup', saveSelection);
-      el.addEventListener('click', saveSelection);
-      el.addEventListener('input', saveSelection);
-    };
-
-    const onDocumentSelectionChange = () => {
-      if (!el || document.activeElement !== el) return;
-      saveSelection?.();
-    };
-
-    attach();
-    const retryId = requestAnimationFrame(attach);
-    document.addEventListener('selectionchange', onDocumentSelectionChange);
-
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(retryId);
-      document.removeEventListener('selectionchange', onDocumentSelectionChange);
-      if (el && saveSelection) {
-        el.removeEventListener('select', saveSelection);
-        el.removeEventListener('keyup', saveSelection);
-        el.removeEventListener('mouseup', saveSelection);
-        el.removeEventListener('click', saveSelection);
-        el.removeEventListener('input', saveSelection);
-      }
-    };
-  }, [persistSelectionFromElement]);
+  const syncSelection = useCallback((start, end) => {
+    const safeStart = typeof start === 'number' ? start : 0;
+    const safeEnd = typeof end === 'number' ? end : safeStart;
+    selectionRef.current = { start: safeStart, end: safeEnd };
+  }, []);
 
   useLayoutEffect(() => {
-    if (Platform.OS !== 'web' || !pendingSelectionRef.current) return;
+    if (!pendingSelectionRef.current) return;
     const { start, end } = pendingSelectionRef.current;
     pendingSelectionRef.current = null;
     const el = resolveWebTextInputElement(inputRef);
@@ -204,11 +405,11 @@ export default function InstructionsEditor({
       el.focus();
       el.setSelectionRange(start, end);
       selectionRef.current = { start, end };
-      setActiveFormats(detectActiveFormats(String(value || ''), start));
+      setActiveFormats(detectActiveFormats(textValue, start));
     } catch (_) {
       /* ignore */
     }
-  }, [value]);
+  }, [textValue]);
 
   const commitChange = useCallback((next, selectionStart, selectionEnd) => {
     pendingSelectionRef.current = { start: selectionStart, end: selectionEnd };
@@ -218,7 +419,7 @@ export default function InstructionsEditor({
   }, [onChangeText]);
 
   const applyFormat = useCallback((mode) => {
-    const current = String(value || '');
+    const current = textValue;
     const saved = selectionRef.current;
     const start = typeof saved?.start === 'number' ? saved.start : current.length;
     const end = typeof saved?.end === 'number' ? saved.end : start;
@@ -246,35 +447,16 @@ export default function InstructionsEditor({
 
     const result = openFormatAtCursor(current, start, wrapper);
     commitChange(result.next, result.selectionStart, result.selectionEnd);
-  }, [value, commitChange]);
+  }, [textValue, commitChange]);
 
-  const handleToolbarPress = useCallback((mode, event) => {
-    if (Platform.OS === 'web') {
-      event?.preventDefault?.();
-      event?.stopPropagation?.();
-      const el = resolveWebTextInputElement(inputRef);
-      if (el && typeof el.selectionStart === 'number' && document.activeElement === el) {
-        selectionRef.current = {
-          start: el.selectionStart,
-          end: el.selectionEnd ?? el.selectionStart,
-        };
-      }
-    }
-    applyFormat(mode);
-  }, [applyFormat]);
-
-  const handleChangeText = useCallback((text) => {
-    onChangeText?.(text);
-    requestAnimationFrame(() => {
-      const el = resolveWebTextInputElement(inputRef);
-      if (el && typeof el.selectionStart === 'number') {
-        persistSelectionFromElement(el);
-      }
-    });
-  }, [onChangeText, persistSelectionFromElement]);
+  const handleSelectionChange = useCallback((event) => {
+    const { start, end } = event.nativeEvent.selection;
+    syncSelection(start, end);
+    setActiveFormats(detectActiveFormats(textValue, start));
+  }, [syncSelection, textValue]);
 
   const cursor = selectionRef.current?.start ?? 0;
-  const detectedFormats = detectActiveFormats(String(value || ''), cursor);
+  const detectedFormats = detectActiveFormats(textValue, cursor);
 
   return (
     <View style={styles.formGroup}>
@@ -283,61 +465,31 @@ export default function InstructionsEditor({
       ) : null}
       <TextInput
         ref={inputRef}
-        value={value}
-        onChangeText={handleChangeText}
-        onSelectionChange={(event) => {
-          const { start, end } = event.nativeEvent.selection;
-          selectionRef.current = { start, end };
-          setActiveFormats(detectActiveFormats(String(value || ''), start));
-        }}
+        value={textValue}
+        onChangeText={onChangeText}
+        onSelectionChange={handleSelectionChange}
         placeholder={placeholder}
         placeholderTextColor={PLACEHOLDER}
-        style={[styles.notesTextArea, { minHeight: 120 }, textAreaStyle]}
+        style={[styles.notesTextArea, textAreaStyle]}
         multiline
         textAlignVertical="top"
         autoFocus={autoFocus}
+        editable
       />
       {!hideToolbar ? (
-        <View ref={toolbarRef} data-format-toolbar="true" style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
-          {[
-            { mode: 'bold', Icon: Bold, label: 'Bold' },
-            { mode: 'italic', Icon: Italic, label: 'Italic' },
-            { mode: 'underline', Icon: Underline, label: 'Underline' },
-            { mode: 'list', Icon: List, label: 'Bulleted list' },
-          ].map(({ mode, Icon, label: actionLabel }) => {
-            const isActive = mode !== 'list' && (detectedFormats[mode] || activeFormats[mode]);
-            const buttonStyle = [
-              styles.attachActionButton,
-              isActive && styles.attachActionButtonActive,
-              Platform.OS === 'web' && { cursor: 'pointer' },
-            ];
-            const iconColor = isActive ? ACCENT_TEXT : '#374151';
-
-            return Platform.OS === 'web' ? (
-              <View
-                key={mode}
-                accessibilityRole="button"
-                accessibilityLabel={actionLabel}
-                accessibilityState={{ selected: isActive }}
-                onMouseDown={(event) => handleToolbarPress(mode, event)}
-                style={buttonStyle}
-              >
-                <Icon size={14} color={iconColor} />
-              </View>
-            ) : (
-              <TouchableOpacity
-                key={mode}
-                onPress={() => applyFormat(mode)}
-                style={buttonStyle}
-                accessibilityLabel={actionLabel}
-                accessibilityState={{ selected: isActive }}
-              >
-                <Icon size={14} color={iconColor} />
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+        <FormatToolbar
+          activeFormats={activeFormats}
+          detectedFormats={detectedFormats}
+          onPress={(mode) => applyFormat(mode)}
+        />
       ) : null}
     </View>
   );
+}
+
+export default function InstructionsEditor(props) {
+  if (Platform.OS === 'web') {
+    return <WebInstructionsEditor {...props} />;
+  }
+  return <NativeInstructionsEditor {...props} />;
 }

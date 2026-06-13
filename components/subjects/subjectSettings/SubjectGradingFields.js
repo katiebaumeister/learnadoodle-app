@@ -114,7 +114,6 @@ export default function SubjectGradingFields({
   return (
     <View>
       <Text style={styles.sectionHeading}>Grade calculation</Text>
-      <Text style={localStyles.helpText}>Choose how overall grades are calculated for this subject.</Text>
       <View style={styles.modeChipRow}>
         {GRADING_CALC_METHOD_OPTIONS.map((option) => {
           const active = draft.calculation_method === option.value;

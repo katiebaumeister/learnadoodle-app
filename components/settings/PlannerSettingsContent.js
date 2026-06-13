@@ -16,7 +16,8 @@ import {
   Modal,
   Switch,
 } from 'react-native';
-import { Plus, Trash2, Pencil, Check, X, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, ChevronLeft, ChevronRight, ArrowRight, ChevronDown, CheckCircle } from 'lucide-react';
+import Dropdown from '../ui/Dropdown';
 import {
   getFamilyPlannerSettings,
   saveFamilyPlannerSettings,
@@ -416,6 +417,12 @@ const deriveInitialSchoolYearLabel = (normalizedLockedSchoolYearLabel) => {
   return formatSchoolYearLabel(start);
 };
 
+const getFallbackSchoolYearOptions = () => {
+  const now = new Date();
+  const currentStart = now.getMonth() + 1 >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  return Array.from({ length: 12 }, (_, idx) => formatSchoolYearLabel(currentStart + idx));
+};
+
 const deriveSnapshotCacheKey = (familyId, schoolYearLabel) => {
   const yearLabel = normalizeSchoolYearLabel(schoolYearLabel) || 'current';
   return `${String(familyId || 'unknown')}::${yearLabel}`;
@@ -445,6 +452,8 @@ export default function PlannerSettingsContent({
   onEmbeddedModalActionsReady = null,
   onEmbeddedModalFooterStateChange = null,
   lockedSchoolYearLabel = null,
+  initialSchoolYearLabel = null,
+  onSchoolYearChange = null,
   pageTitle = null,
   embeddedInFamily = false,
   hidePageTitle = false,
@@ -472,8 +481,11 @@ export default function PlannerSettingsContent({
     fallback: ATTENDANCE_MODES.CLASS_DAY,
   });
   const initialSelectedYearLabelFromSnapshot = normalizeSchoolYearLabel(initialSnapshot?.selectedSchoolYearLabel);
+  const normalizedInitialSchoolYearLabel = normalizeSchoolYearLabel(
+    String(initialSchoolYearLabel || lockedSchoolYearLabel || '').trim()
+  );
   const initialSelectedSchoolYearLabel = initialSelectedYearLabelFromSnapshot || deriveInitialSchoolYearLabel(
-    normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim())
+    normalizedInitialSchoolYearLabel
   );
 
   // Target scope: overall (one target) vs per_subject
@@ -533,14 +545,11 @@ export default function PlannerSettingsContent({
       : {}
   ); // { subjectId: { mode, days, hours } }
   const [selectedSchoolYearLabel, setSelectedSchoolYearLabel] = useState(initialSelectedSchoolYearLabel);
+  const [schoolYearOptions] = useState(() => getFallbackSchoolYearOptions());
+  const [showEmbeddedSchoolYearDropdown, setShowEmbeddedSchoolYearDropdown] = useState(false);
+  const embeddedSchoolYearTriggerRef = useRef(null);
   const [showAttendanceModeDropdown, setShowAttendanceModeDropdown] = useState(false);
   const [attendanceModeMenuAnchor, setAttendanceModeMenuAnchor] = useState(null);
-  const [attendanceModeConfirmDialog, setAttendanceModeConfirmDialog] = useState({
-    visible: false,
-    title: '',
-    message: '',
-  });
-  const attendanceModeConfirmResolverRef = useRef(null);
   const attendanceModeTriggerRef = useRef(null);
   const hasHydratedSnapshotRef = useRef(Boolean(initialSnapshot));
   const appliedInitialDataKeyRef = useRef('');
@@ -552,7 +561,7 @@ export default function PlannerSettingsContent({
     () => normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim()),
     [lockedSchoolYearLabel]
   );
-  const isSchoolYearLocked = Boolean(normalizedLockedSchoolYearLabel);
+  const isSchoolYearLocked = Boolean(normalizedLockedSchoolYearLabel) && !embeddedInModal;
   const initialDataSignature = useMemo(
     () => buildPlannerInitialDataSignature(initialData),
     [initialData]
@@ -570,6 +579,16 @@ export default function PlannerSettingsContent({
       setSelectedSchoolYearLabel(normalizedLockedSchoolYearLabel);
     }
   }, [isSchoolYearLocked, normalizedLockedSchoolYearLabel, selectedSchoolYearLabel]);
+
+  const prevInitialSchoolYearLabelRef = useRef(normalizedInitialSchoolYearLabel);
+  useEffect(() => {
+    if (!embeddedInModal || !normalizedInitialSchoolYearLabel) return;
+    const prev = prevInitialSchoolYearLabelRef.current;
+    prevInitialSchoolYearLabelRef.current = normalizedInitialSchoolYearLabel;
+    if (normalizedInitialSchoolYearLabel === prev) return;
+    appliedInitialDataKeyRef.current = '';
+    setSelectedSchoolYearLabel(normalizedInitialSchoolYearLabel);
+  }, [embeddedInModal, normalizedInitialSchoolYearLabel]);
 
   const applySnapshot = useCallback((cached) => {
     if (!cached || typeof cached !== 'object') return false;
@@ -808,10 +827,10 @@ export default function PlannerSettingsContent({
   }, [visibleCustomHolidays, visibleCustomBreaks]);
 
   useEffect(() => {
-    if (!familyId || !selectedSchoolYearLabel || readOnly || isSchoolYearLocked) return;
+    if (!familyId || !selectedSchoolYearLabel || readOnly || isSchoolYearLocked || embeddedInModal) return;
     const normalizedYear = normalizeSchoolYearLabel(selectedSchoolYearLabel);
     saveFamilyPlannerSettings(familyId, { default_school_year: normalizedYear }, normalizedYear).catch(() => {});
-  }, [familyId, selectedSchoolYearLabel, readOnly, isSchoolYearLocked]);
+  }, [familyId, selectedSchoolYearLabel, readOnly, isSchoolYearLocked, embeddedInModal]);
 
   // Apply preloaded data from FamilyPanel when available (avoids loading flash when navigating to Planning Preferences)
   useEffect(() => {
@@ -1331,37 +1350,6 @@ export default function PlannerSettingsContent({
     }, delayMs);
   }, [embeddedInModal, persist]);
 
-  const respondAttendanceModeConfirm = useCallback((confirmed) => {
-    const resolver = attendanceModeConfirmResolverRef.current;
-    attendanceModeConfirmResolverRef.current = null;
-    setAttendanceModeConfirmDialog((prev) => ({ ...prev, visible: false }));
-    if (typeof resolver === 'function') resolver(Boolean(confirmed));
-  }, []);
-
-  const confirmAttendanceModeSwitch = useCallback(async ({ fromMode, toMode, isDataRich }) => {
-    const title = 'Change attendance style?';
-    const baseMessage = 'Changing this setting will update how schedules, attendance, and progress are shown for this school year.';
-    const dataRichWarning = isDataRich
-      ? '\n\nThis year already has subject-based planning data. Existing subject schedules and progress may be recalculated after this change.'
-      : '';
-    const message = `${baseMessage}${dataRichWarning}`;
-    return new Promise((resolve) => {
-      attendanceModeConfirmResolverRef.current = resolve;
-      setAttendanceModeConfirmDialog({
-        visible: true,
-        title,
-        message,
-      });
-    });
-  }, []);
-
-  useEffect(() => () => {
-    if (typeof attendanceModeConfirmResolverRef.current === 'function') {
-      attendanceModeConfirmResolverRef.current(false);
-      attendanceModeConfirmResolverRef.current = null;
-    }
-  }, []);
-
   const getSelectedYearModeAndRisk = useCallback(async () => {
     const schoolYearStart = `${selectedYearMeta.start}-01-01`;
     const schoolYearEnd = `${selectedYearMeta.end}-12-31`;
@@ -1458,12 +1446,6 @@ export default function PlannerSettingsContent({
     const normalizedMode = getAttendanceMode({ academicYearMode: mode });
     const previousMode = getAttendanceMode({ academicYearMode: attendanceTrackingMode });
     if (previousMode === normalizedMode) return;
-    const confirmed = await confirmAttendanceModeSwitch({
-      fromMode: previousMode,
-      toMode: normalizedMode,
-      isDataRich: false,
-    });
-    if (!confirmed) return;
     let risk = null;
     try {
       risk = await getSelectedYearModeAndRisk();
@@ -1475,9 +1457,8 @@ export default function PlannerSettingsContent({
       to_mode: normalizedMode,
       academic_year_id: risk?.academicYearId || null,
       is_data_rich: risk?.is_data_rich === true,
-      confirmed,
+      confirmed: true,
     });
-    if (!confirmed) return;
     try {
       const schoolYearStart = `${selectedYearMeta.start}-01-01`;
       const schoolYearEnd = `${selectedYearMeta.end}-12-31`;
@@ -1539,7 +1520,7 @@ export default function PlannerSettingsContent({
     } catch (err) {
       toast.push(err?.message || 'Failed to save attendance mode', 'error');
     }
-  }, [attendanceTrackingMode, confirmAttendanceModeSwitch, familyId, getSelectedYearModeAndRisk, readOnly, selectedSchoolYearLabel, selectedYearMeta.end, selectedYearMeta.start, toast]);
+  }, [attendanceTrackingMode, familyId, getSelectedYearModeAndRisk, readOnly, selectedSchoolYearLabel, selectedYearMeta.end, selectedYearMeta.start, toast]);
 
   const handleGoalChange = (mode) => {
     if (mode === 'days' && parsePositiveIntOrNull(stateRef.current?.targetDays) == null) {
@@ -2296,6 +2277,20 @@ export default function PlannerSettingsContent({
     setSelectedSchoolYearLabel(currentSchoolYearLabel);
   }, [canShiftSchoolYear, isAtCurrentSchoolYear, currentSchoolYearLabel]);
 
+  const handleEmbeddedSchoolYearSelect = useCallback((nextLabel) => {
+    if (readOnly) return;
+    const normalized = normalizeSchoolYearLabel(nextLabel);
+    if (!normalized || normalized === normalizeSchoolYearLabel(selectedSchoolYearLabel)) {
+      setShowEmbeddedSchoolYearDropdown(false);
+      return;
+    }
+    appliedInitialDataKeyRef.current = '';
+    hasHydratedSnapshotRef.current = false;
+    setSelectedSchoolYearLabel(normalized);
+    setShowEmbeddedSchoolYearDropdown(false);
+    onSchoolYearChange?.(normalized);
+  }, [readOnly, selectedSchoolYearLabel, onSchoolYearChange]);
+
   const renderDateRangeField = (label, startValue, onStartChange, endValue, onEndChange) => (
     <View style={formFieldStyle}>
       <Text style={formFieldLabelStyle}>{label}</Text>
@@ -2448,8 +2443,62 @@ export default function PlannerSettingsContent({
         <View style={[sectionBucketStyle, sectionBucketFirstStyle]}>
           <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.learningDays}</Text>
           <View style={formStackStyle}>
+            {embeddedInModal && !readOnly ? (
+              <View style={formFieldStyle}>
+                <Text style={formFieldLabelStyle}>School year</Text>
+                <TouchableOpacity
+                  ref={embeddedSchoolYearTriggerRef}
+                  style={attendanceModeSelectTriggerStyle}
+                  onPress={() => setShowEmbeddedSchoolYearDropdown((open) => !open)}
+                  activeOpacity={0.85}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={attendanceModeSelectTriggerTextStyle}>
+                    {selectedSchoolYearLabel || 'Select…'}
+                  </Text>
+                  <ChevronDown size={16} color="#6b7280" />
+                </TouchableOpacity>
+                <Dropdown
+                  visible={showEmbeddedSchoolYearDropdown}
+                  triggerRef={embeddedSchoolYearTriggerRef}
+                  onClose={() => setShowEmbeddedSchoolYearDropdown(false)}
+                  placement="bottom-start"
+                  matchTriggerWidth
+                  maxHeight={220}
+                >
+                  {schoolYearOptions.map((option) => {
+                    const selected = option === selectedSchoolYearLabel;
+                    return (
+                      <TouchableOpacity
+                        key={option}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          paddingVertical: 10,
+                          paddingHorizontal: 14,
+                          backgroundColor: selected ? 'rgba(133,196,242,0.12)' : 'transparent',
+                          ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+                        }}
+                        onPress={() => handleEmbeddedSchoolYearSelect(option)}
+                      >
+                        <Text style={{
+                          fontSize: 14,
+                          color: selected ? '#6BB3E8' : TEXT_BLACK,
+                          fontWeight: selected ? '600' : '400',
+                        }}
+                        >
+                          {option}
+                        </Text>
+                        {selected ? <CheckCircle size={16} color="#6BB3E8" /> : null}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </Dropdown>
+              </View>
+            ) : null}
             {renderDateRangeField(
-              'School year',
+              embeddedInModal ? 'Year range' : 'School year',
               defaultYearStartDate,
               handleRangeDefaultChange(setDefaultYearStartDate),
               defaultYearEndDate,
@@ -2869,152 +2918,6 @@ export default function PlannerSettingsContent({
                 >
                   <Text style={{ color: '#fff', fontWeight: '600' }}>Done</Text>
                 </TouchableOpacity>
-              </TouchableOpacity>
-            </TouchableOpacity>
-          </Modal>
-        )}
-
-        {attendanceModeConfirmDialog.visible && (
-          <Modal
-            animationType="none"
-            transparent
-            visible={attendanceModeConfirmDialog.visible}
-            onRequestClose={() => respondAttendanceModeConfirm(false)}
-          >
-            <TouchableOpacity
-              style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 }}
-              activeOpacity={1}
-              onPress={() => respondAttendanceModeConfirm(false)}
-            >
-              <TouchableOpacity
-                activeOpacity={1}
-                onPress={(e) => e.stopPropagation()}
-                style={{
-                  backgroundColor: '#fff',
-                  borderRadius: 16,
-                  width: '100%',
-                  maxWidth: 480,
-                  padding: 28,
-                  borderWidth: 1,
-                  borderColor: '#E6EBF2',
-                }}
-              >
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                  <Text
-                    style={{
-                      fontSize: 22,
-                      fontWeight: '600',
-                      color: '#111827',
-                      flex: 1,
-                      ...(Platform.OS === 'web' && {
-                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                      }),
-                    }}
-                  >
-                    {attendanceModeConfirmDialog.title}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => respondAttendanceModeConfirm(false)}
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: 16,
-                      backgroundColor: '#F8FAFC',
-                      borderWidth: 1,
-                      borderColor: '#E6EBF2',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    hitSlop={10}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <X size={16} color="#64748B" />
-                  </TouchableOpacity>
-                </View>
-                <Text
-                  style={{
-                    fontSize: 15,
-                    color: '#475569',
-                    lineHeight: 24,
-                    marginBottom: 22,
-                    ...(Platform.OS === 'web' && {
-                      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                    }),
-                  }}
-                >
-                  {attendanceModeConfirmDialog.message}
-                </Text>
-                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 10 }}>
-                  <TouchableOpacity
-                    onPress={() => respondAttendanceModeConfirm(false)}
-                    style={{
-                      minWidth: 92,
-                      paddingVertical: 10,
-                      paddingHorizontal: 18,
-                      borderRadius: 8,
-                      backgroundColor: '#E5E7EB',
-                      borderWidth: 0,
-                      borderColor: 'transparent',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: '600',
-                        color: '#374151',
-                        ...(Platform.OS === 'web' && {
-                          fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                        }),
-                      }}
-                    >
-                      Cancel
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => respondAttendanceModeConfirm(true)}
-                    style={{
-                      minWidth: 132,
-                      paddingVertical: 10,
-                      paddingHorizontal: 22,
-                      borderRadius: 8,
-                      backgroundColor: '#85C4F2',
-                      borderWidth: 0,
-                      borderColor: 'transparent',
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 6,
-                      ...(Platform.OS === 'web' && {
-                        boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
-                      }),
-                      ...((Platform.OS === 'ios' || Platform.OS === 'android') && {
-                        shadowColor: '#85C4F2',
-                        shadowOpacity: 0.3,
-                        shadowRadius: 6,
-                        shadowOffset: { width: 0, height: 2 },
-                        elevation: 2,
-                      }),
-                    }}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Check size={15} color="#FFFFFF" />
-                    <Text
-                      style={{
-                        fontSize: 15,
-                        fontWeight: '600',
-                        color: '#FFFFFF',
-                        ...(Platform.OS === 'web' && {
-                          fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                        }),
-                      }}
-                    >
-                      Change style
-                    </Text>
-                  </TouchableOpacity>
-                </View>
               </TouchableOpacity>
             </TouchableOpacity>
           </Modal>

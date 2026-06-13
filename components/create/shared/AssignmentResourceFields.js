@@ -6,6 +6,7 @@ export default function AssignmentResourceFields({
   materialId,
   onMaterialChange,
   onAddMaterial,
+  hideLabel = false,
 }) {
   if (!familyId) return null;
 
@@ -15,7 +16,7 @@ export default function AssignmentResourceFields({
       selectedMaterialId={materialId}
       onMaterialChange={onMaterialChange}
       onAddNew={onAddMaterial}
-      label="Attachment"
+      label={hideLabel ? null : 'Attachment'}
     />
   );
 }

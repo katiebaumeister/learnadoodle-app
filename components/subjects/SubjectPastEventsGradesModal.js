@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { CalendarCheck2, Eraser, Save, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { MODAL_ACCENT, MODAL_ACCENT_TEXT } from '../ui/modalButtonStyles';
 import { useToast } from '../Toast';
 
 function eventPrimaryMs(e) {
@@ -418,7 +419,7 @@ export default function SubjectPastEventsGradesModal({
                   accessibilityLabel="Fill ungraded rows with Pass"
                   {...(Platform.OS === 'web' && { cursor: saving ? 'default' : 'pointer' })}
                 >
-                  <CalendarCheck2 size={18} color="#64748b" strokeWidth={2} />
+                  <CalendarCheck2 size={18} color={MODAL_ACCENT_TEXT} strokeWidth={2} />
                   <Text style={[styles.secondaryOutlineBtnText, styles.secondaryOutlineBtnTextInRow]} numberOfLines={2}>
                     Fill ungraded as Pass
                   </Text>
@@ -431,7 +432,7 @@ export default function SubjectPastEventsGradesModal({
                   accessibilityLabel="Clear all grade entries"
                   {...(Platform.OS === 'web' && { cursor: saving ? 'default' : 'pointer' })}
                 >
-                  <Eraser size={18} color="#64748b" strokeWidth={2} />
+                  <Eraser size={18} color={MODAL_ACCENT_TEXT} strokeWidth={2} />
                   <Text style={[styles.secondaryOutlineBtnText, styles.secondaryOutlineBtnTextInRow]} numberOfLines={2}>
                     Clear all entries
                   </Text>
@@ -672,9 +673,9 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingVertical: 11,
     paddingHorizontal: 10,
-    borderRadius: 10,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: MODAL_ACCENT,
     backgroundColor: '#fff',
   },
   secondaryOutlineBtnHalf: {
@@ -688,7 +689,7 @@ const styles = StyleSheet.create({
   secondaryOutlineBtnText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#475569',
+    color: MODAL_ACCENT_TEXT,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

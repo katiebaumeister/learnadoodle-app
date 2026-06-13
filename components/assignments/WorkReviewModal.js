@@ -27,6 +27,7 @@ import {
 import { createFileMaterial } from '../../lib/services/materialsClient';
 import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
 import AssignmentCommentsPanel from './AssignmentCommentsPanel';
+import { modalButtonStyles, MODAL_ACCENT_TEXT } from '../ui/modalButtonStyles';
 
 function resolveLinkedEventId(assignment) {
   const raw = assignment?.linked_event_ids;
@@ -461,13 +462,13 @@ export default function WorkReviewModal({
             </TouchableOpacity>
             {workSpec?.graded !== false ? (
               <TouchableOpacity
-                style={[styles.actionButton, styles.gradeButton]}
+                style={[styles.actionButton, modalButtonStyles.secondaryButtonCompact]}
                 onPress={() => runReview('grade')}
                 disabled={submitting}
                 {...(Platform.OS === 'web' && { cursor: submitting ? 'default' : 'pointer' })}
               >
-                <Award size={15} color="#1D4ED8" />
-                <Text style={styles.gradeText}>Grade</Text>
+                <Award size={15} color={MODAL_ACCENT_TEXT} />
+                <Text style={modalButtonStyles.secondaryButtonCompactText}>Grade</Text>
               </TouchableOpacity>
             ) : null}
           </View>
@@ -697,14 +698,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#15803D',
-  },
-  gradeButton: {
-    borderColor: '#BFDBFE',
-    backgroundColor: '#EFF6FF',
-  },
-  gradeText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1D4ED8',
   },
 });

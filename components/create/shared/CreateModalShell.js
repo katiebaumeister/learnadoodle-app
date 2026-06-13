@@ -15,6 +15,9 @@ export default function CreateModalShell({
   validationBanner = null,
   maxWidth = CREATE_MODAL_MAX_WIDTH,
   footer = null,
+  disableShellScroll = false,
+  bodyStyle = null,
+  shellStyle = null,
 }) {
   return (
     <View style={shellStyles.overlay}>
@@ -29,10 +32,12 @@ export default function CreateModalShell({
         <AppModalShell
           title={title}
           onClose={onClose}
-          shellStyle={styles.compactShell}
+          maxWidth={maxWidth}
+          shellStyle={[styles.compactShell, shellStyle]}
           titleRowStyle={styles.compactTitleRow}
           contentContainerStyle={styles.contentContainer}
-          bodyStyle={styles.shellBody}
+          bodyStyle={[styles.shellBody, bodyStyle]}
+          disableShellScroll={disableShellScroll}
           footer={footer ?? (
             <ModalFooter
               mode="edit"

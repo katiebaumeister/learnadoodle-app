@@ -20,6 +20,7 @@ import { X, Clock, ChevronDown, ChevronRight, Check, AlertCircle, RotateCcw, Mov
 import { colors } from '../../../theme/colors';
 import { runQuickReschedule, applyQuickReschedule } from '../../../lib/services/quickRescheduleClient';
 import { supabase } from '../../../lib/supabase';
+import { modalButtonStyles, MODAL_ACCENT_TEXT } from '../../ui/modalButtonStyles';
 
 // Match TaskCreateModal styling
 const BG = '#ffffff';
@@ -2142,12 +2143,12 @@ export default function QuickRescheduleModal({
             <View style={styles.footerActions}>
               {preview && (
                 <TouchableOpacity
-                  style={styles.tryAgainButton}
+                  style={modalButtonStyles.secondaryButtonCompact}
                   onPress={handleTryAgain}
                   disabled={loading || applying}
                 >
-                  <RotateCcw size={14} color={colors.accent} />
-                  <Text style={styles.tryAgainButtonText}>Try again</Text>
+                  <RotateCcw size={14} color={MODAL_ACCENT_TEXT} />
+                  <Text style={modalButtonStyles.secondaryButtonCompactText}>Try again</Text>
                 </TouchableOpacity>
               )}
               <TouchableOpacity
@@ -2665,21 +2666,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     alignItems: 'center',
-  },
-  tryAgainButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.accent,
-  },
-  tryAgainButtonText: {
-    fontSize: 14,
-    color: colors.accent,
-    fontWeight: '500',
   },
   nextButton: {
     flexDirection: 'row',

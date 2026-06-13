@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import {
   FileText,
-  List,
   MoreVertical,
   Plus,
   X,
@@ -27,7 +26,6 @@ import { useToast } from '../Toast';
 import AssignPlacementModal from './AssignPlacementModal';
 import ScheduleLessonModal from './ScheduleLessonModal';
 import {
-  CLASSWORK_ACCENT,
   CLASSWORK_FG,
   CLASSWORK_MUTED,
   CLASSWORK_BORDER,
@@ -228,7 +226,53 @@ function AttachAssignmentModal({
   );
 }
 
-function EmptyClassworkState({ isParentViewer, onManageUnits, onCreateAssignment, unitsActionLabel }) {
+function ClassworkActionSet({
+  onManageUnits,
+  onCreateAssignment,
+  unitsActionLabel = 'Add unit',
+}) {
+  const showUnits = !!onManageUnits;
+  const showAssignment = !!onCreateAssignment;
+  if (!showUnits && !showAssignment) return null;
+
+  return (
+    <View style={styles.actionSet}>
+      {showUnits ? (
+        <TouchableOpacity
+          style={styles.actionPillBtn}
+          onPress={onManageUnits}
+          accessibilityLabel={unitsActionLabel}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Plus size={18} color="#334155" strokeWidth={2.25} />
+          <Text style={styles.actionPillBtnText}>{unitsActionLabel}</Text>
+        </TouchableOpacity>
+      ) : null}
+      {showAssignment ? (
+        <TouchableOpacity
+          style={styles.actionPillBtn}
+          onPress={onCreateAssignment}
+          accessibilityLabel="Add assignment"
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Plus size={18} color="#334155" strokeWidth={2.25} />
+          <Text style={styles.actionPillBtnText}>Add assignment</Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+}
+
+function ClassworkToolbar({ children }) {
+  return (
+    <View style={styles.toolbar}>
+      <View style={styles.toolbarSpacer} />
+      {children}
+    </View>
+  );
+}
+
+function EmptyClassworkState({ isParentViewer }) {
   return (
     <View style={styles.emptyWrap}>
       <Text style={styles.emptyHeading}>No classwork yet</Text>
@@ -237,33 +281,6 @@ function EmptyClassworkState({ isParentViewer, onManageUnits, onCreateAssignment
           ? 'Add units and lessons, or create an assignment to get started.'
           : 'Assignments and lessons will appear here.'}
       </Text>
-
-      {isParentViewer ? (
-        <View style={styles.emptyActions}>
-          {onManageUnits ? (
-            <TouchableOpacity
-              style={styles.headerActionBtn}
-              onPress={onManageUnits}
-              accessibilityLabel={unitsActionLabel}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <List size={18} color="#334155" strokeWidth={2.25} />
-              <Text style={styles.headerActionBtnText}>{unitsActionLabel}</Text>
-            </TouchableOpacity>
-          ) : null}
-          {onCreateAssignment ? (
-            <TouchableOpacity
-              style={styles.headerActionBtn}
-              onPress={onCreateAssignment}
-              accessibilityLabel="Add assignment"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={18} color="#334155" strokeWidth={2.25} />
-              <Text style={styles.headerActionBtnText}>Add assignment</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -323,17 +340,33 @@ export default function SubjectClassworkSection({
 
   if (!hasContent) {
     return (
-      <EmptyClassworkState
-        isParentViewer={isParentViewer}
-        onManageUnits={onManageUnits}
-        onCreateAssignment={onCreateAssignment}
-        unitsActionLabel={unitsActionLabel}
-      />
+      <View style={styles.root}>
+        {isParentViewer ? (
+          <ClassworkToolbar>
+            <ClassworkActionSet
+              onManageUnits={onManageUnits}
+              onCreateAssignment={onCreateAssignment}
+              unitsActionLabel={unitsActionLabel}
+            />
+          </ClassworkToolbar>
+        ) : null}
+        <EmptyClassworkState isParentViewer={isParentViewer} />
+      </View>
     );
   }
 
   return (
-    <View style={styles.wrap}>
+    <View style={styles.root}>
+      {isParentViewer ? (
+        <ClassworkToolbar>
+          <ClassworkActionSet
+            onManageUnits={onManageUnits}
+            onCreateAssignment={onCreateAssignment}
+            unitsActionLabel={unitsActionLabel}
+          />
+        </ClassworkToolbar>
+      ) : null}
+      <View style={styles.wrap}>
       {noUnitItems.length > 0 ? (
         <View style={styles.sectionBlock}>
           <SectionHeader title="NO UNIT" />
@@ -393,28 +426,7 @@ export default function SubjectClassworkSection({
         );
       })}
 
-      {isParentViewer ? (
-        <View style={styles.footerActions}>
-          {onManageUnits ? (
-            <TouchableOpacity
-              style={styles.footerBtn}
-              onPress={onManageUnits}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={14} color={CLASSWORK_ACCENT} />
-              <Text style={styles.footerBtnText}>Add unit</Text>
-            </TouchableOpacity>
-          ) : null}
-          <TouchableOpacity
-            style={styles.footerBtn}
-            onPress={onCreateAssignment}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Plus size={14} color={CLASSWORK_ACCENT} />
-            <Text style={styles.footerBtnText}>Add assignment</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
+      </View>
 
       <AssignPlacementModal
         visible={!!placementAssignment}
@@ -455,6 +467,53 @@ export default function SubjectClassworkSection({
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    minHeight: 0,
+  },
+  toolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 4,
+    flexShrink: 0,
+    gap: 12,
+  },
+  toolbarSpacer: {
+    flex: 1,
+  },
+  actionSet: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+    flexShrink: 0,
+  },
+  actionPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 9999,
+    borderWidth: 1,
+    borderColor: '#E6EBF2',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  actionPillBtnText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: 'rgba(15,23,42,0.85)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   wrap: {
     paddingHorizontal: 14,
     paddingBottom: 28,
@@ -584,22 +643,6 @@ const styles = StyleSheet.create({
   menuItemDestructive: {
     color: '#ef4444',
   },
-  footerActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 20,
-    paddingTop: 4,
-  },
-  footerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  footerBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: CLASSWORK_ACCENT,
-  },
   emptyWrap: {
     flex: 1,
     alignItems: 'center',
@@ -626,36 +669,6 @@ const styles = StyleSheet.create({
     maxWidth: 360,
     textAlign: 'center',
     marginBottom: 8,
-  },
-  emptyActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 10,
-    marginTop: 8,
-  },
-  headerActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 9999,
-    borderWidth: 1,
-    borderColor: '#E6EBF2',
-    flexShrink: 0,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  headerActionBtnText: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: 'rgba(15,23,42,0.85)',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   attachOverlay: {
     flex: 1,

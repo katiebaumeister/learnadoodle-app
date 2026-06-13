@@ -137,7 +137,7 @@ export function SingleDateField({
   return (
     <View style={styles.formGroup}>
       <View style={styles.dateTimeInlineRow}>
-        <View style={[styles.scheduleColumn, compact && styles.scheduleColumnCompact]}>
+        <View style={compact ? styles.scheduleColumnCompact : styles.scheduleColumn}>
           <Text style={styles.fieldLabel}>
             {label}
             {required ? <Text style={styles.required}> *</Text> : null}

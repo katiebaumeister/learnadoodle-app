@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, TouchableOpacity, Modal, Platform, StyleSheet } from 'react-native';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight } from 'lucide-react';
 
 /** Match TaskCreateModal mini calendar (light purple selected day, month/year nav). */
 const FG = '#111827';
@@ -11,12 +11,12 @@ const CALENDAR_TODAY_BORDER = '#C4B5FD';
 
 const modalCardStyle = {
   backgroundColor: '#FFFFFF',
-  borderRadius: 12,
-  padding: 16,
+  borderRadius: 20,
+  padding: 20,
   width: Platform.OS === 'web' ? 320 : '90%',
   maxWidth: 320,
   ...(Platform.OS === 'web'
-    ? { boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' }
+    ? { boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)' }
     : {
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
@@ -51,7 +51,9 @@ export function parseLocalYyyyMmDd(s) {
  * @param {boolean} visible
  * @param {() => void} onClose
  * @param {Date | null} selectedDate — highlighted day; null = none
- * @param {(d: Date) => void} onSelectDate — called with local calendar date, then caller closes
+ * @param {(d: Date) => void} onSelectDate — called with local calendar date; auto-closes unless requireConfirm
+ * @param {boolean} requireConfirm — day taps only preview; footer button confirms
+ * @param {string} confirmLabel — footer button label when requireConfirm
  */
 export function AppCalendarDatePickerModal({
   visible,
@@ -62,11 +64,17 @@ export function AppCalendarDatePickerModal({
   maxDate = null,
   title = null,
   subtitle = null,
+  requireConfirm = false,
+  confirmLabel = 'Set date & save',
 }) {
   const selectedKey =
     selectedDate && !isNaN(selectedDate.getTime()) ? selectedDate.getTime() : null;
   const minKey = minDate && !isNaN(minDate.getTime()) ? minDate.getTime() : null;
   const maxKey = maxDate && !isNaN(maxDate.getTime()) ? maxDate.getTime() : null;
+
+  const [pendingDate, setPendingDate] = useState(() => (
+    selectedKey != null ? new Date(selectedKey) : new Date()
+  ));
 
   const clampMonth = (monthDate) => {
     if (!monthDate || isNaN(monthDate.getTime())) return monthDate;
@@ -90,11 +98,45 @@ export function AppCalendarDatePickerModal({
   useEffect(() => {
     if (!visible) return;
     const b = selectedKey != null ? new Date(selectedKey) : new Date();
+    setPendingDate(b);
     setViewMonth(clampMonth(new Date(b.getFullYear(), b.getMonth(), 1)));
   }, [visible, selectedKey, minKey, maxKey]);
 
+  const activeDate = requireConfirm ? pendingDate : selectedDate;
+
+  const handleDayPress = (day, isInRange) => {
+    if (!isInRange) return;
+    if (requireConfirm) {
+      setPendingDate(day);
+      return;
+    }
+    onSelectDate(day);
+    onClose();
+  };
+
+  const handleTodayPress = () => {
+    const t = new Date();
+    const tKey = t.getTime();
+    if ((minKey != null && tKey < minKey) || (maxKey != null && tKey > maxKey)) return;
+    setViewMonth(clampMonth(new Date(t.getFullYear(), t.getMonth(), 1)));
+    if (requireConfirm) {
+      setPendingDate(t);
+      return;
+    }
+    onSelectDate(t);
+    onClose();
+  };
+
+  const handleConfirm = () => {
+    if (!pendingDate || isNaN(pendingDate.getTime())) return;
+    const dayKey = pendingDate.getTime();
+    if ((minKey != null && dayKey < minKey) || (maxKey != null && dayKey > maxKey)) return;
+    onSelectDate(pendingDate);
+    onClose();
+  };
+
   const titleFont = Platform.OS === 'web'
-    ? { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
+    ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
     : {};
 
   const currentMonthStart = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
@@ -124,7 +166,7 @@ export function AppCalendarDatePickerModal({
                 fontSize: 18,
                 fontWeight: '700',
                 color: FG,
-                marginBottom: subtitle ? 4 : 12,
+                marginBottom: subtitle ? 4 : 16,
                 ...titleFont,
               }}
             >
@@ -209,14 +251,7 @@ export function AppCalendarDatePickerModal({
               <Text style={{ fontSize: 12, color: canGoPrevYear ? SUB : '#CBD5E1', ...titleFont }}>← Year</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => {
-                const t = new Date();
-                const tKey = t.getTime();
-                if ((minKey != null && tKey < minKey) || (maxKey != null && tKey > maxKey)) return;
-                setViewMonth(clampMonth(new Date(t.getFullYear(), t.getMonth(), 1)));
-                onSelectDate(t);
-                onClose();
-              }}
+              onPress={handleTodayPress}
               style={{ padding: 4 }}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
@@ -269,7 +304,7 @@ export function AppCalendarDatePickerModal({
               }
 
               const selectedStr =
-                selectedDate && !isNaN(selectedDate.getTime()) ? selectedDate.toDateString() : null;
+                activeDate && !isNaN(activeDate.getTime()) ? activeDate.toDateString() : null;
               const todayStr = new Date().toDateString();
 
               return (
@@ -286,11 +321,7 @@ export function AppCalendarDatePickerModal({
                         return (
                           <TouchableOpacity
                             key={idx}
-                            onPress={() => {
-                              if (!isInRange) return;
-                              onSelectDate(day);
-                              onClose();
-                            }}
+                            onPress={() => handleDayPress(day, isInRange)}
                             style={{
                               flex: 1,
                               aspectRatio: 1,
@@ -322,11 +353,49 @@ export function AppCalendarDatePickerModal({
               );
             })()}
           </View>
+
+          {requireConfirm ? (
+            <TouchableOpacity
+              onPress={handleConfirm}
+              style={styles.confirmButton}
+              activeOpacity={0.9}
+              accessibilityRole="button"
+              accessibilityLabel={confirmLabel}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Check size={16} color="#FFF" />
+              <Text style={styles.confirmButtonText}>{confirmLabel}</Text>
+            </TouchableOpacity>
+          ) : null}
         </TouchableOpacity>
       </TouchableOpacity>
     </Modal>
   );
 }
+
+const styles = StyleSheet.create({
+  confirmButton: {
+    marginTop: 16,
+    minHeight: 48,
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    backgroundColor: '#9ECFFB',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    width: '100%',
+  },
+  confirmButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+});
 
 /**
  * Tappable field that stores YYYY-MM-DD (local) and opens the app-style calendar.

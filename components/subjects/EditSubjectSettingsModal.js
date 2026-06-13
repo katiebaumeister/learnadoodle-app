@@ -455,6 +455,7 @@ export default function EditSubjectSettingsModal({
                 keyboardShouldPersistTaps="handled"
               >
                 <View
+                  style={styles.settingsSectionPanel}
                   onLayout={(e) => {
                     sectionOffsetsRef.current.details = e.nativeEvent.layout.y;
                   }}
@@ -604,9 +605,8 @@ export default function EditSubjectSettingsModal({
                   </View>
                 </View>
 
-                <View style={styles.sectionDivider} />
-
                 <View
+                  style={styles.settingsSectionPanel}
                   onLayout={(e) => {
                     sectionOffsetsRef.current.schedule = e.nativeEvent.layout.y;
                   }}
@@ -633,6 +633,7 @@ export default function EditSubjectSettingsModal({
                 </View>
 
                 <View
+                  style={styles.settingsSectionPanel}
                   onLayout={(e) => {
                     sectionOffsetsRef.current.grades = e.nativeEvent.layout.y;
                   }}
@@ -712,7 +713,8 @@ const localStyles = StyleSheet.create({
     }),
   },
   formScrollContent: {
-    paddingBottom: 12,
+    paddingBottom: 4,
+    gap: 0,
   },
   scopeRow: {
     flexDirection: 'row',

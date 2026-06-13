@@ -877,15 +877,36 @@ export default function SubmitForReviewModal({
                     <Text style={styles.quizPrompt}>
                       {index + 1}. {q.prompt || `Question ${index + 1}`}
                     </Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Your answer"
-                      placeholderTextColor={colors.muted}
-                      value={String(quizAnswers[q.id] || '')}
-                      onChangeText={(text) => setQuizAnswers((prev) => ({ ...prev, [q.id]: text }))}
-                      multiline
-                      textAlignVertical="top"
-                    />
+                    {q.question_type === 'multiple_choice' && Array.isArray(q.options) && q.options.length > 0 ? (
+                      <View style={styles.quizOptions}>
+                        {q.options.map((option) => {
+                          const selected = String(quizAnswers[q.id] || '') === String(option.id);
+                          return (
+                            <TouchableOpacity
+                              key={option.id}
+                              style={[styles.quizOptionRow, selected && styles.quizOptionRowSelected]}
+                              onPress={() => setQuizAnswers((prev) => ({ ...prev, [q.id]: option.id }))}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <View style={[styles.quizOptionRadio, selected && styles.quizOptionRadioSelected]}>
+                                {selected ? <View style={styles.quizOptionRadioInner} /> : null}
+                              </View>
+                              <Text style={styles.quizOptionText}>{option.text || 'Option'}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ) : (
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Your answer"
+                        placeholderTextColor={colors.muted}
+                        value={String(quizAnswers[q.id] || '')}
+                        onChangeText={(text) => setQuizAnswers((prev) => ({ ...prev, [q.id]: text }))}
+                        multiline
+                        textAlignVertical="top"
+                      />
+                    )}
                   </View>
                 ))}
               </>
@@ -897,8 +918,15 @@ export default function SubmitForReviewModal({
                   {submissionModes.parentCheckoff ? 'Notes (optional)' : 'Your response'}
                 </Text>
                 <TextInput
-                  style={styles.input}
-                  placeholder="Type your answer or notes..."
+                  style={[
+                    styles.input,
+                    submissionModes.responseFormat === 'long' && styles.inputLong,
+                  ]}
+                  placeholder={
+                    submissionModes.responseFormat === 'long'
+                      ? 'Write your response…'
+                      : 'Type your answer or notes...'
+                  }
                   placeholderTextColor={colors.muted}
                   value={note}
                   onChangeText={setNote}
@@ -1140,6 +1168,48 @@ const styles = StyleSheet.create({
     color: '#334155',
     lineHeight: 20,
   },
+  quizOptions: {
+    gap: 8,
+  },
+  quizOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
+  },
+  quizOptionRowSelected: {
+    borderColor: '#9ECFFB',
+    backgroundColor: 'rgba(158, 207, 251, 0.12)',
+  },
+  quizOptionRadio: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quizOptionRadioSelected: {
+    borderColor: '#6BB3E8',
+  },
+  quizOptionRadioInner: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#6BB3E8',
+  },
+  quizOptionText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#334155',
+    lineHeight: 20,
+  },
   markupLink: {
     fontSize: 13,
     color: '#2563EB',
@@ -1188,6 +1258,9 @@ const styles = StyleSheet.create({
       outlineStyle: 'none',
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  inputLong: {
+    minHeight: 180,
   },
   uploadButton: {
     borderWidth: 1,

@@ -35,17 +35,8 @@ export default function SubjectScheduleFields({
   return (
     <View>
       {!embeddedInForm ? (
-        <>
-          <Text style={styles.sectionHeading}>Recurring schedule</Text>
-          <Text style={scheduleHelpStyles.helpText}>
-            Set when this subject meets. Saving applies schedule changes to the planner calendar.
-          </Text>
-        </>
-      ) : (
-        <Text style={scheduleHelpStyles.helpTextEmbedded}>
-          Set when this subject meets. Saving applies schedule changes to the planner calendar.
-        </Text>
-      )}
+        <Text style={styles.sectionHeading}>Recurring schedule</Text>
+      ) : null}
 
       <View style={styles.formGroup}>
         <Text style={styles.fieldLabel}>Days</Text>
@@ -132,18 +123,6 @@ export default function SubjectScheduleFields({
 }
 
 const scheduleHelpStyles = {
-  helpText: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: '#64748B',
-    marginBottom: 16,
-  },
-  helpTextEmbedded: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: '#64748B',
-    marginBottom: 12,
-  },
   removeBtn: {
     marginTop: 4,
     alignSelf: 'flex-start',

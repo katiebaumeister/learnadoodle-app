@@ -14,6 +14,7 @@ export default function AppModalShell({
   titleRowStyle,
   scrollerStyle,
   disableShellScroll = false,
+  maxWidth,
   // Legacy props — ignored after header streamlining
   mode: _mode,
   eyebrow: _eyebrow,
@@ -28,6 +29,8 @@ export default function AppModalShell({
         style: [styles.scroll, scrollerStyle],
         contentContainerStyle: styles.scrollContent,
         showsVerticalScrollIndicator: false,
+        keyboardShouldPersistTaps: 'handled',
+        nestedScrollEnabled: true,
       };
   const bodyStyles = [
     styles.body,
@@ -36,7 +39,7 @@ export default function AppModalShell({
     bodyStyle,
   ];
   return (
-    <View style={[styles.modal, shellStyle]}>
+    <View style={[styles.modal, shellStyle, maxWidth != null && { maxWidth }]}>
       <ShellScroller {...shellScrollerProps}>
         <View style={[styles.titleRow, titleRowStyle]}>
           <Text style={styles.title}>{title}</Text>

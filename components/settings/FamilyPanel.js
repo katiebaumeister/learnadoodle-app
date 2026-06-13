@@ -7849,12 +7849,12 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-      borderRadius: 20,
+      minHeight: SettingsLayout.rowHeight,
+      paddingHorizontal: 18,
+      borderRadius: 999,
       borderWidth: 1,
-      borderColor: '#e5e7eb',
-      backgroundColor: '#ffffff',
+      borderColor: 'rgba(148, 163, 184, 0.24)',
+      backgroundColor: '#F9FAFB',
       alignSelf: 'flex-start',
       marginTop: 0,
       ...(Platform.OS === 'web' && {
@@ -7863,8 +7863,8 @@ function createStyles(tokens) {
       }),
     },
     profileResetPasswordButtonText: {
-      fontSize: 14,
-      fontWeight: '500',
+      fontSize: 16,
+      fontWeight: '600',
       color: '#374151',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',

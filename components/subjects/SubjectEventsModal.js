@@ -2,6 +2,7 @@ import React from 'react';
 import { Modal, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Check, CheckCircle2, Trash2, X } from 'lucide-react';
 import { colors } from '../../theme/colors';
+import { MODAL_ACCENT, MODAL_ACCENT_TEXT } from '../ui/modalButtonStyles';
 
 function fallbackFormatEventDateTime(ts) {
   const d = new Date(ts || '');
@@ -209,7 +210,7 @@ export default function SubjectEventsModal({
                 activeOpacity={0.85}
                 disabled={!hasUnattendedEvents || isBulkMarking || deletingAllEvents || typeof onMarkAllPastEventsAttended !== 'function'}
               >
-                <CheckCircle2 size={17} color={!hasUnattendedEvents || isBulkMarking || deletingAllEvents || typeof onMarkAllPastEventsAttended !== 'function' ? '#94A3B8' : '#111827'} strokeWidth={2} />
+                <CheckCircle2 size={17} color={!hasUnattendedEvents || isBulkMarking || deletingAllEvents || typeof onMarkAllPastEventsAttended !== 'function' ? '#94A3B8' : MODAL_ACCENT_TEXT} strokeWidth={2} />
                 <Text
                   style={[
                     styles.subjectEventsFooterActionButtonText,
@@ -356,9 +357,9 @@ const styles = StyleSheet.create({
   subjectEventsFooterActionButton: {
     height: 42,
     flex: 1,
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: MODAL_ACCENT,
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 14,
     flexDirection: 'row',
@@ -375,7 +376,7 @@ const styles = StyleSheet.create({
   subjectEventsFooterActionButtonText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#111827',
+    color: MODAL_ACCENT_TEXT,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

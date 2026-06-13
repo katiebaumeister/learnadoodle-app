@@ -31,7 +31,6 @@ import { isAbortLikeError } from '../../lib/apiClient';
 import { getAttendanceLogs } from '../../lib/services/recordsClient';
 import { generateAttendanceReport } from '../../lib/services/attendanceClient';
 import { exportCurriculumPlan, exportReportCard } from '../../lib/services/exportClient';
-import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { defaultPlannerExportColumnSelection } from '../../lib/plannerExportOptionalColumns';
 import { supabase } from '../../lib/supabase';
 import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
@@ -52,10 +51,9 @@ import {
 import { dispatchOpenSubjectUnitsEditor } from '../../lib/subjectUnitsEditor';
 import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
 import { curriculumStructureHasContent } from '../../lib/subjectUnitsEditorDraft';
-import PlannerSettingsContent from '../settings/PlannerSettingsContent';
+import SchoolYearSettingsModal from '../settings/SchoolYearSettingsModal';
 import FamilyPanel from '../settings/FamilyPanel';
 import AppModalShell from '../ui/AppModalShell';
-import { ModalFooter } from '../ui/ModalFooter';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
 
 const PLANNING_PREFERENCES_MODAL_MAX_WIDTH = 740;
@@ -315,111 +313,19 @@ export default function SubjectsPage({
   const [archiveSubjectTarget, setArchiveSubjectTarget] = useState(null);
   const [archivingSubject, setArchivingSubject] = useState(false);
   const [showPlanningPreferencesModal, setShowPlanningPreferencesModal] = useState(false);
-  const planningModalActionsRef = useRef(null);
-  const [planningModalFooterState, setPlanningModalFooterState] = useState({
-    saving: false,
-    readOnly: false,
-  });
-  const [showFamilyMembersModal, setShowFamilyMembersModal] = useState(false);
   const [planningPreferencesSchoolYearLabel, setPlanningPreferencesSchoolYearLabel] = useState(null);
-  const [planningPreferencesInitialDataByYear, setPlanningPreferencesInitialDataByYear] = useState({});
-  const [planningPreferencesSavedSinceOpen, setPlanningPreferencesSavedSinceOpen] = useState(false);
-  const planningPreferencesSavedSinceOpenRef = useRef(false);
-  const planningPreferencesSchoolYearLabelRef = useRef(null);
-  useEffect(() => {
-    planningPreferencesSavedSinceOpenRef.current = planningPreferencesSavedSinceOpen;
-  }, [planningPreferencesSavedSinceOpen]);
-  useEffect(() => {
-    planningPreferencesSchoolYearLabelRef.current = String(planningPreferencesSchoolYearLabel || '').trim() || null;
-  }, [planningPreferencesSchoolYearLabel]);
-  const preloadPlanningPreferencesData = useCallback(async (schoolYearLabelInput) => {
-    const schoolYearLabel = String(schoolYearLabelInput || '').trim();
-    if (!familyId || !schoolYearLabel) return null;
-    const existing = planningPreferencesInitialDataByYear[schoolYearLabel];
-    if (existing && typeof existing === 'object') return existing;
-    try {
-      const { settings, exclusions, excluded_holiday_dates } = await getPlanDefaultsFromSettings(familyId, schoolYearLabel);
-      const { data: subjectsData } = await supabase
-        .from('subject')
-        .select('id, name, school_year, default_constraint_mode, default_target_days, default_target_hours')
-        .eq('family_id', familyId)
-        .eq('school_year', schoolYearLabel)
-        .order('name');
-      const payload = {
-        settings: {
-          ...(settings || {}),
-          school_year_label: schoolYearLabel,
-          default_school_year: schoolYearLabel,
-        },
-        exclusions: exclusions || [],
-        excluded_holiday_dates: excluded_holiday_dates || [],
-        subjects: subjectsData || [],
-      };
-      setPlanningPreferencesInitialDataByYear((prev) => ({ ...prev, [schoolYearLabel]: payload }));
-      return payload;
-    } catch (_) {
-      return null;
-    }
-  }, [familyId, planningPreferencesInitialDataByYear]);
+  const [showFamilyMembersModal, setShowFamilyMembersModal] = useState(false);
 
-  const openPlanningPreferencesModal = useCallback(async (schoolYearLabelInput) => {
+  const openPlanningPreferencesModal = useCallback((schoolYearLabelInput) => {
     const targetYear = String(schoolYearLabelInput || '').trim() || selectedYearFilter || getCurrentSchoolYear();
     setPlanningPreferencesSchoolYearLabel(targetYear);
-    setPlanningPreferencesSavedSinceOpen(false);
-    planningPreferencesSavedSinceOpenRef.current = false;
-    planningPreferencesSchoolYearLabelRef.current = targetYear;
-    await preloadPlanningPreferencesData(targetYear);
     setShowPlanningPreferencesModal(true);
-  }, [preloadPlanningPreferencesData, selectedYearFilter, planningPreferencesInitialDataByYear]);
-
-  const handlePlanningModalActionsReady = useCallback((actions) => {
-    planningModalActionsRef.current = actions;
-  }, []);
-
-  const handlePlanningModalFooterStateChange = useCallback(({ saving, readOnly }) => {
-    setPlanningModalFooterState((prev) => {
-      if (prev.saving === saving && prev.readOnly === readOnly) return prev;
-      return { saving, readOnly };
-    });
-  }, []);
+  }, [selectedYearFilter]);
 
   const closePlanningPreferencesModal = useCallback(() => {
-    const closedYearLabel = String(planningPreferencesSchoolYearLabelRef.current || planningPreferencesSchoolYearLabel || '').trim();
-    const savedSinceOpen = planningPreferencesSavedSinceOpenRef.current;
     setShowPlanningPreferencesModal(false);
     setPlanningPreferencesSchoolYearLabel(null);
-    planningModalActionsRef.current = null;
-    setPlanningModalFooterState({ saving: false, readOnly: false });
-    planningPreferencesSchoolYearLabelRef.current = null;
-    if (savedSinceOpen) {
-      if (closedYearLabel) {
-        setPlanningPreferencesInitialDataByYear((prev) => {
-          if (!prev || !prev[closedYearLabel]) return prev;
-          const next = { ...prev };
-          delete next[closedYearLabel];
-          return next;
-        });
-      }
-      toast.push('Saved', 'success');
-      setPlanningPreferencesSavedSinceOpen(false);
-      planningPreferencesSavedSinceOpenRef.current = false;
-    }
-  }, [planningPreferencesSchoolYearLabel, toast]);
-
-  const requestPlanningPreferencesClose = useCallback(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('plannerSettingsRequestClose'));
-      return;
-    }
-    closePlanningPreferencesModal();
-  }, [closePlanningPreferencesModal]);
-
-  useEffect(() => {
-    if (!familyId) return;
-    const preloadYear = String(selectedYearFilter || getCurrentSchoolYear()).trim();
-    if (!preloadYear) return;
-    preloadPlanningPreferencesData(preloadYear);
-  }, [familyId, selectedYearFilter, preloadPlanningPreferencesData]);
+  }, []);
 
   const [subjectsExportType, setSubjectsExportType] = useState('schedule');
   const [subjectsExportFormat, setSubjectsExportFormat] = useState('excel');
@@ -2800,83 +2706,15 @@ export default function SubjectsPage({
     </Modal>
   );
 
-  const renderPlanningPreferencesModal = () => {
-    if (!showPlanningPreferencesModal) return null;
-    return (
-    <Modal
-      visible
-      transparent
-      animationType="fade"
-      onRequestClose={requestPlanningPreferencesClose}
-    >
-      <View style={styles.learnadoodleModalOverlay}>
-        <TouchableOpacity
-          style={StyleSheet.absoluteFill}
-          activeOpacity={1}
-          onPress={requestPlanningPreferencesClose}
-        />
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={(e) => e.stopPropagation()}
-          style={styles.learnadoodleModalWrap}
-        >
-          <AppModalShell
-            title="School Year Settings"
-            onClose={requestPlanningPreferencesClose}
-            disableShellScroll
-            scrollerStyle={styles.learnadoodleModalScroller}
-            shellStyle={styles.learnadoodleModalShell}
-            bodyStyle={[styles.learnadoodleModalBody, styles.learnadoodleModalScrollBody]}
-            contentContainerStyle={styles.learnadoodleModalBodyContent}
-            footer={(
-              <ModalFooter
-                mode="edit"
-                primaryLabel={
-                  planningModalFooterState.saving ? 'Saving...' : 'Save changes'
-                }
-                onCancel={() => planningModalActionsRef.current?.handleCancel?.()}
-                onPrimary={() => planningModalActionsRef.current?.handleSave?.()}
-                accent="#9ECFFB"
-                disabled={planningModalFooterState.saving || planningModalFooterState.readOnly}
-                loading={planningModalFooterState.saving}
-              />
-            )}
-          >
-            <PlannerSettingsContent
-              familyId={familyId}
-              initialData={planningPreferencesInitialDataByYear[String(planningPreferencesSchoolYearLabel || '').trim()] || null}
-              embeddedInModal
-              hideEmbeddedHeader
-              onEmbeddedModalActionsReady={handlePlanningModalActionsReady}
-              onEmbeddedModalFooterStateChange={handlePlanningModalFooterStateChange}
-              lockedSchoolYearLabel={planningPreferencesSchoolYearLabel || null}
-              onRequestClose={closePlanningPreferencesModal}
-              onSave={() => {
-                const activeYearLabel = String(planningPreferencesSchoolYearLabelRef.current || planningPreferencesSchoolYearLabel || '').trim();
-                setPlanningPreferencesSavedSinceOpen(true);
-                planningPreferencesSavedSinceOpenRef.current = true;
-                if (activeYearLabel) {
-                  // Invalidate preloaded payload immediately so reopen refetches latest values.
-                  setPlanningPreferencesInitialDataByYear((prev) => {
-                    if (!prev || !prev[activeYearLabel]) return prev;
-                    const next = { ...prev };
-                    delete next[activeYearLabel];
-                    return next;
-                  });
-                }
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
-                  window.dispatchEvent(new CustomEvent('refreshSubjects'));
-                }
-                loadSubjects();
-              }}
-            />
-          </AppModalShell>
-        </TouchableOpacity>
-      </View>
-    </Modal>
-    );
-  };
+  const renderPlanningPreferencesModal = () => (
+    <SchoolYearSettingsModal
+      visible={showPlanningPreferencesModal}
+      onClose={closePlanningPreferencesModal}
+      familyId={familyId}
+      initialSchoolYearLabel={planningPreferencesSchoolYearLabel}
+      onSaved={() => loadSubjects()}
+    />
+  );
 
   const closeFamilyMembersModal = useCallback(() => {
     setShowFamilyMembersModal(false);

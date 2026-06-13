@@ -1,8 +1,8 @@
 /**
- * Assignment create modal — type-first layout with conditional fields.
+ * Assignment create modal — content + student response layout.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Modal, View, Text, TextInput } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Modal, View, Text, TextInput, ScrollView } from 'react-native';
 import { useToast } from '../Toast';
 import CreateModalShell from './shared/CreateModalShell';
 import InstructionsEditor from './shared/InstructionsEditor';
@@ -11,63 +11,39 @@ import { materialIdsFromSelection } from './shared/EventAttachmentsField';
 import FamilyMemberPicker, { resolveDefaultAssigneeIds } from './shared/FamilyMemberPicker';
 import SubjectSelectField from './shared/SubjectSelectField';
 import { SingleDateField } from './shared/ScheduleDateFields';
-import { ChipOptionGroup } from './shared/assignmentFormParts';
+import { SectionHeading } from './shared/assignmentFormParts';
 import AssignmentCreateFooter from './assignment/AssignmentCreateFooter';
 import AssignmentReleaseDateModal from './assignment/AssignmentReleaseDateModal';
-import {
-  ASSIGNMENT_TYPES,
-  getAssignmentTypeLayout,
-} from './assignment/assignmentTypeLayout';
-import QuizQuestionsEditor from '../events/QuizQuestionsEditor';
+import StudentResponseSection from './assignment/StudentResponseSection';
 import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import { createModalStyles as styles, PLACEHOLDER, CREATE_ASSIGNMENT_MODAL_MAX_WIDTH } from './shared/createModalStyles';
 import { useSubjectsForAssignees } from './shared/useSubjectsForAssignees';
 import { saveAssignment } from '../../lib/create/saveEventHelpers';
-import {
-  defaultWorkSpec,
-  defaultSubmissionMethodsForAssignmentType,
-  normalizeQuizQuestions,
-} from '../../lib/workEventHelpers';
+import { defaultWorkSpec } from '../../lib/workEventHelpers';
+import { buildWorkSpecForStudentResponseType, parseStudentResponseType } from '../../lib/studentResponseTypes';
 
-const QUESTION_RESPONSE_TYPES = [
-  { id: 'short_answer', label: 'Short answer' },
-  { id: 'discussion', label: 'Discussion' },
-];
-
-function assignmentTypeToEventType(assignmentType) {
-  if (assignmentType === 'Project') return 'Project';
-  if (assignmentType === 'Exam') return 'Exam';
-  return 'Assignment';
-}
-
-function eventTypeToDefaultAssignmentType(eventType) {
-  const t = String(eventType || '').trim();
-  if (t === 'Project') return 'Project';
-  if (t === 'Exam') return 'Exam';
-  return 'Assignment';
-}
-
-function buildDefaultWorkSpec(assignmentType) {
-  const eventType = assignmentTypeToEventType(assignmentType);
-  const base = {
-    ...defaultWorkSpec(eventType),
-    require_final_deliverable: true,
-    submission_methods: defaultSubmissionMethodsForAssignmentType(assignmentType),
-    question_response_type: 'short_answer',
+function buildDefaultWorkSpec() {
+  return {
+    ...defaultWorkSpec('Assignment'),
+    student_response_type: null,
+    quiz_questions: [],
+    require_final_deliverable: false,
     allow_student_replies: true,
     allow_editing: true,
     auto_grade: true,
     presentation_required: false,
     exam_open_book: true,
     exam_time_limit_minutes: '',
+    submission_methods: {
+      text: false,
+      file: false,
+      photo: false,
+      link: false,
+      quiz: false,
+      parent_checkoff: false,
+    },
   };
-  if (assignmentType === 'Quiz') {
-    base.quiz_questions = normalizeQuizQuestions(base).length > 0
-      ? base.quiz_questions
-      : [{ id: `q_${Date.now().toString(36)}`, prompt: '' }];
-  }
-  return base;
 }
 
 export default function AssignmentCreateModal({
@@ -82,14 +58,13 @@ export default function AssignmentCreateModal({
   defaultSubjectId = null,
   defaultTitle = null,
   defaultMaterialId = null,
-  defaultEventType = null,
+  defaultEventType: _defaultEventType = null,
   requireParentApprovalDefault = false,
 }) {
   const toast = useToast();
   const [title, setTitle] = useState('');
   const [instructions, setInstructions] = useState('');
-  const [assignmentType, setAssignmentType] = useState('Assignment');
-  const [workSpec, setWorkSpec] = useState(() => buildDefaultWorkSpec('Assignment'));
+  const [workSpec, setWorkSpec] = useState(() => buildDefaultWorkSpec());
   const [materialId, setMaterialId] = useState(null);
   const [assigneeIds, setAssigneeIds] = useState([]);
   const [subjectId, setSubjectId] = useState(null);
@@ -99,7 +74,7 @@ export default function AssignmentCreateModal({
   const [availableDate, setAvailableDate] = useState(null);
   const [dueDate, setDueDate] = useState(null);
   const [milestoneDueDate, setMilestoneDueDate] = useState(null);
-  const [points, setPoints] = useState('100');
+  const [points, setPoints] = useState('');
   const [rubricId, setRubricId] = useState(null);
   const [datePickerTarget, setDatePickerTarget] = useState(null);
   const [showAddMaterial, setShowAddMaterial] = useState(false);
@@ -108,16 +83,42 @@ export default function AssignmentCreateModal({
   const [validationBanner, setValidationBanner] = useState('');
   const [errors, setErrors] = useState({});
 
-  const layout = useMemo(() => getAssignmentTypeLayout(assignmentType), [assignmentType]);
   const subjects = useSubjectsForAssignees(familyId, assigneeIds, defaultSubjectId);
+  const wasVisibleRef = useRef(false);
+  const contentScrollRef = useRef(null);
+
+  const scrollContentPanelDown = useCallback(() => {
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        const scroller = contentScrollRef.current;
+        if (!scroller) return;
+        if (typeof scroller.scrollToEnd === 'function') {
+          scroller.scrollToEnd({ animated: true });
+          return;
+        }
+        if (typeof scroller.scrollTo === 'function') {
+          scroller.scrollTo({ y: 10000, animated: true });
+        }
+      }, 180);
+    });
+  }, []);
 
   useEffect(() => {
-    if (!visible) return;
-    const initialType = eventTypeToDefaultAssignmentType(defaultEventType);
+    if (!parseStudentResponseType(workSpec?.student_response_type)) return;
+    scrollContentPanelDown();
+  }, [workSpec?.student_response_type, scrollContentPanelDown]);
+
+  useEffect(() => {
+    if (!visible) {
+      wasVisibleRef.current = false;
+      return;
+    }
+    if (wasVisibleRef.current) return;
+    wasVisibleRef.current = true;
+
     setTitle(defaultTitle || '');
     setInstructions('');
-    setAssignmentType(initialType);
-    setWorkSpec(buildDefaultWorkSpec(initialType));
+    setWorkSpec(buildDefaultWorkSpec());
     setMaterialId(defaultMaterialId || null);
     setAssigneeIds(resolveDefaultAssigneeIds({ defaultChildIds, defaultChildId, familyMembers }));
     setSubjectId(defaultSubjectId || null);
@@ -128,7 +129,7 @@ export default function AssignmentCreateModal({
     setAvailableDate(baseDate);
     setDueDate(baseDate);
     setMilestoneDueDate(null);
-    setPoints('100');
+    setPoints('');
     setRubricId(null);
     setShowReleaseDateModal(false);
     setValidationBanner('');
@@ -141,22 +142,17 @@ export default function AssignmentCreateModal({
     defaultSubjectId,
     defaultTitle,
     defaultMaterialId,
-    defaultEventType,
     requireParentApprovalDefault,
     familyMembers,
   ]);
-
-  useEffect(() => {
-    setWorkSpec((prev) => ({
-      ...buildDefaultWorkSpec(assignmentType),
-      instructions: prev.instructions || '',
-    }));
-  }, [assignmentType]);
 
   const validate = useCallback((mode = 'assign') => {
     const next = {};
     if (!title.trim()) next.title = 'Title is required';
     if (!subjectId) next.subject = 'Subject is required';
+    if (!parseStudentResponseType(workSpec?.student_response_type)) {
+      next.studentResponse = 'Select how students should respond';
+    }
     if (mode !== 'draft' && assigneeIds.length === 0) {
       next.assignee = 'Select at least one student';
     }
@@ -164,7 +160,7 @@ export default function AssignmentCreateModal({
     const ok = Object.keys(next).length === 0;
     setValidationBanner(ok ? '' : 'Please complete required fields before saving.');
     return ok;
-  }, [title, subjectId, assigneeIds]);
+  }, [title, subjectId, assigneeIds, workSpec?.student_response_type]);
 
   const buildSavePayload = useCallback((saveMode, releaseDate = null) => ({
     familyId,
@@ -172,7 +168,7 @@ export default function AssignmentCreateModal({
     childIds: assigneeIds,
     subjectId,
     instructions,
-    assignmentType,
+    assignmentType: 'Assignment',
     workSpecInput: {
       ...workSpec,
       instructions,
@@ -199,7 +195,6 @@ export default function AssignmentCreateModal({
     assigneeIds,
     subjectId,
     instructions,
-    assignmentType,
     workSpec,
     rubricId,
     points,
@@ -238,11 +233,6 @@ export default function AssignmentCreateModal({
     await persistAssignment('assign');
   }, [validate, persistAssignment]);
 
-  const handleSaveDraft = useCallback(async () => {
-    if (!validate('draft')) return;
-    await persistAssignment('draft');
-  }, [validate, persistAssignment]);
-
   const handleSchedule = useCallback(() => {
     if (!validate('schedule')) return;
     setShowReleaseDateModal(true);
@@ -260,8 +250,6 @@ export default function AssignmentCreateModal({
 
   if (!visible) return null;
 
-  const { primary } = layout;
-
   return (
     <>
       <Modal visible transparent animationType="fade" onRequestClose={onClose}>
@@ -270,123 +258,128 @@ export default function AssignmentCreateModal({
           onClose={onClose}
           validationBanner={validationBanner}
           maxWidth={CREATE_ASSIGNMENT_MODAL_MAX_WIDTH}
+          shellStyle={styles.assignmentModalShell}
+          bodyStyle={styles.assignmentModalBody}
+          disableShellScroll
           footer={(
             <AssignmentCreateFooter
               onCancel={onClose}
               onSchedule={handleSchedule}
-              onSaveDraft={handleSaveDraft}
               onAssign={handleAssign}
               saving={submitting}
               assignDisabled={!canAssign}
               scheduleDisabled={!canAssign}
-              draftDisabled={!canSaveDraft}
               onBlockedAction={() => validate('assign')}
             />
           )}
         >
-          <View style={styles.formGroup}>
-            <Text style={styles.fieldLabel}>
-              Title<Text style={styles.required}> *</Text>
-            </Text>
-            <TextInput
-              value={title}
-              onChangeText={setTitle}
-              placeholder="Assignment name"
-              placeholderTextColor={PLACEHOLDER}
-              style={[styles.fieldInput, errors.title && styles.fieldInputError]}
-              autoFocus
-            />
-            {errors.title ? <Text style={styles.errorTextSmall}>{errors.title}</Text> : null}
+          <View style={styles.assignmentFormRow}>
+            <View style={styles.assignmentFormColumnMain}>
+              <View style={styles.assignmentContentPanelMain}>
+                <ScrollView
+                  ref={contentScrollRef}
+                  style={styles.assignmentContentPanelScroll}
+                  contentContainerStyle={styles.assignmentContentPanelScrollInner}
+                  showsVerticalScrollIndicator
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                >
+                  <SectionHeading>Content</SectionHeading>
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.fieldLabel}>
+                      Title<Text style={styles.required}> *</Text>
+                    </Text>
+                    <TextInput
+                      value={title}
+                      onChangeText={setTitle}
+                      placeholder="Assignment name"
+                      placeholderTextColor={PLACEHOLDER}
+                      style={[styles.fieldInput, errors.title && styles.fieldInputError]}
+                    />
+                    {errors.title ? <Text style={styles.errorTextSmall}>{errors.title}</Text> : null}
+                  </View>
+
+                  <InstructionsEditor
+                    value={instructions}
+                    onChangeText={setInstructions}
+                    label="Instructions"
+                    placeholder="Add instructions for students…"
+                    textAreaStyle={styles.assignmentInstructionsArea}
+                  />
+
+                  <View style={styles.assignmentPanelFormGroup}>
+                    <StudentResponseSection
+                      workSpec={workSpec}
+                      onChange={setWorkSpec}
+                      error={errors.studentResponse}
+                    />
+                  </View>
+                </ScrollView>
+              </View>
+
+              {familyId ? (
+                <View style={styles.assignmentAttachPanel}>
+                  <SectionHeading>Attach</SectionHeading>
+                  <AssignmentResourceFields
+                    familyId={familyId}
+                    materialId={materialId}
+                    onMaterialChange={setMaterialId}
+                    onAddMaterial={() => setShowAddMaterial(true)}
+                    hideLabel
+                  />
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.assignmentFormColumnSide}>
+              <View style={styles.assignmentSidePanel}>
+                <SectionHeading>Assignees</SectionHeading>
+
+                <View style={styles.assignmentSideFields}>
+                  <SubjectSelectField
+                    subjects={subjects}
+                    subjectId={subjectId}
+                    onSubjectChange={setSubjectId}
+                    label="Subject"
+                    required
+                    error={errors.subject}
+                  />
+
+                  <FamilyMemberPicker
+                    familyMembers={familyMembers}
+                    selectedIds={assigneeIds}
+                    onChange={setAssigneeIds}
+                    label="Children"
+                    error={errors.assignee}
+                  />
+
+                  <SingleDateField
+                    label="Due date"
+                    date={dueDate}
+                    onDateChange={setDueDate}
+                    onOpenDatePicker={() => setDatePickerTarget('due')}
+                  />
+
+                  <View style={styles.assignmentPanelFormGroup}>
+                    <Text style={styles.fieldLabel}>Points</Text>
+                    <TextInput
+                      value={String(points ?? '')}
+                      onChangeText={(text) => setPoints(text.replace(/[^\d]/g, ''))}
+                      placeholder="Optional"
+                      placeholderTextColor={PLACEHOLDER}
+                      keyboardType="numeric"
+                      style={styles.fieldInput}
+                    />
+                    <Text style={styles.fieldHint}>
+                      This is the assignment's weight toward the overall subject grade.
+                      To use a different grading method, go to this subject's settings.
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </View>
           </View>
-
-          <View style={styles.formGroup}>
-            <Text style={styles.fieldLabel}>Type</Text>
-            <ChipOptionGroup
-              options={ASSIGNMENT_TYPES}
-              value={assignmentType}
-              onChange={setAssignmentType}
-            />
-          </View>
-
-          {primary.instructions ? (
-            <InstructionsEditor
-              value={instructions}
-              onChangeText={setInstructions}
-              label={primary.instructionsLabel}
-              placeholder={primary.instructionsPlaceholder}
-            />
-          ) : null}
-
-          {primary.responseType ? (
-            <View style={styles.formGroup}>
-              <Text style={styles.fieldLabel}>Response type</Text>
-              <ChipOptionGroup
-                options={QUESTION_RESPONSE_TYPES}
-                value={workSpec.question_response_type || 'short_answer'}
-                onChange={(id) => setWorkSpec((prev) => ({ ...prev, question_response_type: id }))}
-              />
-            </View>
-          ) : null}
-
-          {primary.quizBuilder ? (
-            <View style={styles.formGroup}>
-              <QuizQuestionsEditor workSpec={workSpec} onChange={setWorkSpec} />
-            </View>
-          ) : null}
-
-          {primary.resources && familyId ? (
-            <AssignmentResourceFields
-              familyId={familyId}
-              materialId={materialId}
-              onMaterialChange={setMaterialId}
-              onAddMaterial={() => setShowAddMaterial(true)}
-            />
-          ) : null}
-
-          {primary.subject ? (
-            <SubjectSelectField
-              subjects={subjects}
-              subjectId={subjectId}
-              onSubjectChange={setSubjectId}
-              label="Subject"
-              required
-              error={errors.subject}
-            />
-          ) : null}
-
-          {primary.children ? (
-            <FamilyMemberPicker
-              familyMembers={familyMembers}
-              selectedIds={assigneeIds}
-              onChange={setAssigneeIds}
-              label="Children"
-              error={errors.assignee}
-            />
-          ) : null}
-
-          {primary.dueDate ? (
-            <SingleDateField
-              label="Due date"
-              date={dueDate}
-              onDateChange={setDueDate}
-              onOpenDatePicker={() => setDatePickerTarget('due')}
-              compact
-            />
-          ) : null}
-
-          {primary.points ? (
-            <View style={styles.formGroup}>
-              <Text style={styles.fieldLabel}>Points</Text>
-              <TextInput
-                value={String(points ?? '')}
-                onChangeText={(text) => setPoints(text.replace(/[^\d]/g, ''))}
-                placeholder="100"
-                placeholderTextColor={PLACEHOLDER}
-                keyboardType="numeric"
-                style={styles.fieldInput}
-              />
-            </View>
-          ) : null}
         </CreateModalShell>
       </Modal>
 
