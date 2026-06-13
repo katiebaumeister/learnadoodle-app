@@ -27,6 +27,7 @@ import { resolveSection, getSectionNavTab, getSectionsForTab, SECTION_TITLE_BY_T
 import SecondaryNavShell from './layout/SecondaryNavShell';
 import CalendarEventCreateModal from './create/CalendarEventCreateModal';
 import AssignmentCreateModal from './create/AssignmentCreateModal';
+import AssignmentEditModal from './create/AssignmentEditModal';
 import TaskCreateModal from './TaskCreateModal';
 import { resolveCreateModalKind, createPaneOptionToModalKind } from '../lib/create/resolveCreateModalKind';
 import AssignmentSubmittalRequestModal from './subjects/AssignmentSubmittalRequestModal';
@@ -40,6 +41,16 @@ import SubmitForReviewModal from './child/SubmitForReviewModal';
 import RespondToHelpRequestModal from './parent/RespondToHelpRequestModal';
 import WorkReviewModal from './assignments/WorkReviewModal';
 import { runSendNudgeForEvent } from '../lib/openAssignmentWorkflow';
+import {
+  fetchPrimaryAssignmentForEvent,
+  fetchEventForAssignmentEdit,
+  isWorkAssignmentEditEvent,
+  resolveLinkedEventIdFromAssignment,
+} from '../lib/create/assignmentEditHelpers';
+import {
+  isDayOffOrHolidayEvent,
+  shouldUseLegacyEventModal,
+} from '../lib/create/eventOpenRouting';
 import { linkedSummariesFromFamilyApiMembers } from '../lib/services/childInviteStatus';
 import { STRINGS } from '../lib/i18n/strings';
 import PackWeekModal from './ai/PackWeekModal';
@@ -92,6 +103,8 @@ import RebalanceModal from './year/RebalanceModal';
 import FamilyMessagesPane from './messages/FamilyMessagesPane';
 import FamilyCreatePane from './create/FamilyCreatePane';
 import PlannerCreateMenu from './create/PlannerCreateMenu';
+import SubjectPickerModal from './create/SubjectPickerModal';
+import { PLANNER_EVENT_CATEGORIES } from '../lib/planner/plannerEventCategories';
 import { defaultPlannerExportColumnSelection, PLANNER_EXPORT_OPTIONAL_COLUMN_DEFS } from '../lib/plannerExportOptionalColumns';
 import { useHoverDropdown } from './ui/useHoverDropdown';
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
@@ -198,12 +211,6 @@ function isFamilyShellTab(tab) {
   );
 }
 
-const PLANNER_EVENT_TYPE_FILTERS = [
-  { key: 'Lesson', label: 'Lesson', color: '#E3F0FF' },
-  { key: 'Assignment', label: 'Assignment', color: '#DFF7E3' },
-  { key: 'Day Off', label: 'Day off', color: '#FFEDE2' },
-];
-
 export default function WebLayout({ navigation, routeParams, session: propSession = null, userRole: propUserRole = null }) {
   const { user, signOut } = useAuth();
   const authUserId = user?.id ?? null;
@@ -258,6 +265,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [directHelpAssignment, setDirectHelpAssignment] = useState(null);
   const [showDirectReviewModal, setShowDirectReviewModal] = useState(false);
   const [directReviewAssignment, setDirectReviewAssignment] = useState(null);
+  const [showAssignmentEditModal, setShowAssignmentEditModal] = useState(false);
+  const [assignmentEditContext, setAssignmentEditContext] = useState(null);
+  const [showCalendarEventEditModal, setShowCalendarEventEditModal] = useState(false);
+  const [calendarEventEditContext, setCalendarEventEditContext] = useState(null);
   const [eventModalEventId, setEventModalEventId] = useState(null);
   const [eventModalInitialEvent, setEventModalInitialEvent] = useState(null);
   /** Plan "Dates with events" row edit → open EventModal in edit form */
@@ -490,6 +501,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showEditSchoolYearModal, setShowEditSchoolYearModal] = useState(false);
   const [editSchoolYearInitialLabel, setEditSchoolYearInitialLabel] = useState(null);
   const [showPlannerCreateMenu, setShowPlannerCreateMenu] = useState(false);
+  const [showLearningDaySubjectPicker, setShowLearningDaySubjectPicker] = useState(false);
   const plannerCreateButtonRef = useRef(null);
   const smartActionsHover = useHoverDropdown({
     open: showSmartActionsMenu,
@@ -2375,8 +2387,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       }
 
       if (detail.parentEventFocus === 'submission' && detail.assignment) {
-        setDirectReviewAssignment(detail.assignment);
-        setShowDirectReviewModal(true);
+        setAssignmentEditContext({
+          assignment: detail.assignment,
+          linkedEvent: initialEvent,
+          view: 'submissions',
+        });
+        setShowAssignmentEditModal(true);
         return;
       }
 
@@ -2424,6 +2440,94 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         return;
       }
 
+      const roleFlags = sessionRef.current?.role_flags || {};
+      const isParentViewer = roleFlags.isParent === true && roleFlags.isChild !== true;
+      const useLegacyModal = shouldUseLegacyEventModal({
+        editScope,
+        openConflictResolution,
+        childEventFocus,
+        parentEventFocus,
+        sendOnlyMode: detail.sendOnlyMode,
+      });
+      const shouldRouteToFocusedModal =
+        isParentViewer &&
+        !denyFamilyEventEdit &&
+        schedulingMode &&
+        !useLegacyModal;
+
+      if (shouldRouteToFocusedModal) {
+        if (
+          (initialEvent && isDayOffOrHolidayEvent(initialEvent)) ||
+          String(eventId || '').startsWith('holiday-')
+        ) {
+          dispatchOpenSchoolYearSettings();
+          return;
+        }
+
+        (async () => {
+          try {
+            let eventRow = initialEvent;
+            if (!eventRow?.event_type) {
+              eventRow = await fetchEventForAssignmentEdit(eventId);
+            }
+            if (!eventRow) {
+              if (
+                isDayOffOrHolidayEvent(initialEvent) ||
+                String(eventId || '').startsWith('holiday-')
+              ) {
+                dispatchOpenSchoolYearSettings();
+                return;
+              }
+              throw new Error('Event not found');
+            }
+
+            if (isDayOffOrHolidayEvent(eventRow)) {
+              dispatchOpenSchoolYearSettings();
+              return;
+            }
+
+            if (isWorkAssignmentEditEvent(eventRow?.event_type)) {
+              const resolvedFamilyId = familyId || sessionRef.current?.family_id || null;
+              const assignment = resolvedFamilyId
+                ? await fetchPrimaryAssignmentForEvent({
+                  familyId: resolvedFamilyId,
+                  eventId,
+                  childId: detail.childId || initialEvent?.child_id || null,
+                })
+                : null;
+
+              setAssignmentEditContext({
+                assignment,
+                linkedEvent: eventRow,
+                view: detail.assignmentView === 'submissions' ? 'submissions' : 'edit',
+              });
+              setShowAssignmentEditModal(true);
+              return;
+            }
+
+            setCalendarEventEditContext({ event: eventRow });
+            setShowCalendarEventEditModal(true);
+          } catch (err) {
+            console.warn('[WebLayout] focused event modal redirect failed:', err);
+            if (
+              isDayOffOrHolidayEvent(initialEvent) ||
+              String(eventId || '').startsWith('holiday-')
+            ) {
+              dispatchOpenSchoolYearSettings();
+              return;
+            }
+            setEventModalEventId(eventId);
+            setEventModalInitialEvent(initialEvent);
+            setEventModalSchedulingMode(schedulingMode);
+            setEventModalEditScope(editScope);
+            setEventModalOpenConflictResolution(openConflictResolution);
+            setEventModalConflictResolutionContext(conflictResolutionContext);
+            setShowEventModal(true);
+          }
+        })();
+        return;
+      }
+
       setEventModalEventId(eventId);
       setEventModalInitialEvent(initialEvent);
       setEventModalSchedulingMode(schedulingMode);
@@ -2465,23 +2569,63 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setShowDirectHelpModal(true);
     };
 
+    const handleOpenEditAssignment = (event) => {
+      const detail = event.detail || {};
+      if (!detail.assignment && !detail.linkedEvent && !detail.eventId) return;
+
+      (async () => {
+        try {
+          let eventRow = detail.linkedEvent || null;
+          const resolvedEventId =
+            detail.eventId ||
+            eventRow?.id ||
+            resolveLinkedEventIdFromAssignment(detail.assignment);
+          if (!eventRow && resolvedEventId) {
+            eventRow = await fetchEventForAssignmentEdit(resolvedEventId);
+          }
+          if (eventRow && isDayOffOrHolidayEvent(eventRow)) {
+            dispatchOpenSchoolYearSettings();
+            return;
+          }
+          if (eventRow && !isWorkAssignmentEditEvent(eventRow.event_type)) {
+            setCalendarEventEditContext({ event: eventRow });
+            setShowCalendarEventEditModal(true);
+            return;
+          }
+          setAssignmentEditContext({
+            assignment: detail.assignment || null,
+            linkedEvent: eventRow || detail.linkedEvent || null,
+            eventId: resolvedEventId || null,
+            view: detail.view === 'submissions' ? 'submissions' : 'edit',
+          });
+          setShowAssignmentEditModal(true);
+        } catch (err) {
+          console.warn('[WebLayout] openEditAssignment failed:', err);
+        }
+      })();
+    };
+
     const handleOpenReviewForAssignment = (event) => {
-      const assignment = event.detail?.assignment || null;
-      if (!assignment) return;
-      setDirectReviewAssignment(assignment);
-      setShowDirectReviewModal(true);
+      handleOpenEditAssignment({
+        detail: {
+          ...(event.detail || {}),
+          view: 'edit',
+        },
+      });
     };
     
     window.addEventListener('openEventModal', handleOpenEventModal);
     window.addEventListener('openNudgeForEvent', handleOpenNudgeForEvent);
     window.addEventListener('openHelpForAssignment', handleOpenHelpForAssignment);
     window.addEventListener('openReviewForAssignment', handleOpenReviewForAssignment);
+    window.addEventListener('openEditAssignment', handleOpenEditAssignment);
     
     return () => {
       window.removeEventListener('openEventModal', handleOpenEventModal);
       window.removeEventListener('openNudgeForEvent', handleOpenNudgeForEvent);
       window.removeEventListener('openHelpForAssignment', handleOpenHelpForAssignment);
       window.removeEventListener('openReviewForAssignment', handleOpenReviewForAssignment);
+      window.removeEventListener('openEditAssignment', handleOpenEditAssignment);
     };
   }, [activeTab, denyFamilyEventEdit, familyId]);
 
@@ -2679,12 +2823,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               window.dispatchEvent(new CustomEvent('openPlannerExportAttendance'));
             }, 150);
           }
-          break;
-        }
-        case 'edit-school-year': {
-          const label = resolveSchoolYearLabelFromAnchor(plannerAnchorRef.current || new Date());
-          setEditSchoolYearInitialLabel(label);
-          setShowEditSchoolYearModal(true);
           break;
         }
         case 'export':
@@ -2972,6 +3110,20 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   );
 
   const openPlannerCreateModal = useCallback((kind) => {
+    if (kind === 'day_off') {
+      dispatchOpenSchoolYearSettings();
+      setShowPlannerCreateMenu(false);
+      return;
+    }
+    if (kind === 'learning_day') {
+      if (sessionRestricted && !familyUserControls.allowed('subjects')) {
+        Alert.alert('Not available', 'Your family admin has disabled adding or editing subjects.');
+        return;
+      }
+      setShowPlannerCreateMenu(false);
+      setShowLearningDaySubjectPicker(true);
+      return;
+    }
     if (sessionRestricted && !familyUserControls.allowed('events')) {
       Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
       return;
@@ -2985,6 +3137,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     });
     setShowPlannerCreateMenu(false);
   }, [currentMonth, familyUserControls, openCreateModal, selectedCalendarChildren, sessionRestricted]);
+
+  const handleLearningDaySubjectSelect = useCallback((subject) => {
+    setShowLearningDaySubjectPicker(false);
+    if (!subject) return;
+    setEditingSubject(subject);
+    setEditSubjectSettingsInitialTab('schedule');
+    setShowEditSubjectSettingsModal(true);
+  }, []);
+
+  const handleLearningDayCreateSubject = useCallback(() => {
+    setShowLearningDaySubjectPicker(false);
+    setEditingSubject(null);
+    setAddSubjectPrefill({ schoolYear: null, schoolTerm: null, childIds: [] });
+    setShowAddSubjectModal(true);
+  }, []);
 
   const handleTopSelect = useCallback(
     (key) => {
@@ -3960,7 +4127,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           All event types
                         </Text>
                       </TouchableOpacity>
-                      {PLANNER_EVENT_TYPE_FILTERS.map(({ key, label, color }) => {
+                      {PLANNER_EVENT_CATEGORIES.map(({ key, label, color }) => {
                         const isSelected = selectedEventTypes?.includes(key);
                         return (
                           <TouchableOpacity
@@ -4385,12 +4552,37 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             next[idx] = { ...next[idx], ...newSubject };
             return next;
           });
+          setFullSubjects((prev) => {
+            const list = Array.isArray(prev) ? prev : [];
+            if (!newSubject?.id) return list;
+            const idx = list.findIndex((s) => String(s?.id) === String(newSubject.id));
+            if (idx === -1) return list;
+            const next = [...list];
+            next[idx] = { ...next[idx], ...newSubject };
+            return next;
+          });
           setEditingSubject((prev) => (prev ? { ...prev, ...newSubject } : prev));
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('subjectRecordUpserted', { detail: { subject: newSubject } }));
             window.dispatchEvent(new CustomEvent('refreshSubjects'));
           }
         }}
+      />
+
+      <SubjectPickerModal
+        visible={showLearningDaySubjectPicker}
+        onClose={() => setShowLearningDaySubjectPicker(false)}
+        subjects={fullSubjects.length > 0 ? fullSubjects : subjects}
+        children={children}
+        title="Choose a subject"
+        subtitle="Pick the subject whose learning schedule you want to configure."
+        emptyMessage="No subjects yet. Create one to add learning days."
+        onSelect={handleLearningDaySubjectSelect}
+        onCreateNew={
+          sessionRestricted && !familyUserControls.allowed('subjects')
+            ? null
+            : handleLearningDayCreateSubject
+        }
       />
 
       <SubjectUnitsEditorHost familyId={familyId} />
@@ -4548,6 +4740,71 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
               window.dispatchEvent(new CustomEvent('refreshRightRail'));
               window.dispatchEvent(new CustomEvent('refreshCalendar'));
+            }
+          }}
+        />
+      ) : null}
+
+      {showCalendarEventEditModal && calendarEventEditContext?.event ? (
+        <CalendarEventCreateModal
+          visible
+          editEvent={calendarEventEditContext.event}
+          familyId={familyId}
+          familyMembers={familyMembersForEventing}
+          onClose={() => {
+            setShowCalendarEventEditModal(false);
+            setCalendarEventEditContext(null);
+          }}
+          onUpdated={() => {
+            setShowCalendarEventEditModal(false);
+            setCalendarEventEditContext(null);
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('refreshCalendar'));
+            }
+          }}
+          onDeleted={() => {
+            setShowCalendarEventEditModal(false);
+            setCalendarEventEditContext(null);
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('refreshCalendar'));
+            }
+          }}
+        />
+      ) : null}
+
+      {showAssignmentEditModal && assignmentEditContext ? (
+        <AssignmentEditModal
+          visible
+          familyId={familyId}
+          familyMembers={familyMembersForEventing}
+          assignment={assignmentEditContext.assignment}
+          linkedEvent={assignmentEditContext.linkedEvent}
+          initialView={assignmentEditContext.view || 'edit'}
+          onClose={() => {
+            setShowAssignmentEditModal(false);
+            setAssignmentEditContext(null);
+          }}
+          onSaved={() => {
+            setShowAssignmentEditModal(false);
+            setAssignmentEditContext(null);
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+              window.dispatchEvent(new CustomEvent('refreshRightRail'));
+              window.dispatchEvent(new CustomEvent('refreshCalendar'));
+              window.dispatchEvent(new CustomEvent('refreshSubjects'));
+            }
+          }}
+          onDeleted={() => {
+            setShowAssignmentEditModal(false);
+            setAssignmentEditContext(null);
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+              window.dispatchEvent(new CustomEvent('refreshRightRail'));
+              window.dispatchEvent(new CustomEvent('refreshCalendar'));
+              window.dispatchEvent(new CustomEvent('refreshSubjects'));
+              window.dispatchEvent(new CustomEvent('eventDeleted', {
+                detail: { eventId: assignmentEditContext.linkedEvent?.id || null },
+              }));
             }
           }}
         />

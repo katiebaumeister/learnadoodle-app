@@ -1,13 +1,12 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
-import { ClipboardCheck, FileDown, Download, Calendar } from 'lucide-react';
+import { ClipboardCheck, FileDown, Download } from 'lucide-react';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { PLANNER_SMART_ACTION_TOOLS, PLANNER_SMART_ACTION_UTILITIES, dispatchPlannerSmartAction } from './plannerSmartActionsConfig';
 
 const SMART_ACTION_ICONS = {
   'bulk-attendance': ClipboardCheck,
   'export-attendance': FileDown,
-  'edit-school-year': Calendar,
   export: Download,
 };
 

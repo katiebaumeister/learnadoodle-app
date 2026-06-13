@@ -10,6 +10,7 @@ import AssignmentResourceFields from './shared/AssignmentResourceFields';
 import { materialIdsFromSelection } from './shared/EventAttachmentsField';
 import FamilyMemberPicker, { resolveDefaultAssigneeIds } from './shared/FamilyMemberPicker';
 import SubjectSelectField from './shared/SubjectSelectField';
+import ClassworkPlacementFields from './shared/ClassworkPlacementFields';
 import { SingleDateField } from './shared/ScheduleDateFields';
 import { SectionHeading } from './shared/assignmentFormParts';
 import AssignmentCreateFooter from './assignment/AssignmentCreateFooter';
@@ -68,6 +69,7 @@ export default function AssignmentCreateModal({
   const [materialId, setMaterialId] = useState(null);
   const [assigneeIds, setAssigneeIds] = useState([]);
   const [subjectId, setSubjectId] = useState(null);
+  const [unitId, setUnitId] = useState(null);
   const [unitTitle, setUnitTitle] = useState('');
   const [curriculumLessonId, setCurriculumLessonId] = useState(null);
   const [lessonLabel, setLessonLabel] = useState('');
@@ -122,6 +124,7 @@ export default function AssignmentCreateModal({
     setMaterialId(defaultMaterialId || null);
     setAssigneeIds(resolveDefaultAssigneeIds({ defaultChildIds, defaultChildId, familyMembers }));
     setSubjectId(defaultSubjectId || null);
+    setUnitId(null);
     setUnitTitle('');
     setCurriculumLessonId(null);
     setLessonLabel('');
@@ -181,6 +184,7 @@ export default function AssignmentCreateModal({
     materialIds: materialIdsFromSelection(materialId),
     allowResubmission: false,
     requireParentApproval: !!requireParentApprovalDefault,
+    unitId,
     unitTitle,
     curriculumLessonId,
     lessonLabel,
@@ -201,6 +205,7 @@ export default function AssignmentCreateModal({
     availableDate,
     dueDate,
     requireParentApprovalDefault,
+    unitId,
     unitTitle,
     curriculumLessonId,
     lessonLabel,
@@ -340,7 +345,13 @@ export default function AssignmentCreateModal({
                   <SubjectSelectField
                     subjects={subjects}
                     subjectId={subjectId}
-                    onSubjectChange={setSubjectId}
+                    onSubjectChange={(nextSubjectId) => {
+                      setSubjectId(nextSubjectId);
+                      setUnitId(null);
+                      setUnitTitle('');
+                      setCurriculumLessonId(null);
+                      setLessonLabel('');
+                    }}
                     label="Subject"
                     required
                     error={errors.subject}
@@ -352,6 +363,23 @@ export default function AssignmentCreateModal({
                     onChange={setAssigneeIds}
                     label="Children"
                     error={errors.assignee}
+                  />
+
+                  <ClassworkPlacementFields
+                    familyId={familyId}
+                    subjectId={subjectId}
+                    unitId={unitId}
+                    unitTitle={unitTitle}
+                    curriculumLessonId={curriculumLessonId}
+                    lessonLabel={lessonLabel}
+                    onUnitChange={({ unitId: nextUnitId, unitTitle: nextUnitTitle }) => {
+                      setUnitId(nextUnitId || null);
+                      setUnitTitle(nextUnitTitle || '');
+                    }}
+                    onLessonChange={({ curriculumLessonId: nextLessonId, lessonLabel: nextLessonLabel }) => {
+                      setCurriculumLessonId(nextLessonId || null);
+                      setLessonLabel(nextLessonLabel || '');
+                    }}
                   />
 
                   <SingleDateField
@@ -372,7 +400,6 @@ export default function AssignmentCreateModal({
                       style={styles.fieldInput}
                     />
                     <Text style={styles.fieldHint}>
-                      This is the assignment's weight toward the overall subject grade.
                       To use a different grading method, go to this subject's settings.
                     </Text>
                   </View>

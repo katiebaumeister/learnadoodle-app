@@ -3,6 +3,8 @@ import { View, Text, StyleSheet } from 'react-native';
 import { colors, shadows } from '../../theme/colors';
 import { BookOpen, FlaskConical, Palette, Music, Dumbbell, Code, Globe, Calculator } from 'lucide-react';
 
+import { getPlannerEventTypeColors } from '../../lib/planner/plannerEventCategories';
+
 // Avatar-based color mapping
 const AVATAR_COLORS = {
   prof1: '#FDCE5D',  // From user: Fdce5d
@@ -349,32 +351,7 @@ export default function DraggableEvent({
   
   const eventColors = getEventColors(ev, children, isBlackoutDay);
   
-  // Get background color based on event type (matching filter colors)
-  const getEventTypeBackgroundColor = () => {
-    const eventType = (ev.event_type || ev.type || '').toLowerCase();
-    switch (eventType) {
-      case 'lesson':
-        return '#E3F0FF'; // Soft Blue
-      case 'activity':
-        return '#EDE6FF'; // Lavender
-      case 'assignment':
-        return '#DFF7E3'; // Soft Green
-      case 'schedule block':
-      case 'scheduled class day':
-      case 'classday':
-      case 'class day':
-        return '#E3F0FF'; // Match Lesson light blue
-      case 'appointment':
-        return '#F2F4F7'; // Warm Gray
-      case 'project':
-        return '#D6F0ED'; // Soft Teal
-      case 'exam':
-      case 'assessment':
-        return '#FCE7F3'; // Soft Pink
-      default:
-        return '#F2F4F7'; // Default Warm Gray
-    }
-  };
+  const getEventTypeBackgroundColor = () => getPlannerEventTypeColors(ev).chipBg;
   
   // Focus mode: fade events not for focused child
   const isFocused = !focusedChildId || ev.child_id === focusedChildId;

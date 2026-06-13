@@ -13,6 +13,7 @@ import { ChevronRight } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../../contexts/SessionContext';
 import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
+import { openAssignmentForParent } from '../../lib/openAssignmentWorkflow';
 
 const ALL_CHILDREN = 'all';
 const ALL_SUBJECTS = 'all';
@@ -213,11 +214,7 @@ export default function SubmissionsListScreen({
     if (!assignment) return;
 
     if (isParentViewer) {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('openReviewForAssignment', { detail: { assignment } })
-        );
-      }
+      openAssignmentForParent(assignment, { view: 'submissions' });
       return;
     }
 

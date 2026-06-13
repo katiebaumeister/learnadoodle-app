@@ -1,3 +1,9 @@
+import {
+  getPlannerEventCategory,
+  getPlannerEventTypeColors as getCategoryPlannerEventTypeColors,
+  getPlannerCalendarLegendItems as getCategoryPlannerCalendarLegendItems,
+} from '../../lib/planner/plannerEventCategories';
+
 const SUBLINE_SEPARATOR = ' · ';
 
 export function resolveEventDateValue(ev) {
@@ -35,27 +41,9 @@ export function mergeAssignmentsByEventId(rows) {
 }
 
 export function formatEventTypeLabel(event) {
-  if (!event) return 'Lesson';
-  const holidayType = String(event?.holiday_type || event?.holidayType || '').trim().toUpperCase();
-  if (holidayType === 'CUSTOM_BREAK' || holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'GLOBAL_HOLIDAY') {
-    return 'Day Off';
-  }
-  const raw = String(event?.event_type || event?.type || '').trim();
-  if (!raw) return 'Lesson';
-  const lower = raw.toLowerCase();
-  if (lower === 'schedule block' || lower === 'scheduled class day' || lower === 'classday') return 'Class Day';
-  if (lower === 'custom_break' || lower === 'break') return 'Day Off';
-  if (lower === 'custom_holiday' || lower === 'global_holiday' || lower === 'holiday' || lower === 'day off' || lower === 'dayoff') return 'Day Off';
-  const knownLabels = {
-    lesson: 'Lesson',
-    assignment: 'Assignment',
-    activity: 'Activity',
-    project: 'Project',
-    exam: 'Exam',
-    assessment: 'Assessment',
-    appointment: 'Appointment',
-  };
-  return knownLabels[lower] || raw;
+  if (!event) return 'Learning day';
+  const category = getPlannerEventCategory(event);
+  return category;
 }
 
 export function resolvePlannerExclusionKind(startYmd, endYmd) {
@@ -363,42 +351,15 @@ export function pickAssignmentForEvent(event, assignments = []) {
 }
 
 export function getPlannerEventTypeColors(event) {
-  const holidayType = String(event?.holiday_type || event?.holidayType || '').toUpperCase();
-  const eventType = String(event?.event_type || event?.type || '').trim().toLowerCase();
-  if (holidayType === 'CUSTOM_BREAK' || eventType === 'break') {
-    return { chipBg: '#FFEDE2', chipText: '#9A3412' };
-  }
-  if (holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'GLOBAL_HOLIDAY' || eventType === 'day off' || eventType === 'holiday') {
-    return { chipBg: '#FFEDE2', chipText: '#9A3412' };
-  }
-  if (eventType === 'lesson' || eventType === 'schedule block' || eventType === 'scheduled class day' || eventType === 'classday' || eventType === 'class day') {
-    return { chipBg: '#E3F0FF', chipText: '#4C7ED9' };
-  }
-  if (eventType === 'activity') return { chipBg: '#EDE6FF', chipText: '#7A5CD6' };
-  if (eventType === 'assignment') return { chipBg: '#DFF7E3', chipText: '#4FAF75' };
-  if (eventType === 'project') return { chipBg: '#D6F0ED', chipText: '#0D9488' };
-  if (eventType === 'exam' || eventType === 'assessment') return { chipBg: '#FCE7F3', chipText: '#BE185D' };
-  return { chipBg: '#F2F4F7', chipText: '#6B7280' };
+  return getCategoryPlannerEventTypeColors(event);
 }
 
 /** Label color for event-type filter chips (matches planner list chips). */
 export function getEventTypeChipTextColor(eventType) {
-  return getPlannerEventTypeColors({ event_type: eventType }).chipText;
+  return getCategoryPlannerEventTypeColors({ event_type: eventType }).chipText;
 }
 
 /** Calendar legend entries — matches EventChip / planner filter colors. */
 export function getPlannerCalendarLegendItems() {
-  return [
-    { label: 'Lessons', color: getPlannerEventTypeColors({ event_type: 'Lesson' }).chipBg },
-    { label: 'Assignments', color: getPlannerEventTypeColors({ event_type: 'Assignment' }).chipBg },
-    { label: 'Activities', color: getPlannerEventTypeColors({ event_type: 'Activity' }).chipBg },
-    { label: 'Projects', color: getPlannerEventTypeColors({ event_type: 'Project' }).chipBg },
-    { label: 'Exams & assessments', color: getPlannerEventTypeColors({ event_type: 'Exam' }).chipBg },
-    {
-      label: 'Days off',
-      color: getPlannerEventTypeColors({ event_type: 'day off', holiday_type: 'CUSTOM_HOLIDAY' }).chipBg,
-    },
-    { label: 'Public holidays', color: '#6BB3E8' },
-    { label: 'Other', color: getPlannerEventTypeColors({ event_type: 'Appointment' }).chipBg },
-  ];
+  return getCategoryPlannerCalendarLegendItems();
 }

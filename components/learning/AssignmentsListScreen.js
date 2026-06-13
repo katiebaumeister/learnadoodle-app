@@ -14,6 +14,7 @@ import { supabase } from '../../lib/supabase';
 import { useSession } from '../../contexts/SessionContext';
 import { formatDueShort } from '../tutor/tutorHelpUtils';
 import { getStudentSubmissionStatusLabel, getWorkStatusLabel } from '../../lib/workEventHelpers';
+import { openAssignmentForParent } from '../../lib/openAssignmentWorkflow';
 import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
 
 const ALL_CHILDREN = 'all';
@@ -179,15 +180,10 @@ export default function AssignmentsListScreen({
 
   const openAssignment = useCallback((assignment) => {
     if (!assignment) return;
-    const studentStatus = getStudentSubmissionStatusLabel(assignment);
 
-    if (isParentViewer && ['Submitted', 'Needs changes', 'Complete'].includes(studentStatus)) {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('openReviewForAssignment', { detail: { assignment } })
-        );
-        return;
-      }
+    if (isParentViewer) {
+      openAssignmentForParent(assignment);
+      return;
     }
 
     const eventId = firstLinkedEventId(assignment.linked_event_ids);

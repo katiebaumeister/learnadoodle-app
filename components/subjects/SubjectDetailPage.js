@@ -63,6 +63,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import BulletinBoardSection from '../bulletin/BulletinBoardSection';
 import { getStudentSubmissionStatusLabel, getWorkStatusLabel } from '../../lib/workEventHelpers';
+import { openAssignmentForParent } from '../../lib/openAssignmentWorkflow';
 import AssignmentMessageModal from './AssignmentMessageModal';
 import AssignmentSubmittalRequestModal from './AssignmentSubmittalRequestModal';
 import SubmitForReviewModal from '../child/SubmitForReviewModal';
@@ -1758,7 +1759,7 @@ export default function SubjectDetailPage({
       return;
     }
     if (parentFocus === 'submission' && assignment) {
-      window.dispatchEvent(new CustomEvent('openReviewForAssignment', { detail: { assignment } }));
+      openAssignmentForParent(assignment, { linkedEvent: event, view: 'submissions' });
       return;
     }
     if (childFocus === 'submission') {
@@ -2190,11 +2191,10 @@ export default function SubjectDetailPage({
 
   const openAssignedWorkItem = useCallback((a, linkedEvent = null) => {
     if (!a) return;
-    const studentStatus = getStudentSubmissionStatusLabel(a);
 
-    if (isParentViewer && ['Submitted', 'Needs changes', 'Complete'].includes(studentStatus)) {
+    if (isParentViewer) {
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('openReviewForAssignment', { detail: { assignment: a } }));
+        openAssignmentForParent(a, { linkedEvent });
         return;
       }
     }

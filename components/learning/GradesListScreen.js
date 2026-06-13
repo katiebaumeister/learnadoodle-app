@@ -13,6 +13,7 @@ import { ChevronRight } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../../contexts/SessionContext';
 import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
+import { openAssignmentForParent } from '../../lib/openAssignmentWorkflow';
 
 const ALL_CHILDREN = 'all';
 const ALL_SUBJECTS = 'all';
@@ -366,19 +367,8 @@ export default function GradesListScreen({
       if (!row) return;
 
       if (row.kind === 'assignment' && row.assignment) {
-        const assignment = row.assignment;
-        const studentStatusSubmitted =
-          assignment.submitted_at ||
-          ['submitted', 'reviewed', 'accepted'].includes(
-            String(assignment.status || '').trim().toLowerCase()
-          );
-
-        if (isParentViewer && studentStatusSubmitted) {
-          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.dispatchEvent(
-              new CustomEvent('openReviewForAssignment', { detail: { assignment } })
-            );
-          }
+        if (isParentViewer) {
+          openAssignmentForParent(row.assignment);
           return;
         }
       }

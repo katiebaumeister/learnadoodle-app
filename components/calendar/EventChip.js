@@ -6,6 +6,11 @@ import { detectConflicts } from '../../lib/utils/conflictDetection';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 import { formatEventScheduleTimeLabel, formatEventChipTimeLabel } from '../planner/plannerListTableUtils';
+import {
+  getPlannerEventCategory,
+  getPlannerCategoryColorKey,
+  getPlannerCategoryMeta,
+} from '../../lib/planner/plannerEventCategories';
 
 export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [], plannerCalendarChip = false, weekBoardChip = false }) {
   const isDoneStatus = (statusValue) => {
@@ -16,7 +21,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   // correctly override any stale camelCase holidayType field in optimistic state.
   const hasSnakeHolidayType = Object.prototype.hasOwnProperty.call(ev || {}, 'holiday_type');
   const holidayTypeRaw = hasSnakeHolidayType ? ev?.holiday_type : (ev?.holidayType ?? '');
-  // Only US public holidays are forced read-only/non-clickable.
+  // US public holidays are not editable events, but remain clickable to open School Year Settings.
   const holidayType = String(holidayTypeRaw || '').toUpperCase();
   const isPublicHoliday = holidayType === 'GLOBAL_HOLIDAY';
   const normalizedEventType = String(ev?.event_type || ev?.type || '').trim().toLowerCase();
@@ -29,36 +34,16 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   const shouldHideCompletionControl = isPublicHoliday || isPlannerDayOffOrBreak;
   const hideChildDots = isPublicHoliday || ev?.hide_child_dots === true;
   const effectiveHideTime = hideTime || isPublicHoliday;
-  const effectiveOnPress = isPublicHoliday ? undefined : onPress;
-  const effectiveDisableTouchable = disableTouchable || isPublicHoliday;
+  const effectiveOnPress = onPress;
+  const effectiveDisableTouchable = disableTouchable;
   
-  // Get color based on event type, fallback to ev.color, then default to gray
   const getEventTypeColor = () => {
-    if (holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'CUSTOM_BREAK' || normalizedEventType === 'day off' || normalizedEventType === 'break') return 'day_off';
-    // Legacy rows persisted as Holiday without holiday_type should still look like planner day-off chips.
-    if (isLegacyHolidayWithoutSubtype) return 'day_off';
-    if (holidayType === 'GLOBAL_HOLIDAY') return 'holiday';
-    
-    // Map event types to color names
-    if (normalizedEventType === 'lesson') return 'lesson';
-    if (normalizedEventType === 'activity') return 'activity';
-    if (normalizedEventType === 'assignment') return 'assignment';
-    if (
-      normalizedEventType === 'schedule block' ||
-      normalizedEventType === 'scheduled class day' ||
-      normalizedEventType === 'classday' ||
-      normalizedEventType === 'class day'
-    ) return 'lesson';
-    if (normalizedEventType === 'appointment') return 'appointment';
-    if (normalizedEventType === 'project') return 'project';
-    if (normalizedEventType === 'exam' || normalizedEventType === 'assessment') return 'exam';
-    if (normalizedEventType === 'holiday') return 'holiday';
-    
-    // Fallback to ev.color if set, otherwise default to appointment (gray)
-    return ev.color ?? 'appointment';
+    const category = getPlannerEventCategory(ev);
+    return getPlannerCategoryColorKey(category);
   };
   
   const color = getEventTypeColor();
+  const categoryMeta = getPlannerCategoryMeta(getPlannerEventCategory(ev));
 
   const isPlaceholder = Boolean(
     ev?.is_placeholder ||
@@ -73,79 +58,12 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     [ev?.id, ev?.child_id, ev?.child_ids, children]
   );
 
-  // Get background color based on event type (soft contrast fill)
-  const getBackgroundColor = () => {
-    switch (color) {
-      case 'lesson':
-        return '#E3F0FF'; // Soft Blue
-      case 'activity':
-        return '#EDE6FF'; // Lavender
-      case 'assignment':
-        return '#DFF7E3'; // Soft Green
-      case 'appointment':
-        return '#F2F4F7'; // Warm Gray
-      case 'project':
-        return '#D6F0ED'; // Soft Teal
-      case 'exam':
-        return '#FCE7F3'; // Soft Pink
-      case 'day_off':
-        return '#FFEDE2'; // Match planner filter color
-      case 'break':
-        return '#FFF7D6'; // Match planner filter color
-      case 'holiday':
-        return 'transparent'; // No fill; text uses Learnadoodle blue
-      default:
-        return '#F2F4F7'; // Default Warm Gray
-    }
-  };
+  // Get background color based on planner category (four colors only)
+  const getBackgroundColor = () => categoryMeta.color;
 
-  // Get hover background color (more saturated version of event type color)
-  const getHoverBackgroundColor = () => {
-    switch (color) {
-      case 'lesson':
-        return '#C7E1FF'; // More saturated Soft Blue
-      case 'activity':
-        return '#DDD0FF'; // More saturated Lavender
-      case 'assignment':
-        return '#C5F0D1'; // More saturated Soft Green
-      case 'appointment':
-        return '#E5E7EB'; // More saturated Warm Gray
-      case 'project':
-        return '#B8E6E0'; // More saturated Soft Teal
-      case 'exam':
-        return '#F9D5E8'; // More saturated Soft Pink
-      case 'day_off':
-        return '#FFE2D2'; // Slightly deeper Day Off hover
-      case 'break':
-        return '#FDEFB4'; // Slightly deeper Break hover
-      case 'holiday':
-        return 'transparent';
-      default:
-        return '#E5E7EB'; // Default more saturated Warm Gray
-    }
-  };
+  const getHoverBackgroundColor = () => categoryMeta.hoverColor || categoryMeta.color;
 
-  // Get text color based on event type (using accent colors for emphasis)
-  const getTextColor = (currentColor) => {
-    switch (currentColor) {
-      case 'lesson':
-        return '#4C7ED9'; // Soft Blue accent
-      case 'activity':
-        return '#7A5CD6'; // Lavender accent
-      case 'assignment':
-        return '#4FAF75'; // Soft Green accent
-      case 'appointment':
-        return '#6B7280'; // Warm Gray accent
-      case 'project':
-        return '#0D9488'; // Teal accent
-      case 'exam':
-        return '#BE185D'; // Pink accent
-      case 'holiday':
-        return '#6BB3E8'; // Learnadoodle blue
-      default:
-        return '#111827'; // Default dark text
-    }
-  };
+  const getTextColor = () => categoryMeta.chipText;
 
   // Get subject icon with pastel accent color
   const getSubjectIcon = () => {
@@ -557,26 +475,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   const shouldShowLighterText = isDone;
 
   // Get accent color values for styling (used for borders, text accents, etc.)
-  const getAccentColor = (colorName) => {
-    switch (colorName) {
-      case 'lesson':
-        return '#4C7ED9'; // Soft Blue accent
-      case 'activity':
-        return '#7A5CD6'; // Lavender accent
-      case 'assignment':
-        return '#4FAF75'; // Soft Green accent
-      case 'schedule_block':
-        return '#E08A3C'; // Soft Orange / Peach accent
-      case 'appointment':
-        return '#6B7280'; // Warm Gray accent
-      case 'project':
-        return '#0D9488'; // Teal accent
-      case 'exam':
-        return '#BE185D'; // Pink accent
-      default:
-        return '#6B7280'; // Default Warm Gray accent
-    }
-  };
+  const getAccentColor = () => categoryMeta.chipText;
 
   if (compact && fullWidth) {
     const baseStyle = {

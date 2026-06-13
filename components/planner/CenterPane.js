@@ -9,7 +9,7 @@ import TasksView from './TasksView';
 import AttendanceView from './attendance/AttendanceView';
 import MobileCardView from './MobileCardView';
 import { startOfToday, startOfWeek } from './utils/date';
-import { eventMatchesDaysOffFilter, isPlannerDaysOffEvent } from './plannerListTableUtils';
+import { eventMatchesPlannerCategoryFilter } from '../../lib/planner/plannerEventCategories';
 
 const DEFAULT_VIEW = 'Month';
 
@@ -161,53 +161,7 @@ export default function CenterPane({
     }
     // Only filter by event types if filters.eventTypes is an array with items
     if (filters?.eventTypes && Array.isArray(filters.eventTypes) && filters.eventTypes.length > 0) {
-      out = out.filter(e => {
-        const selected = filters.eventTypes || [];
-        const selectedLower = selected.map(t => String(t || '').toLowerCase());
-        const eventType = e.event_type || e.data?.event_type || e.type;
-        const holidayType = String(e.holiday_type || e.data?.holiday_type || '').toUpperCase();
-        const generatedByPlan = String(e.generated_by || e.data?.generated_by || '').toLowerCase() === 'plan_year';
-        const hasAcademicYear = !!(e.academic_year_id || e.data?.academic_year_id);
-        const looksLikePlanSlot = generatedByPlan || hasAcademicYear;
-        const typeLower = String(eventType || '').toLowerCase();
-
-        const isSelectedClassDay = selectedLower.includes('class day') || selectedLower.includes('classday');
-        const isClassDayLikeType = (
-          typeLower === 'classday'
-          || typeLower === 'class day'
-          || typeLower === 'schedule block'
-          || typeLower === 'scheduled class day'
-        );
-
-        // Plan slots often serialize as "Schedule Block"/"Scheduled Class Day" (or no explicit type).
-        // Treat them as lessons for filter UX parity with the right-rail filter chips.
-        if (looksLikePlanSlot && selectedLower.includes('lesson')) {
-          if (!eventType || typeLower === 'schedule block' || typeLower === 'scheduled class day' || typeLower === 'lesson') {
-            return true;
-          }
-        }
-
-        // Class Day filter should include explicit ClassDay events and plan-generated class-day blocks.
-        if (isSelectedClassDay && (isClassDayLikeType || (looksLikePlanSlot && !eventType))) {
-          return true;
-        }
-
-        // Days off filter includes single days and optional date ranges.
-        if (eventMatchesDaysOffFilter(selectedLower) && isPlannerDaysOffEvent(e)) {
-          return true;
-        }
-
-        if (!eventType) return false;
-        if (selected.includes(eventType)) return true;
-        if (selectedLower.includes(typeLower)) return true;
-        // Treat "Schedule Block" and "Scheduled Class Day" as the same
-        if ((typeLower === 'schedule block' && selectedLower.includes('scheduled class day')) ||
-            (typeLower === 'scheduled class day' && selectedLower.includes('schedule block'))) return true;
-        // Treat "Exam" and "Assessment" as the same (UI shows "Exam", DB may store "Assessment")
-        if ((typeLower === 'exam' && selectedLower.includes('exam')) ||
-            (typeLower === 'assessment' && selectedLower.includes('exam'))) return true;
-        return false;
-      });
+      out = out.filter((e) => eventMatchesPlannerCategoryFilter(e, filters.eventTypes));
     }
     return out;
   }, [events, filters]);

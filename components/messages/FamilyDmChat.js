@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { ArrowLeft, ArrowUp, Calendar, Paperclip, Plus, UserPlus, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { openAssignmentForParent } from '../../lib/openAssignmentWorkflow';
 import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
 import { createFileMaterial } from '../../lib/services/materialsClient';
@@ -602,7 +603,7 @@ export default function FamilyDmChat({
     if (kind === 'submission' && linkedEventId) {
       const isParentViewer = viewerRole === 'parent' || viewerRole === 'tutor';
       if (isParentViewer && assignment) {
-        window.dispatchEvent(new CustomEvent('openReviewForAssignment', { detail: { assignment } }));
+        openAssignmentForParent(assignment, { view: 'submissions' });
         return;
       }
       window.dispatchEvent(new CustomEvent('openEventModal', {

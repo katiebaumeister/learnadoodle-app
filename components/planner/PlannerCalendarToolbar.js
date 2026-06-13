@@ -10,16 +10,12 @@ import { ChevronLeft, ChevronRight, ChevronDown, Filter } from 'lucide-react';
 import { addMonths, addWeeks } from './utils/date';
 import { formatWeekRangeLabel } from './plannerSectionRouting';
 
+import { PLANNER_EVENT_CATEGORIES } from '../../lib/planner/plannerEventCategories';
+
 const VIEW_OPTIONS = [
   { key: 'board', label: 'Week' },
   { key: 'month', label: 'Month' },
   { key: 'tasks', label: 'Agenda' },
-];
-
-const EVENT_TYPE_OPTIONS = [
-  { key: 'Lesson', label: 'Lessons' },
-  { key: 'Assignment', label: 'Assignments' },
-  { key: 'Day Off', label: 'Days off' },
 ];
 
 export default function PlannerCalendarToolbar({
@@ -164,7 +160,7 @@ export default function PlannerCalendarToolbar({
               >
                 <Text style={styles.filterLabel}>All types</Text>
               </TouchableOpacity>
-              {EVENT_TYPE_OPTIONS.map((opt) => {
+              {PLANNER_EVENT_CATEGORIES.map((opt) => {
                 const selected = Array.isArray(selectedEventTypes) && selectedEventTypes.includes(opt.key);
                 return (
                   <TouchableOpacity

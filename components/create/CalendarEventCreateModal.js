@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Modal, View, Text, TextInput, TouchableOpacity, Platform } from 'react-native';
+import { Modal, View, Text, TextInput, TouchableOpacity, Platform, Alert, ActivityIndicator } from 'react-native';
 import { useToast } from '../Toast';
 import CreateModalShell from './shared/CreateModalShell';
 import FamilyMemberPicker, { resolveDefaultAssigneeIds } from './shared/FamilyMemberPicker';
@@ -7,26 +7,40 @@ import ScheduleDateFields from './shared/ScheduleDateFields';
 import AdditionalNotesSection from './shared/AdditionalNotesSection';
 import EventAttachmentsField, { materialIdsFromSelection } from './shared/EventAttachmentsField';
 import EventRecurrenceFields from './shared/EventRecurrenceFields';
+import ClassworkPlacementFields from './shared/ClassworkPlacementFields';
 import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
+import { ModalFooter } from '../ui/ModalFooter';
 import { createModalStyles as styles, PLACEHOLDER, CREATE_EVENT_MODAL_MAX_WIDTH } from './shared/createModalStyles';
-import { saveCalendarEvent, buildEventRecurrenceRule } from '../../lib/create/saveEventHelpers';
+import { saveCalendarEvent, buildEventRecurrenceRule, updateCalendarEvent } from '../../lib/create/saveEventHelpers';
+import {
+  calendarEventFormFromEvent,
+  deleteCalendarEvent,
+  fetchCalendarEventForEdit,
+} from '../../lib/create/calendarEventEditHelpers';
 
 export default function CalendarEventCreateModal({
   visible,
   onClose,
   onCreated,
+  onUpdated,
+  onDeleted,
   familyId,
   familyMembers = [],
   defaultDate = null,
   defaultChildId = null,
   defaultChildIds = null,
-  defaultSubjectId = null,
+  defaultSubjectId: _defaultSubjectId = null,
   defaultTitle = null,
   defaultMaterialId = null,
   defaultStartTime = null,
+  editEvent = null,
+  editEventId = null,
 }) {
   const toast = useToast();
+  const isEditMode = !!(editEvent?.id || editEventId);
+  const [loadingEvent, setLoadingEvent] = useState(false);
+  const [resolvedEventId, setResolvedEventId] = useState(null);
   const [title, setTitle] = useState('');
   const [assigneeIds, setAssigneeIds] = useState([]);
   const [startDate, setStartDate] = useState(new Date());
@@ -47,9 +61,67 @@ export default function CalendarEventCreateModal({
   const [submitting, setSubmitting] = useState(false);
   const [validationBanner, setValidationBanner] = useState('');
   const [errors, setErrors] = useState({});
+  const [subjectId, setSubjectId] = useState(null);
+  const [subjectName, setSubjectName] = useState('');
+  const [unitId, setUnitId] = useState(null);
+  const [unitTitle, setUnitTitle] = useState('');
+  const [curriculumLessonId, setCurriculumLessonId] = useState(null);
+  const [lessonLabel, setLessonLabel] = useState('');
 
   useEffect(() => {
     if (!visible) return;
+
+    if (isEditMode) {
+      let cancelled = false;
+      const hydrate = async () => {
+        setLoadingEvent(true);
+        try {
+          let eventRow = editEvent;
+          const targetId = editEvent?.id || editEventId;
+          if (!eventRow && targetId) {
+            eventRow = await fetchCalendarEventForEdit(targetId);
+          }
+          if (cancelled || !eventRow) return;
+          const form = calendarEventFormFromEvent(eventRow);
+          setResolvedEventId(form.eventId);
+          setTitle(form.title);
+          setAssigneeIds(form.assigneeIds);
+          setStartDate(form.startDate);
+          setEndDate(form.endDate);
+          setStartTime(form.startTime);
+          setEndTime(form.endTime);
+          setLocation(form.location);
+          setNotes(form.notes);
+          setMaterialId(form.materialId);
+          setIsRepeating(form.isRepeating);
+          setRecurrenceType(form.recurrenceType);
+          setRecurrenceWeekdays(form.recurrenceWeekdays);
+          setRecurrenceEndType(form.recurrenceEndType);
+          setRecurrenceEndAfterText(form.recurrenceEndAfterText);
+          setRecurrenceEndDate(form.recurrenceEndDate);
+          setSubjectId(form.subjectId);
+          setSubjectName(form.subjectName);
+          setUnitId(form.unitId);
+          setUnitTitle(form.unitTitle);
+          setCurriculumLessonId(form.curriculumLessonId);
+          setLessonLabel(form.lessonLabel);
+          setValidationBanner('');
+          setErrors({});
+        } catch (err) {
+          if (!cancelled) {
+            toast.push(err?.message || 'Could not load event', 'error');
+          }
+        } finally {
+          if (!cancelled) setLoadingEvent(false);
+        }
+      };
+      hydrate();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setResolvedEventId(null);
     setTitle(defaultTitle || '');
     setAssigneeIds(resolveDefaultAssigneeIds({ defaultChildIds, defaultChildId, familyMembers }));
     setStartDate(defaultDate ? new Date(defaultDate) : new Date());
@@ -66,9 +138,28 @@ export default function CalendarEventCreateModal({
     setRecurrenceEndAfterText('');
     setRecurrenceEndDate(null);
     setDatePickerTarget(null);
+    setSubjectId(null);
+    setSubjectName('');
+    setUnitId(null);
+    setUnitTitle('');
+    setCurriculumLessonId(null);
+    setLessonLabel('');
     setValidationBanner('');
     setErrors({});
-  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultTitle, defaultMaterialId, defaultStartTime, familyMembers]);
+  }, [
+    visible,
+    isEditMode,
+    editEvent,
+    editEventId,
+    defaultDate,
+    defaultChildId,
+    defaultChildIds,
+    defaultTitle,
+    defaultMaterialId,
+    defaultStartTime,
+    familyMembers,
+    toast,
+  ]);
 
   const selectRepeatMode = useCallback((repeating) => {
     setIsRepeating(repeating);
@@ -130,6 +221,45 @@ export default function CalendarEventCreateModal({
     if (!validate()) return;
     setSubmitting(true);
     try {
+      const recurrenceRule = isRepeating
+        ? buildEventRecurrenceRule({
+          recurrenceType,
+          recurrenceWeekdays,
+          recurrenceEndType,
+          recurrenceEndAfter: parseInt(recurrenceEndAfterText, 10) || null,
+          recurrenceEndDate,
+          startDate,
+        })
+        : null;
+
+      if (isEditMode && resolvedEventId) {
+        const updated = await updateCalendarEvent({
+          eventId: resolvedEventId,
+          familyId,
+          title,
+          childIds: assigneeIds,
+          date: startDate,
+          endDate,
+          startTime,
+          endTime,
+          location,
+          notes,
+          materialIds: materialIdsFromSelection(materialId),
+          recurrenceRule,
+          ...(subjectId
+            ? {
+              curriculumLessonId: curriculumLessonId || null,
+              unitTitle,
+              lessonLabel,
+            }
+            : {}),
+        });
+        toast.push('Event updated', 'success');
+        onUpdated?.(updated);
+        onClose?.();
+        return;
+      }
+
       const event = await saveCalendarEvent({
         familyId,
         title,
@@ -141,25 +271,42 @@ export default function CalendarEventCreateModal({
         location,
         notes,
         materialIds: materialIdsFromSelection(materialId),
-        recurrenceRule: isRepeating
-          ? buildEventRecurrenceRule({
-            recurrenceType,
-            recurrenceWeekdays,
-            recurrenceEndType,
-            recurrenceEndAfter: parseInt(recurrenceEndAfterText, 10) || null,
-            recurrenceEndDate,
-            startDate,
-          })
-          : null,
+        recurrenceRule,
       });
       toast.push('Event created', 'success');
       onCreated?.(event);
       onClose?.();
     } catch (err) {
-      toast.push(err?.message || 'Failed to create event', 'error');
+      toast.push(err?.message || `Failed to ${isEditMode ? 'update' : 'create'} event`, 'error');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const confirmDelete = () => {
+    if (!resolvedEventId || submitting) return;
+    const runDelete = async () => {
+      setSubmitting(true);
+      try {
+        await deleteCalendarEvent({ eventId: resolvedEventId, familyId });
+        toast.push('Event deleted', 'success');
+        onDeleted?.(resolvedEventId);
+        onClose?.();
+      } catch (err) {
+        toast.push(err?.message || 'Failed to delete event', 'error');
+      } finally {
+        setSubmitting(false);
+      }
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm('Delete this event?')) runDelete();
+      return;
+    }
+    Alert.alert('Delete event', 'Delete this event?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: runDelete },
+    ]);
   };
 
   if (!visible) return null;
@@ -176,12 +323,34 @@ export default function CalendarEventCreateModal({
         <CreateModalShell
           title="Calendar Event"
           onClose={onClose}
-          onSave={handleSave}
+          onSave={isEditMode ? undefined : handleSave}
           saving={submitting}
           saveDisabled={!title.trim() || assigneeIds.length === 0}
+          saveLabel={isEditMode ? 'Save changes' : 'Save changes'}
           validationBanner={validationBanner}
           maxWidth={CREATE_EVENT_MODAL_MAX_WIDTH}
+          footer={isEditMode ? (
+            <ModalFooter
+              mode="edit"
+              primaryLabel={submitting ? 'Saving…' : 'Save changes'}
+              onCancel={onClose}
+              onPrimary={handleSave}
+              onDelete={confirmDelete}
+              destructiveLabel="Delete event"
+              accent="#9ECFFB"
+              disabled={submitting}
+              visuallyDisabled={!title.trim() || assigneeIds.length === 0}
+              loading={submitting}
+              onBlockedPrimary={() => validate()}
+            />
+          ) : undefined}
         >
+          {loadingEvent ? (
+            <View style={{ paddingVertical: 48, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color="#9ECFFB" />
+            </View>
+          ) : (
+            <>
           <View style={styles.formGroup}>
             <Text style={styles.fieldLabel}>
               Title<Text style={styles.required}> *</Text>
@@ -291,6 +460,33 @@ export default function CalendarEventCreateModal({
             onChangeText={setNotes}
           />
 
+          {isEditMode && subjectId ? (
+            <>
+              {subjectName ? (
+                <View style={styles.formGroup}>
+                  <Text style={styles.fieldLabel}>Subject</Text>
+                  <Text style={{ fontSize: 14, color: '#0F172A' }}>{subjectName}</Text>
+                </View>
+              ) : null}
+              <ClassworkPlacementFields
+                familyId={familyId}
+                subjectId={subjectId}
+                unitId={unitId}
+                unitTitle={unitTitle}
+                curriculumLessonId={curriculumLessonId}
+                lessonLabel={lessonLabel}
+                onUnitChange={({ unitId: nextUnitId, unitTitle: nextUnitTitle }) => {
+                  setUnitId(nextUnitId || null);
+                  setUnitTitle(nextUnitTitle || '');
+                }}
+                onLessonChange={({ curriculumLessonId: nextLessonId, lessonLabel: nextLessonLabel }) => {
+                  setCurriculumLessonId(nextLessonId || null);
+                  setLessonLabel(nextLessonLabel || '');
+                }}
+              />
+            </>
+          ) : null}
+
           {familyId ? (
             <EventAttachmentsField
               familyId={familyId}
@@ -299,6 +495,8 @@ export default function CalendarEventCreateModal({
               onAddNew={() => setShowAddMaterial(true)}
             />
           ) : null}
+            </>
+          )}
         </CreateModalShell>
       </Modal>
 

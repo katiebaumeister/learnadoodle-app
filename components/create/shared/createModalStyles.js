@@ -3,7 +3,7 @@ import { Platform, StyleSheet } from 'react-native';
 export const CREATE_MODAL_MAX_WIDTH = 740;
 export const CREATE_EVENT_MODAL_MAX_WIDTH = 880;
 export const CREATE_ASSIGNMENT_MODAL_MAX_WIDTH = 1320;
-export const CREATE_ASSIGNMENT_MODAL_HEIGHT = 700;
+export const CREATE_ASSIGNMENT_MODAL_HEIGHT = 820;
 export const FG = '#111827';
 export const MUTED = '#6b7280';
 export const PLACEHOLDER = '#94A3B8';
@@ -187,6 +187,11 @@ export const createModalStyles = StyleSheet.create({
   },
   assignmentSideFields: {
     gap: 16,
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      overflowY: 'auto',
+    }),
   },
   assignmentPanelFormGroup: {
     marginBottom: 12,

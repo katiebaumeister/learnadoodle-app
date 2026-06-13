@@ -32,6 +32,8 @@ import {
   resolveSeriesLinkIds,
   softDeleteEventSeries,
 } from '../lib/utils/recurringEventUtils'
+import { isDayOffOrHolidayEvent } from '../lib/create/eventOpenRouting'
+import { dispatchOpenSchoolYearSettings } from '../lib/planYearRetirement'
 
 /** Lucide paths — same as MaterialsLibrary context menu (visual parity). */
 const PLANNER_CTX_ICON_PATHS = {
@@ -45,12 +47,15 @@ const PLANNER_CTX_ICON_PATHS = {
     'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16 M3 21v-5h5',
 }
 
-function isReadOnlyPublicHolidayEvent(eventLike) {
+function isUsPublicHolidayEvent(eventLike) {
   if (!eventLike || typeof eventLike !== 'object') return false;
   const holidayType = normalizeHolidayType(eventLike.holiday_type || eventLike.holidayType);
-  // Keep only explicit global holidays read-only so custom breaks/day-off rows
-  // always retain context menu actions across Home/Planner/Subjects lists.
   return holidayType === 'GLOBAL_HOLIDAY';
+}
+
+/** @deprecated Use isUsPublicHolidayEvent — kept for call-site compatibility. */
+function isReadOnlyPublicHolidayEvent(eventLike) {
+  return isUsPublicHolidayEvent(eventLike);
 }
 
 function normalizeHolidayType(value) {
@@ -5331,6 +5336,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   }, []);
   const openEventEditorWithScopePrompt = useCallback(async (ev, options = {}) => {
     if (!ev?.id) return;
+    if (isDayOffOrHolidayEvent(ev)) {
+      dispatchOpenSchoolYearSettings();
+      return;
+    }
     const cleanId = cleanPlannerEventId(String(ev.id || ''));
     const eventHolidayType = normalizeHolidayType(ev?.holiday_type || ev?.holidayType);
     const isSyntheticCustomExclusion =
@@ -6147,7 +6156,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             });
           },
         });
-      } else if (!isPublicHoliday) {
+      } else if (isPublicHoliday) {
+        menuItems.push({
+          text: 'School year settings',
+          iconKey: 'edit2',
+          action: () => {
+            dispatchOpenSchoolYearSettings();
+          },
+        });
+      } else {
       let eventId = ev._originalId || ev.originalId || ev.id;
       eventId = cleanPlannerEventId(eventId);
       const eventHolidayType = normalizeHolidayType(ev?.holiday_type || ev?.holidayType);
@@ -9988,6 +10005,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           event_type: 'holiday',
           holiday_type: holidayType,
           status: null,
+          source: 'planner_exclusion',
           start_ts: `${dateKey}T12:00:00.000Z`,
           end_ts: `${dateKey}T12:30:00.000Z`,
           start: `${dateKey}T12:00:00.000Z`,
@@ -10125,13 +10143,18 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         plannerHolidaysCache={plannerHolidaysCache}
         plannerExclusions={plannerExclusionsCache}
         onEventSelect={(event) => {
-          const isPublicHoliday = isReadOnlyPublicHolidayEvent(event);
+          if (isDayOffOrHolidayEvent(event)) {
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              dispatchOpenSchoolYearSettings();
+            }
+            return;
+          }
           const isSyntheticExclusion = isSyntheticPlannerExclusionEvent(event);
           const syntheticHolidayType = normalizeHolidayType(event?.holiday_type || event?.holidayType);
           const isEditableSyntheticExclusion =
             isSyntheticExclusion &&
             (syntheticHolidayType === 'CUSTOM_HOLIDAY' || syntheticHolidayType === 'CUSTOM_BREAK');
-          if (isPublicHoliday || (isSyntheticExclusion && !isEditableSyntheticExclusion)) return;
+          if (isSyntheticExclusion && !isEditableSyntheticExclusion) return;
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             const hasActiveConflictContext =
               conflictBanner.visible &&
@@ -10154,7 +10177,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }}
         onEventRightClick={(ev, e) => {
           if (Platform.OS !== 'web' || typeof window === 'undefined' || !e) return;
-          if (isReadOnlyPublicHolidayEvent(ev)) return;
           // e may be native event (from MonthGrid) or synthetic (RN web wrappers vary by source).
           let x =
             e.clientX ??

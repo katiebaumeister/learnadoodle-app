@@ -20,8 +20,6 @@ const localYmd = (d) => {
 };
 
 export default function BoardView({ weekAnchor, events = [], onEventPress, onEventRightClick, onEventComplete, children = [], familyId = null }) {
-  const isPublicHolidayEvent = (ev) =>
-    String(ev?.holiday_type || ev?.holidayType || '').toUpperCase() === 'GLOBAL_HOLIDAY';
   const lastMoveLogRef = useRef(0);
   const dayColumnRefs = useRef({});
   const suppressClickUntilRef = useRef(0);
@@ -777,7 +775,7 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
                     })}
                     style={{
                       ...(Platform.OS === 'web' && {
-                        cursor: canDrag ? 'grab' : (isPublicHolidayEvent(ev) ? 'default' : 'pointer'),
+                        cursor: canDrag ? 'grab' : 'pointer',
                         opacity: isDragging ? 0.65 : 1,
                         userSelect: 'none',
                         WebkitUserSelect: 'none',
@@ -792,7 +790,6 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
                       hideTime={false}
                       onPress={onEventPress ? () => {
                         if (Date.now() < suppressClickUntilRef.current) return;
-                        if (isPublicHolidayEvent(ev)) return;
                         onEventPress(ev);
                       } : undefined}
                       onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
