@@ -145,7 +145,14 @@ export function SingleDateField({
               style={[styles.scheduleDateChipLabel, compact && styles.scheduleDateChipLabelCompact]}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={[styles.chipText, !date && { color: PLACEHOLDER }]}>
+              <Text
+                style={[
+                  styles.chipText,
+                  !date && { color: PLACEHOLDER },
+                  compact && styles.scheduleDateChipTextCompact,
+                ]}
+                numberOfLines={1}
+              >
                 {date ? fmtDate(date) : optionalLabel}
               </Text>
             </TouchableOpacity>

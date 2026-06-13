@@ -191,6 +191,8 @@ export const createModalStyles = StyleSheet.create({
     alignSelf: 'flex-start',
     flexGrow: 0,
     flexShrink: 0,
+    minWidth: 240,
+    maxWidth: 280,
   },
   dateTimeInlineRow: {
     flexDirection: 'row',
@@ -207,8 +209,7 @@ export const createModalStyles = StyleSheet.create({
     gap: 6,
   },
   scheduleDateChipCompact: {
-    width: 'auto',
-    alignSelf: 'flex-start',
+    width: '100%',
   },
   scheduleDateChipLabel: {
     flex: 1,
@@ -217,9 +218,11 @@ export const createModalStyles = StyleSheet.create({
     alignItems: 'center',
   },
   scheduleDateChipLabelCompact: {
-    flex: 0,
-    flexShrink: 0,
-    paddingHorizontal: 4,
+    flex: 1,
+    minWidth: 0,
+  },
+  scheduleDateChipTextCompact: {
+    ...(Platform.OS === 'web' && { whiteSpace: 'nowrap' }),
   },
   scheduleTimeInputWrap: {
     width: '100%',

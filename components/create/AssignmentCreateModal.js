@@ -272,6 +272,7 @@ export default function AssignmentCreateModal({
           maxWidth={CREATE_ASSIGNMENT_MODAL_MAX_WIDTH}
           footer={(
             <AssignmentCreateFooter
+              onCancel={onClose}
               onSchedule={handleSchedule}
               onSaveDraft={handleSaveDraft}
               onAssign={handleAssign}
