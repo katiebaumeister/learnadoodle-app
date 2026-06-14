@@ -31,6 +31,8 @@ import {
   deleteLessonFromSubjectCurriculum,
   moveLessonInSubjectCurriculum,
 } from '../../lib/subjectClassworkLessonActions';
+import { draftFromCurriculumStructure } from '../../lib/subjectUnitsEditorDraft';
+import ManualCurriculumBuilderModal from '../ManualCurriculumBuilderModal';
 import { useToast } from '../Toast';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import ClassworkPlanningModal from './ClassworkPlanningModal';
@@ -526,6 +528,7 @@ export default function SubjectClassworkSection({
   highlightAssignmentId = null,
   onGapAnalysis = null,
   gapAnalysisWorking = false,
+  inlineUnitsEditing = false,
 }) {
   const toast = useToast();
   const model = useMemo(
@@ -935,7 +938,96 @@ export default function SubjectClassworkSection({
     [model.noUnitAssignments, model.eventById],
   );
 
-  const hasContent = model.units.length > 0 || model.noUnitAssignments.length > 0;
+  const unitsDraft = useMemo(
+    () => draftFromCurriculumStructure({ units }),
+    [units],
+  );
+
+  const lessonScheduleByLessonId = useMemo(() => {
+    const map = {};
+    (model.units || []).forEach((unit) => {
+      (unit?.lessons || []).forEach((lesson) => {
+        if (lesson?.lessonId) {
+          map[String(lesson.lessonId)] = lesson.schedule?.dateLabel || null;
+        }
+      });
+    });
+    return map;
+  }, [model.units]);
+
+  const getLessonScheduleLabel = useCallback((lessonId) => {
+    if (!lessonId) return null;
+    return lessonScheduleByLessonId[String(lessonId)] || null;
+  }, [lessonScheduleByLessonId]);
+
+  const getUnitDropWebProps = useCallback((unitIdx) => {
+    const unit = model.units?.[unitIdx];
+    if (!unit) return {};
+    const dropKey = `unit-${unit.unitId}`;
+    return {
+      ...dropTargetWebProps({
+        onDrop: handleUnitDrop(unit.unitId, unit.title),
+        isActive: dragOverTarget === dropKey,
+      }),
+      ...(Platform.OS === 'web' ? {
+        onDragEnter: () => setDragOverTarget(dropKey),
+        onDragLeave: (ev) => {
+          if (!ev?.currentTarget?.contains?.(ev?.relatedTarget)) {
+            setDragOverTarget((prev) => (prev === dropKey ? null : prev));
+          }
+        },
+        style: dragOverTarget === dropKey ? styles.unitCardDropActive : undefined,
+      } : {}),
+    };
+  }, [model.units, dragOverTarget, handleUnitDrop]);
+
+  const renderUnitAssignments = useCallback((unitIdx) => {
+    const unit = model.units?.[unitIdx];
+    if (!unit) return null;
+    const assignmentItems = buildUnitPeerItems(unit, model.eventById)
+      .filter((item) => item.kind === 'assignment');
+    if (!assignmentItems.length) return null;
+    return (
+      <View style={styles.unitAssignmentsWrap}>
+        {assignmentItems.map((item, index) => (
+          <AssignmentPeerRow
+            key={item.assignment.id}
+            assignment={item.assignment}
+            attachedLessonTitle={item.attachedLessonTitle}
+            learningDay={item.learningDay}
+            isParentViewer={isParentViewer}
+            onPress={onOpenAssignment}
+            onEdit={onOpenAssignment}
+            highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
+            isFirst={index === 0}
+            fromUnitId={unit.unitId}
+            fromLessonId={item.attachedLessonId}
+            dragging={String(draggingAssignmentId || '') === String(item.assignment.id)}
+            onDragStartAssignment={handleAssignmentDragStart}
+            rowRef={(node) => {
+              if (node && item.assignment?.id) {
+                assignmentRowRefs.current[String(item.assignment.id)] = node;
+              }
+            }}
+          />
+        ))}
+      </View>
+    );
+  }, [
+    model.units,
+    model.eventById,
+    isParentViewer,
+    onOpenAssignment,
+    highlightAssignmentId,
+    draggingAssignmentId,
+    handleAssignmentDragStart,
+  ]);
+
+  const useInlineUnitsEditor = inlineUnitsEditing && isParentViewer;
+
+  const hasContent = useInlineUnitsEditor
+    || model.units.length > 0
+    || model.noUnitAssignments.length > 0;
 
   if (!hasContent) {
     return (
@@ -943,7 +1035,7 @@ export default function SubjectClassworkSection({
         {isParentViewer ? (
           <ClassworkToolbar>
             <ClassworkActionSet
-              onManageUnits={onManageUnits}
+              onManageUnits={useInlineUnitsEditor ? null : onManageUnits}
               onCreateAssignment={onCreateAssignment}
               onGapAnalysis={onGapAnalysis}
               showGapAnalysis={!!onGapAnalysis}
@@ -978,7 +1070,7 @@ export default function SubjectClassworkSection({
       {isParentViewer ? (
         <ClassworkToolbar>
           <ClassworkActionSet
-            onManageUnits={onManageUnits}
+            onManageUnits={useInlineUnitsEditor ? null : onManageUnits}
             onCreateAssignment={onCreateAssignment}
             onGapAnalysis={onGapAnalysis}
             showGapAnalysis={!!onGapAnalysis}
@@ -1038,7 +1130,26 @@ export default function SubjectClassworkSection({
         </ClassworkUnitCard>
       ) : null}
 
-      {model.units.map((unit) => {
+      {useInlineUnitsEditor ? (
+        <ManualCurriculumBuilderModal
+          embedded
+          visible
+          autoSave
+          familyId={familyId}
+          subjectId={subjectId}
+          subjectName={subjectName || 'Subject'}
+          initialDraft={unitsDraft}
+          loadExisting={false}
+          replaceExisting={(units || []).some((unit) => (
+            (unit?.lessons || []).length > 0 || String(unit?.title || '').trim()
+          ))}
+          createCalendarEvents={false}
+          onSaved={onPlacementChanged}
+          getLessonScheduleLabel={getLessonScheduleLabel}
+          renderAfterUnitLessons={renderUnitAssignments}
+          getUnitDropWebProps={getUnitDropWebProps}
+        />
+      ) : model.units.map((unit) => {
         const peerItems = buildUnitPeerItems(unit, model.eventById);
         if (peerItems.length === 0) return null;
         const dropKey = `unit-${unit.unitId}`;
@@ -1380,6 +1491,14 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     borderRadius: 6,
     backgroundColor: 'rgba(15,23,42,0.04)',
+  },
+  unitAssignmentsWrap: {
+    marginTop: 8,
+    marginHorizontal: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(15,23,42,0.06)',
+    gap: 4,
   },
   assignmentIconWrap: {
     width: 20,

@@ -468,7 +468,7 @@ export default function SubjectOverviewCard({
         isParentViewer={isParentViewer}
         stopPropagationOnMenu
         needsHelpBadge={needsHelpBadge}
-        onEditSubject={isParentViewer ? handleEditSubject : null}
+        onEditSubject={isParentViewer && typeof onEditSubject === 'function' ? handleEditSubject : null}
       />
       {subjectIntent ? (
         <Text style={styles.subjectIntent}>{subjectIntent}</Text>

@@ -38,6 +38,7 @@ import { getPlannerEventCategory } from '../lib/planner/plannerEventCategories'
 import { eventHasLinkedLesson } from '../lib/subjectLessonLinking'
 import {
   dispatchOpenSubjectClasswork,
+  dispatchOpenSubjectSettings,
   dispatchNavigateToPlanner,
   OPEN_SUBJECT_CLASSWORK_EVENT,
   resolveEventSubjectId,
@@ -5398,6 +5399,48 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       });
       return;
     }
+    let planLearningDayEvent = ev;
+    if (
+      getPlannerEventCategory(ev) === 'Learning day'
+      && !eventHasLinkedLesson(ev)
+      && !isPlanYearBlockSeries(ev)
+    ) {
+      const cleanId = cleanPlannerEventId(String(ev.id || ''));
+      if (cleanId && isUuidLike(cleanId)) {
+        try {
+          let query = supabase
+            .from('events')
+            .select('id, subject_id, title, subject_name, generated_by, source_block_id, academic_year_id, curriculum_lesson_id, event_type')
+            .eq('id', cleanId);
+          if (familyId) query = query.eq('family_id', familyId);
+          const { data: fetched, error } = await query.maybeSingle();
+          if (!error && fetched) {
+            planLearningDayEvent = { ...ev, ...fetched };
+          }
+        } catch (_) {
+          // Fall through to default editor routing.
+        }
+      }
+    }
+    if (
+      getPlannerEventCategory(planLearningDayEvent) === 'Learning day'
+      && isPlanYearBlockSeries(planLearningDayEvent)
+      && !eventHasLinkedLesson(planLearningDayEvent)
+    ) {
+      const subjectId = resolveEventSubjectId(planLearningDayEvent);
+      if (subjectId) {
+        const subjectRow = (propFullSubjects || []).find((row) => String(row?.id) === String(subjectId))
+          || {
+            id: subjectId,
+            name: planLearningDayEvent.title
+              || planLearningDayEvent.subject_name
+              || planLearningDayEvent.subjectName
+              || 'Subject',
+          };
+        dispatchOpenSubjectSettings({ subject: subjectRow, initialTab: 'schedule' });
+        return;
+      }
+    }
     const cleanId = cleanPlannerEventId(String(ev.id || ''));
     const eventHolidayType = normalizeHolidayType(ev?.holiday_type || ev?.holidayType);
     const isSyntheticCustomExclusion =
@@ -5437,7 +5480,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       event: ev,
       options: options || {},
     });
-  }, [dispatchOpenEventModal, familyId]);
+  }, [dispatchOpenEventModal, familyId, propFullSubjects]);
   const [showNoteEditor, setShowNoteEditor] = useState(false)
   const [noteEditorProps, setNoteEditorProps] = useState({
     linkedEventId: null,

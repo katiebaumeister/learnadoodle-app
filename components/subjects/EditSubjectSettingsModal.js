@@ -44,12 +44,18 @@ import {
   APPLY_SCOPE_FULL_YEAR,
   applySubjectScheduleToCalendar,
   buildInitialScheduleForm,
-  countSubjectScheduleEvents,
   getSubjectTermDateRange,
   isScheduleFormConfigured,
-  removeSubjectScheduleFromCalendar,
+  normalizeHm,
   ymdToLocalDate,
 } from '../../lib/subjectConfigureSchedule';
+import { findAcademicYearPlanForSubject } from '../../lib/subjectPlanSlotLines';
+import { getAcademicYear } from '../../lib/services/academicYearClient';
+import { getSubjectProgressCache, mergeSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
+import { getSubjectPlanBlocksForSubject } from './subjectScheduleOverview';
+
+const DEFAULT_SCHEDULE_TIME = '09:00';
+const DEFAULT_SCHEDULE_DURATION = '60';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 const TERM_OPTIONS = [
@@ -118,15 +124,26 @@ export default function EditSubjectSettingsModal({
   const [startDate, setStartDate] = useState(null);
   const [endDate, setEndDate] = useState(null);
   const [datePickerTarget, setDatePickerTarget] = useState(null);
-  const [removingScheduleEvents, setRemovingScheduleEvents] = useState(false);
-  const [showRemoveScheduleConfirm, setShowRemoveScheduleConfirm] = useState(false);
-  const [hasScheduleEvents, setHasScheduleEvents] = useState(false);
   const [syllabusMaterialId, setSyllabusMaterialId] = useState(null);
   const [lessonPlanMaterialId, setLessonPlanMaterialId] = useState(null);
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
   const [addMaterialDefaultRole, setAddMaterialDefaultRole] = useState(null);
 
-  const hasHydratedRef = useRef(false);
+  const detailsHydratedForRef = useRef(null);
+  const scheduleHydratedKeyRef = useRef(null);
+  const scheduleTouchedRef = useRef(false);
+  const datesCustomizedRef = useRef(false);
+  const [detailsReady, setDetailsReady] = useState(false);
+  const [resolvedPlanData, setResolvedPlanData] = useState(null);
+  const [resolvedAcademicYearId, setResolvedAcademicYearId] = useState(null);
+  const [loadingPlanData, setLoadingPlanData] = useState(false);
+
+  const effectivePlanData = subjectPlanData ?? resolvedPlanData;
+  const effectiveAcademicYearId = academicYearId ?? resolvedAcademicYearId;
+
+  const markScheduleTouched = useCallback(() => {
+    scheduleTouchedRef.current = true;
+  }, []);
 
   const applyTermDates = useCallback((year, term, settings) => {
     const range = getSubjectTermDateRange(year, term, settings);
@@ -149,12 +166,16 @@ export default function EditSubjectSettingsModal({
         setPlannerSettings(null);
       }
     }
-    applyTermDates(year, schoolTerm, settings);
+    if (!datesCustomizedRef.current) {
+      applyTermDates(year, schoolTerm, settings);
+    }
   }, [familyId, schoolTerm, plannerSettings, applyTermDates]);
 
   const handleSchoolTermChange = useCallback((term) => {
     setSchoolTerm(term);
-    applyTermDates(schoolYear, term, plannerSettings);
+    if (!datesCustomizedRef.current) {
+      applyTermDates(schoolYear, term, plannerSettings);
+    }
   }, [schoolYear, plannerSettings, applyTermDates]);
 
   const effectiveAssignedChildIds = useMemo(() => {
@@ -168,13 +189,136 @@ export default function EditSubjectSettingsModal({
   }, [allChildIds, children]);
 
   useEffect(() => {
+    detailsHydratedForRef.current = null;
+    scheduleHydratedKeyRef.current = null;
+    scheduleTouchedRef.current = false;
+    datesCustomizedRef.current = false;
+    setDetailsReady(false);
     if (!visible) {
-      hasHydratedRef.current = false;
+      setResolvedPlanData(null);
+      setResolvedAcademicYearId(null);
+      setLoadingPlanData(false);
       return;
     }
     setValidationBanner('');
     setShowDeleteConfirm(false);
   }, [visible, subject?.id]);
+
+  useEffect(() => {
+    if (!visible || !familyId || !subject?.id) return;
+    if (subjectPlanData) {
+      setResolvedPlanData(subjectPlanData);
+      if (academicYearId) setResolvedAcademicYearId(academicYearId);
+      setLoadingPlanData(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setLoadingPlanData(true);
+
+    const loadPlanData = async () => {
+      try {
+        const cached = getSubjectProgressCache(familyId, subject.id);
+        if (!cancelled && cached?.planData) {
+          setResolvedPlanData(cached.planData);
+          setResolvedAcademicYearId(cached.academicYearId ?? null);
+        }
+        const fetched = await findAcademicYearPlanForSubject(familyId, subject.id);
+        if (cancelled) return;
+        setResolvedPlanData(fetched?.planData || null);
+        setResolvedAcademicYearId(fetched?.academicYearId || null);
+        if (fetched?.planData) {
+          mergeSubjectProgressCache(familyId, subject.id, {
+            academicYearId: fetched.academicYearId ?? null,
+            planData: fetched.planData,
+          });
+        }
+      } catch (_) {
+        if (!cancelled) {
+          setResolvedPlanData(null);
+          setResolvedAcademicYearId(null);
+        }
+      } finally {
+        if (!cancelled) setLoadingPlanData(false);
+      }
+    };
+
+    loadPlanData();
+    return () => { cancelled = true; };
+  }, [visible, subject?.id, familyId, subjectPlanData, academicYearId]);
+
+  const schedulePlanKey = useMemo(() => {
+    if (!subject?.id) return '';
+    const block = getSubjectPlanBlocksForSubject(effectivePlanData, subject.id)[0];
+    return JSON.stringify({
+      weekdays: block?.weekdays ?? null,
+      start: block?.start_time ?? null,
+      end: block?.end_time ?? null,
+      scheduleStart: block?.schedule_start_date ?? null,
+      scheduleEnd: block?.schedule_end_date ?? null,
+      yearId: effectiveAcademicYearId ?? null,
+    });
+  }, [subject?.id, effectivePlanData, effectiveAcademicYearId]);
+
+  const applyScheduleFormState = useCallback((initialSchedule, yearLabel, termId, loadedPlannerSettings) => {
+    datesCustomizedRef.current = !!initialSchedule.hasCustomScheduleDates;
+    setWeekdays(
+      (initialSchedule.weekdays || [])
+        .map((day) => parseInt(day, 10))
+        .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6),
+    );
+    setStartTime(initialSchedule.startTime || DEFAULT_SCHEDULE_TIME);
+    setDurationMinutes(
+      initialSchedule.durationMinutes === '' || initialSchedule.durationMinutes == null
+        ? DEFAULT_SCHEDULE_DURATION
+        : String(initialSchedule.durationMinutes),
+    );
+    if (initialSchedule.startDate && initialSchedule.endDate) {
+      setStartDate(initialSchedule.startDate);
+      setEndDate(initialSchedule.endDate);
+    } else {
+      const range = getSubjectTermDateRange(yearLabel, termId, loadedPlannerSettings);
+      setStartDate(ymdToLocalDate(range.start_date));
+      setEndDate(ymdToLocalDate(range.end_date));
+    }
+  }, []);
+
+  const handleWeekdaysChange = useCallback((next) => {
+    markScheduleTouched();
+    setWeekdays(next);
+  }, [markScheduleTouched]);
+
+  const handleStartTimeChange = useCallback((next) => {
+    markScheduleTouched();
+    setStartTime(next);
+  }, [markScheduleTouched]);
+
+  const handleDurationMinutesChange = useCallback((next) => {
+    markScheduleTouched();
+    setDurationMinutes(next);
+  }, [markScheduleTouched]);
+
+  const handleStartDateChange = useCallback((next) => {
+    markScheduleTouched();
+    datesCustomizedRef.current = true;
+    setStartDate(next);
+  }, [markScheduleTouched]);
+
+  const handleEndDateChange = useCallback((next) => {
+    markScheduleTouched();
+    datesCustomizedRef.current = true;
+    setEndDate(next);
+  }, [markScheduleTouched]);
+
+  const handleSchoolYearChangeWithTouch = useCallback(async (year) => {
+    markScheduleTouched();
+    await handleSchoolYearChange(year);
+  }, [handleSchoolYearChange, markScheduleTouched]);
+
+  const handleSchoolTermChangeWithTouch = useCallback((term) => {
+    markScheduleTouched();
+    handleSchoolTermChange(term);
+  }, [handleSchoolTermChange, markScheduleTouched]);
 
   useEffect(() => {
     if (!visible || !initialTab || initialTab === 'details') return undefined;
@@ -188,10 +332,11 @@ export default function EditSubjectSettingsModal({
   }, [visible, initialTab, subject?.id]);
 
   useEffect(() => {
-    if (!visible || !subject || hasHydratedRef.current) return;
+    if (!visible || !subject) return;
+    if (detailsHydratedForRef.current === subject.id) return;
     let cancelled = false;
 
-    const hydrate = async () => {
+    const hydrateDetails = async () => {
       setSubjectName(subject.name || '');
       setGrade(subject.grade || '');
       const yearLabel = subject.school_year || getDefaultSchoolYear();
@@ -202,54 +347,12 @@ export default function EditSubjectSettingsModal({
       const childIds = subject.child_id ? parseChildIds(subject.child_id) : [];
       setSelectedChildIds(childIds);
 
-      let loadedPlannerSettings = null;
       if (familyId) {
         try {
           const { settings } = await getPlanDefaultsFromSettings(familyId, yearLabel);
-          if (!cancelled) {
-            loadedPlannerSettings = settings || null;
-            setPlannerSettings(loadedPlannerSettings);
-          }
+          if (!cancelled) setPlannerSettings(settings || null);
         } catch (_) {
           if (!cancelled) setPlannerSettings(null);
-        }
-      }
-
-      const initialSchedule = buildInitialScheduleForm({
-        subject,
-        planData: subjectPlanData,
-        academicYearId,
-      });
-      if (cancelled) return;
-      setWeekdays(initialSchedule.weekdays);
-      setStartTime(initialSchedule.startTime || '');
-      setDurationMinutes(
-        initialSchedule.durationMinutes === '' || initialSchedule.durationMinutes == null
-          ? ''
-          : String(initialSchedule.durationMinutes),
-      );
-
-      if (initialSchedule.startDate && initialSchedule.endDate) {
-        setStartDate(initialSchedule.startDate);
-        setEndDate(initialSchedule.endDate);
-      } else {
-        const range = getSubjectTermDateRange(yearLabel, termId, loadedPlannerSettings);
-        setStartDate(ymdToLocalDate(range.start_date));
-        setEndDate(ymdToLocalDate(range.end_date));
-      }
-
-      try {
-        const eventCount = await countSubjectScheduleEvents({
-          familyId,
-          subjectId: subject.id,
-          academicYearId: academicYearId || initialSchedule.academicYearId,
-        });
-        if (!cancelled) {
-          setHasScheduleEvents(!!initialSchedule.hasExistingBlock || eventCount > 0);
-        }
-      } catch (_) {
-        if (!cancelled) {
-          setHasScheduleEvents(!!initialSchedule.hasExistingBlock);
         }
       }
 
@@ -266,12 +369,56 @@ export default function EditSubjectSettingsModal({
         }
       }
 
-      hasHydratedRef.current = true;
+      if (!cancelled) {
+        detailsHydratedForRef.current = subject.id;
+        setDetailsReady(true);
+      }
     };
 
-    hydrate();
+    hydrateDetails();
     return () => { cancelled = true; };
-  }, [visible, subject, subjectPlanData, academicYearId, initialGradingSettings, familyId]);
+  }, [visible, subject, initialGradingSettings, familyId]);
+
+  useEffect(() => {
+    if (!visible || !subject || !detailsReady || loadingPlanData) return;
+    if (scheduleTouchedRef.current) return;
+    if (scheduleHydratedKeyRef.current === schedulePlanKey) return;
+    let cancelled = false;
+
+    const hydrateSchedule = async () => {
+      const initialSchedule = buildInitialScheduleForm({
+        subject,
+        planData: effectivePlanData,
+        academicYearId: effectiveAcademicYearId,
+        plannerSettings,
+      });
+      if (cancelled) return;
+
+      applyScheduleFormState(
+        initialSchedule,
+        schoolYear,
+        schoolTerm,
+        plannerSettings,
+      );
+      scheduleHydratedKeyRef.current = schedulePlanKey;
+    };
+
+    hydrateSchedule();
+    return () => { cancelled = true; };
+  }, [
+    visible,
+    subject,
+    detailsReady,
+    loadingPlanData,
+    schedulePlanKey,
+    effectivePlanData,
+    effectiveAcademicYearId,
+    schoolYear,
+    schoolTerm,
+    plannerSettings,
+    applyScheduleFormState,
+    familyId,
+  ]);
 
   useEffect(() => {
     if (propChildren?.length) {
@@ -355,7 +502,19 @@ export default function EditSubjectSettingsModal({
   };
 
   const applyScheduleIfConfigured = async () => {
-    if (!isScheduleFormConfigured({ weekdays, startTime, durationMinutes, startDate, endDate })) {
+    const normalizedWeekdays = (weekdays || [])
+      .map((day) => parseInt(day, 10))
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
+    const normalizedStartTime = normalizeHm(startTime || DEFAULT_SCHEDULE_TIME, DEFAULT_SCHEDULE_TIME);
+    const normalizedDuration = Number(durationMinutes) || Number(DEFAULT_SCHEDULE_DURATION);
+
+    if (!isScheduleFormConfigured({
+      weekdays: normalizedWeekdays,
+      startTime: normalizedStartTime,
+      durationMinutes: normalizedDuration,
+      startDate,
+      endDate,
+    })) {
       return null;
     }
     const scheduleError = validateSchedule();
@@ -365,13 +524,13 @@ export default function EditSubjectSettingsModal({
       subject: { ...subject, name: subjectName.trim() || subject.name },
       assignedChildIds: effectiveAssignedChildIds,
       allChildIds: effectiveAllChildIds,
-      weekdays,
-      startTime,
-      durationMinutes: Number(durationMinutes),
+      weekdays: normalizedWeekdays,
+      startTime: normalizedStartTime,
+      durationMinutes: normalizedDuration,
       startDate,
       endDate,
-      academicYearId,
-      planData: subjectPlanData,
+      academicYearId: effectiveAcademicYearId,
+      planData: effectivePlanData,
       applyScope: APPLY_SCOPE_FULL_YEAR,
     });
   };
@@ -386,6 +545,21 @@ export default function EditSubjectSettingsModal({
     const { ok, errors } = validateGradingSettings(gradingDraft);
     if (!ok) {
       setValidationBanner(errors[0]);
+      return;
+    }
+
+    const normalizedWeekdays = (weekdays || [])
+      .map((day) => parseInt(day, 10))
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
+    const scheduleReady = isScheduleFormConfigured({
+      weekdays: normalizedWeekdays,
+      startTime: normalizeHm(startTime || DEFAULT_SCHEDULE_TIME, DEFAULT_SCHEDULE_TIME),
+      durationMinutes: Number(durationMinutes) || Number(DEFAULT_SCHEDULE_DURATION),
+      startDate,
+      endDate,
+    });
+    if (normalizedWeekdays.length > 0 && !scheduleReady) {
+      setValidationBanner(validateSchedule() || 'Complete the schedule fields before saving.');
       return;
     }
 
@@ -418,59 +592,76 @@ export default function EditSubjectSettingsModal({
       });
 
       const scheduleResult = await applyScheduleIfConfigured();
-      if (scheduleResult) {
-        setHasScheduleEvents(true);
+
+      const savedSubject = data?.[0] || { ...subject, name: subjectName.trim() };
+      let refreshedPlan = scheduleResult?.planData || null;
+      let refreshedYearId = scheduleResult?.academicYearId || effectiveAcademicYearId;
+      if (!refreshedPlan && refreshedYearId) {
+        try {
+          const { data: yearData } = await getAcademicYear(refreshedYearId);
+          refreshedPlan = yearData || null;
+        } catch (_) {}
+      }
+      if (!refreshedPlan) {
+        try {
+          const fetched = await findAcademicYearPlanForSubject(familyId, subject.id);
+          refreshedPlan = fetched?.planData || null;
+          refreshedYearId = fetched?.academicYearId || refreshedYearId;
+        } catch (_) {}
+      }
+      if (refreshedPlan) {
+        setResolvedPlanData(refreshedPlan);
+        setResolvedAcademicYearId(refreshedYearId);
+        mergeSubjectProgressCache(familyId, subject.id, {
+          academicYearId: refreshedYearId ?? null,
+          planData: refreshedPlan,
+        });
       }
 
-      toast.push(
-        scheduleResult
-          ? `"${subjectName.trim()}" saved and calendar updated`
-          : `"${subjectName.trim()}" settings saved`,
-        'success',
+      const eventsCreated = scheduleResult && (
+        (scheduleResult.created ?? 0) > 0
+        || (scheduleResult.totals?.inserted ?? 0) > 0
+        || (scheduleResult.totals?.updated ?? 0) > 0
       );
-      onSaved?.(data?.[0] || { ...subject, name: subjectName.trim() });
+      const scheduleSavedNoEvents = !!scheduleResult && !eventsCreated;
+
+      toast.push(
+        eventsCreated
+          ? `"${subjectName.trim()}" saved and calendar updated`
+          : scheduleSavedNoEvents
+            ? `"${subjectName.trim()}" saved (schedule saved; no calendar slots in the selected date range)`
+            : scheduleResult
+              ? `"${subjectName.trim()}" schedule saved`
+              : `"${subjectName.trim()}" settings saved`,
+        scheduleSavedNoEvents ? 'warning' : 'success',
+      );
+
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
         window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
         window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: subject.id } }));
-        if (data?.[0]) {
-          window.dispatchEvent(new CustomEvent('subjectRecordUpserted', { detail: { subject: data[0] } }));
+        if (savedSubject?.id) {
+          window.dispatchEvent(new CustomEvent('subjectRecordUpserted', { detail: { subject: savedSubject } }));
+        }
+        if (refreshedPlan) {
+          window.dispatchEvent(
+            new CustomEvent('subjectProgressPlanCacheUpdated', {
+              detail: { familyId, subjectId: subject.id },
+            }),
+          );
         }
       }
+
+      await onSaved?.(savedSubject, {
+        planData: refreshedPlan,
+        academicYearId: refreshedYearId,
+        scheduleApplied: !!scheduleResult,
+      });
       onClose?.();
     } catch (err) {
       setValidationBanner(err?.message || 'Could not save settings.');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleRemoveScheduleEvents = async () => {
-    if (!subject?.id || !familyId || removingScheduleEvents) return;
-    setRemovingScheduleEvents(true);
-    setValidationBanner('');
-    try {
-      await removeSubjectScheduleFromCalendar({
-        familyId,
-        subjectId: subject.id,
-        academicYearId,
-      });
-      setHasScheduleEvents(false);
-      setWeekdays([]);
-      setStartTime('');
-      setDurationMinutes('');
-      setStartDate(null);
-      setEndDate(null);
-      toast.push('Removed scheduled calendar events for this subject', 'success');
-      onSaved?.(subject);
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: subject.id } }));
-      }
-    } catch (err) {
-      setValidationBanner(err?.message || 'Could not remove calendar events.');
-    } finally {
-      setRemovingScheduleEvents(false);
-      setShowRemoveScheduleConfirm(false);
     }
   };
 
@@ -519,7 +710,7 @@ export default function EditSubjectSettingsModal({
                   onDelete={() => setShowDeleteConfirm(true)}
                   onPrimary={handleSave}
                   accent="#9ECFFB"
-                  disabled={saving || deletingSubject || removingScheduleEvents}
+                  disabled={saving || deletingSubject}
                   loading={saving || deletingSubject}
                 />
               )}
@@ -682,25 +873,22 @@ export default function EditSubjectSettingsModal({
                       embeddedInForm
                       schoolYear={schoolYear}
                       schoolYearOptions={schoolYearOptions}
-                      onSchoolYearChange={handleSchoolYearChange}
+                      onSchoolYearChange={handleSchoolYearChangeWithTouch}
                       schoolTerm={schoolTerm}
                       termOptions={TERM_OPTIONS}
-                      onSchoolTermChange={handleSchoolTermChange}
+                      onSchoolTermChange={handleSchoolTermChangeWithTouch}
                       weekdays={weekdays}
-                      onWeekdaysChange={setWeekdays}
+                      onWeekdaysChange={handleWeekdaysChange}
                       startTime={startTime}
-                      onStartTimeChange={setStartTime}
+                      onStartTimeChange={handleStartTimeChange}
                       durationMinutes={durationMinutes}
-                      onDurationMinutesChange={setDurationMinutes}
+                      onDurationMinutesChange={handleDurationMinutesChange}
                       startDate={startDate}
-                      onStartDateChange={setStartDate}
+                      onStartDateChange={handleStartDateChange}
                       endDate={endDate}
-                      onEndDateChange={setEndDate}
+                      onEndDateChange={handleEndDateChange}
                       onOpenStartDatePicker={() => setDatePickerTarget('start')}
                       onOpenEndDatePicker={() => setDatePickerTarget('end')}
-                      showRemoveEventsButton={hasScheduleEvents}
-                      onRemoveAllEvents={() => setShowRemoveScheduleConfirm(true)}
-                      removingEvents={removingScheduleEvents}
                     />
                   </View>
                 </View>
@@ -719,19 +907,6 @@ export default function EditSubjectSettingsModal({
           else setStartDate(d);
           setDatePickerTarget(null);
         }}
-      />
-
-      <ConfirmDialog
-        visible={showRemoveScheduleConfirm}
-        title="Remove all scheduled events?"
-        message="This removes plan-generated calendar events for this subject. Lessons you linked to curriculum are not deleted."
-        confirmLabel={removingScheduleEvents ? 'Removing…' : 'Remove all events'}
-        cancelLabel="Cancel"
-        destructive
-        onCancel={() => {
-          if (!removingScheduleEvents) setShowRemoveScheduleConfirm(false);
-        }}
-        onConfirm={handleRemoveScheduleEvents}
       />
 
       <ConfirmDialog

@@ -39,8 +39,9 @@ from services.blocks_calculator import (
     compute_schedule_potential,
     exclusion_ranges_from_breaks_and_holidays,
     get_block_occurrence_dates,
+    block_regen_window,
 )
-from services.block_regenerator import regenerate_block as regen_block
+from services.block_regenerator import regenerate_block as regen_block, _safe_overlap_insert
 from services.holiday_providers import fetch_global_holidays, HolidayProvider
 import uuid
 
@@ -154,6 +155,8 @@ class BlockEntry(BaseModel):
     start_time: str = "09:00"
     end_time: str = "10:00"
     all_day: bool = False
+    schedule_start_date: Optional[str] = None  # YYYY-MM-DD per-subject window (optional)
+    schedule_end_date: Optional[str] = None  # YYYY-MM-DD per-subject window (optional)
 
 
 class ApplyToCalendarInput(BaseModel):
@@ -192,6 +195,7 @@ class ApplyToCalendarInput(BaseModel):
     force_new_plan: bool = False  # When True, always create a new academic year (do not reuse same start/end)
     apply_from_date: Optional[str] = None  # YYYY-MM-DD: when set, only regenerate block events from this date forward (edit-plan behavior)
     attendance_tracking_mode: Optional[str] = None  # 'subject' | 'class_day'
+    ignore_conflicts: bool = False  # When True, insert schedule events even if they overlap existing calendar events
 
 
 class BlockRegenResult(BaseModel):
@@ -6780,6 +6784,25 @@ def _allowed_weekdays_from_blocks(blocks: List[Any]) -> List[int]:
     return sorted(weekdays) if weekdays else [1, 2, 3, 4, 5]
 
 
+def _blocks_need_subject_level_regen(blocks: List[Any]) -> bool:
+    """Per-subject schedule windows must use block regen, not aggregated class-day rows."""
+    for block in blocks or []:
+        subject_id = ""
+        schedule_start = None
+        schedule_end = None
+        if isinstance(block, dict):
+            subject_id = str(block.get("subject_id") or "").strip()
+            schedule_start = block.get("schedule_start_date")
+            schedule_end = block.get("schedule_end_date")
+        else:
+            subject_id = str(getattr(block, "subject_id", None) or "").strip()
+            schedule_start = getattr(block, "schedule_start_date", None)
+            schedule_end = getattr(block, "schedule_end_date", None)
+        if subject_id and (schedule_start or schedule_end):
+            return True
+    return False
+
+
 def _build_holiday_dates_for_apply(
     start_date_obj: date,
     end_date_obj: date,
@@ -7052,6 +7075,8 @@ async def apply_to_calendar(
                     "start_time": b.start_time or "09:00",
                     "end_time": b.end_time or "10:00",
                     "all_day": b.all_day or False,
+                    "schedule_start_date": getattr(b, "schedule_start_date", None),
+                    "schedule_end_date": getattr(b, "schedule_end_date", None),
                 })
             subject_ids_in_blocks = list({b["subject_id"] for b in blocks_to_use if b["subject_id"]})
             sub_resp = supabase.table("subject").select("id, name").eq("family_id", body.family_id).in_("id", subject_ids_in_blocks or ["__none__"]).execute()
@@ -7240,9 +7265,17 @@ async def apply_to_calendar(
             }
             if use_blocks and blocks_to_use:
                 plan_data["blocks"] = [
-                    {"block_id": b["block_id"], "subject_id": b["subject_id"], "child_ids": b.get("child_ids", []),
-                     "weekdays": b.get("weekdays", [1, 2, 3, 4, 5]), "start_time": b.get("start_time", "09:00"),
-                     "end_time": b.get("end_time", "10:00"), "all_day": b.get("all_day", False)}
+                    {
+                        "block_id": b["block_id"],
+                        "subject_id": b["subject_id"],
+                        "child_ids": b.get("child_ids", []),
+                        "weekdays": b.get("weekdays", [1, 2, 3, 4, 5]),
+                        "start_time": b.get("start_time", "09:00"),
+                        "end_time": b.get("end_time", "10:00"),
+                        "all_day": b.get("all_day", False),
+                        "schedule_start_date": b.get("schedule_start_date"),
+                        "schedule_end_date": b.get("schedule_end_date"),
+                    }
                     for b in blocks_to_use
                 ]
             else:
@@ -7276,10 +7309,17 @@ async def apply_to_calendar(
             print(f"[BACKEND] apply_to_calendar using timezone: {family_tz}", flush=True)
         if use_blocks and blocks_to_use:
             b0 = blocks_to_use[0]
-            print(f"[BACKEND] apply_to_calendar first block: start_time={b0.get('start_time')} end_time={b0.get('end_time')}", flush=True)
+            print(
+                f"[BACKEND] apply_to_calendar first block: subject={b0.get('subject_id')} "
+                f"start_time={b0.get('start_time')} end_time={b0.get('end_time')} "
+                f"schedule={b0.get('schedule_start_date')}..{b0.get('schedule_end_date')}",
+                flush=True,
+            )
 
         create_calendar_events = bool(getattr(body, "create_calendar_events", True))
-        if use_blocks and attendance_tracking_mode == "class_day":
+        ignore_conflicts = bool(getattr(body, "ignore_conflicts", False))
+        use_subject_block_regen = _blocks_need_subject_level_regen(blocks_to_use)
+        if use_blocks and attendance_tracking_mode == "class_day" and not use_subject_block_regen:
             allowed_weekdays_set = set(int(w) for w in (allowed_weekdays_for_persist or [1, 2, 3, 4, 5]))
             full_class_day_dates: List[date] = []
             regen_class_day_dates: List[date] = []
@@ -7330,16 +7370,35 @@ async def apply_to_calendar(
                         "curriculum_metadata": {"subject_ids": class_day_subject_ids},
                     })
                 if events_to_insert:
-                    supabase.table("events").insert(events_to_insert).execute()
-                created_count = len(events_to_insert)
+                    if ignore_conflicts:
+                        inserted_class_days = 0
+                        for ev in events_to_insert:
+                            if _safe_overlap_insert(supabase, ev, ignore_conflicts=True):
+                                inserted_class_days += 1
+                        created_count = inserted_class_days
+                    else:
+                        supabase.table("events").insert(events_to_insert).execute()
+                        created_count = len(events_to_insert)
+                else:
+                    created_count = 0
                 totals_inserted = created_count
             else:
                 created_count = 0
                 totals_inserted = 0
                 totals_deleted = 0
         elif use_blocks:
+            if use_subject_block_regen and attendance_tracking_mode == "class_day":
+                print(
+                    "[BACKEND] apply_to_calendar: per-subject schedule dates detected; using block regen instead of class_day",
+                    flush=True,
+                )
             for block in blocks_to_use:
-                for d in get_block_occurrence_dates(block, start_date_obj, end_date_obj, exclusion_ranges):
+                block_regen_start, block_regen_end = block_regen_window(
+                    regen_start_date, end_date_obj, block
+                )
+                for d in get_block_occurrence_dates(
+                    block, block_regen_start, block_regen_end, exclusion_ranges
+                ):
                     planned_dates_set.add(d)
             if create_calendar_events:
                 # Block-aware regeneration: only touch placeholders for each block (no global delete)
@@ -7350,13 +7409,16 @@ async def apply_to_calendar(
                         if subject_id
                         else (block.get("placeholder_label") or "Learning block")
                     )
+                    block_regen_start, block_regen_end = block_regen_window(
+                        regen_start_date, end_date_obj, block
+                    )
                     result = regen_block(
                         supabase,
                         body.family_id,
                         academic_year_id,
                         block,
-                        regen_start_date,
-                        end_date_obj,
+                        block_regen_start,
+                        block_regen_end,
                         exclusion_ranges,
                         generation_batch_id,
                         subject_name,
@@ -7365,6 +7427,7 @@ async def apply_to_calendar(
                         family_timezone=family_tz,
                         log_event_fn=log_event,
                         user_id=user["id"],
+                        ignore_conflicts=ignore_conflicts,
                     )
                     block_regen_results.append(BlockRegenResult(
                         block_id=str(block["block_id"]),
@@ -7450,8 +7513,15 @@ async def apply_to_calendar(
                             }
                             events_to_insert.append(ev)
                 if events_to_insert:
-                    supabase.table("events").insert(events_to_insert).execute()
-                created_count = len(events_to_insert)
+                    if ignore_conflicts:
+                        legacy_inserted = 0
+                        for ev in events_to_insert:
+                            if _safe_overlap_insert(supabase, ev, ignore_conflicts=True):
+                                legacy_inserted += 1
+                        created_count = legacy_inserted
+                    else:
+                        supabase.table("events").insert(events_to_insert).execute()
+                        created_count = len(events_to_insert)
             else:
                 created_count = 0
 

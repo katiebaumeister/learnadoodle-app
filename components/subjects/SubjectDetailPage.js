@@ -899,14 +899,18 @@ export default function SubjectDetailPage({
     setEditSettingsInitialTab(tab);
     setShowEditSettingsModal(true);
   }, []);
-  const handleSubjectSettingsSaved = useCallback(async () => {
+  const handleSubjectSettingsSaved = useCallback(async (savedSubject, meta = {}) => {
+    if (meta?.planData) setSubjectPlanData(meta.planData);
+    if (meta?.academicYearId) setSubjectPlanYearId(meta.academicYearId);
     await loadSubjectDetail({ silent: true });
-    if (!familyId || !subject?.id) return;
-    try {
-      const fetched = await findAcademicYearPlanForSubject(familyId, subject.id);
-      if (fetched?.academicYearId) setSubjectPlanYearId(fetched.academicYearId);
-      if (fetched?.planData) setSubjectPlanData(fetched.planData);
-    } catch (_) {}
+    const subjectId = savedSubject?.id || subject?.id;
+    if (!meta?.planData && familyId && subjectId) {
+      try {
+        const fetched = await findAcademicYearPlanForSubject(familyId, subjectId);
+        if (fetched?.academicYearId) setSubjectPlanYearId(fetched.academicYearId);
+        if (fetched?.planData) setSubjectPlanData(fetched.planData);
+      } catch (_) {}
+    }
   }, [familyId, subject?.id, loadSubjectDetail]);
   const openUnitsEditor = useCallback(() => {
     if (hasLearningGoalsContent) {
@@ -3652,6 +3656,7 @@ export default function SubjectDetailPage({
             onManageUnits={openUnitsEditor}
             unitsActionLabel={unitsEditorLabel}
             onPlacementChanged={handleClassworkPlacementChanged}
+            inlineUnitsEditing={isParentViewer}
             highlightLessonId={highlightLessonId}
             highlightAssignmentId={highlightAssignmentId}
             onGapAnalysis={isParentViewer ? openGapAnalysisModal : null}

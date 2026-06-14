@@ -23,6 +23,73 @@ def _is_excluded(check_date: date, exclusion_ranges: List[Tuple[date, date]]) ->
     return False
 
 
+def _block_effective_date_range(
+    block: Dict[str, Any],
+    plan_start: date,
+    plan_end: date,
+) -> Tuple[date, date]:
+    """Clip plan window to optional per-block schedule_start_date / schedule_end_date.
+
+    When a subject block defines its own window that does not overlap the plan year
+    (e.g. Spring term subject scheduled in June while the plan ends in May), use the
+    block window alone so occurrences are still generated.
+    """
+    raw_start = block.get("schedule_start_date")
+    raw_end = block.get("schedule_end_date")
+    block_start: Optional[date] = None
+    block_end: Optional[date] = None
+    if raw_start:
+        try:
+            block_start = date.fromisoformat(str(raw_start)[:10])
+        except ValueError:
+            pass
+    if raw_end:
+        try:
+            block_end = date.fromisoformat(str(raw_end)[:10])
+        except ValueError:
+            pass
+
+    if block_start and block_end:
+        if plan_end < block_start or plan_start > block_end:
+            return block_start, block_end
+        return max(plan_start, block_start), min(plan_end, block_end)
+
+    effective_start = plan_start
+    effective_end = plan_end
+    if block_start:
+        effective_start = max(effective_start, block_start)
+    if block_end:
+        effective_end = min(effective_end, block_end)
+    return effective_start, effective_end
+
+
+def block_regen_window(
+    plan_start: date,
+    plan_end: date,
+    block: Dict[str, Any],
+) -> Tuple[date, date]:
+    """Widen per-block regeneration bounds to include optional schedule_start/end dates."""
+    regen_start = plan_start
+    regen_end = plan_end
+    raw_start = block.get("schedule_start_date")
+    raw_end = block.get("schedule_end_date")
+    if raw_start:
+        try:
+            block_start = date.fromisoformat(str(raw_start)[:10])
+            if block_start < regen_start:
+                regen_start = block_start
+        except ValueError:
+            pass
+    if raw_end:
+        try:
+            block_end = date.fromisoformat(str(raw_end)[:10])
+            if block_end > regen_end:
+                regen_end = block_end
+        except ValueError:
+            pass
+    return regen_start, regen_end
+
+
 def get_block_occurrence_dates(
     block: Dict[str, Any],
     start_date: date,
@@ -32,9 +99,13 @@ def get_block_occurrence_dates(
     """
     Return dates this block produces in [start_date, end_date], excluding exclusions.
 
-    Block schema: { weekdays: [1,3,5], start_time, end_time, all_day }
+    Block schema: { weekdays: [1,3,5], start_time, end_time, all_day, schedule_start_date?, schedule_end_date? }
     Weekdays: 0=Sun, 1=Mon, ..., 6=Sat
     """
+    effective_start, effective_end = _block_effective_date_range(block, start_date, end_date)
+    if effective_start > effective_end:
+        return []
+
     raw = block.get("weekdays") or []
     weekdays = []
     for w in raw:
@@ -48,8 +119,8 @@ def get_block_occurrence_dates(
         return []
 
     result: List[date] = []
-    current = start_date
-    while current <= end_date:
+    current = effective_start
+    while current <= effective_end:
         our_day = _python_weekday_to_ours(current)
         if our_day in weekdays and not _is_excluded(current, exclusion_ranges):
             result.append(current)

@@ -344,7 +344,7 @@ def _ensure_event_revision_user_fk_target(supabase, user_id: str) -> bool:
     return False
 
 
-def _safe_overlap_update(supabase, family_id: str, row: Dict[str, Any]) -> bool:
+def _safe_overlap_update(supabase, family_id: str, row: Dict[str, Any], *, ignore_conflicts: bool = False) -> bool:
     payload = {
         "start_ts": row["start_ts"],
         "end_ts": row["end_ts"],
@@ -352,6 +352,7 @@ def _safe_overlap_update(supabase, family_id: str, row: Dict[str, Any]) -> bool:
         "title": row["title"],
         "generation_batch_id": row["generation_batch_id"],
         "is_flexible": row.get("is_flexible", True),
+        "status": "scheduled",
     }
     if row.get("source_block_id") is not None:
         payload["source_block_id"] = row["source_block_id"]
@@ -359,6 +360,9 @@ def _safe_overlap_update(supabase, family_id: str, row: Dict[str, Any]) -> bool:
         payload["child_ids"] = row["child_ids"]
     if row.get("deleted_at"):
         payload["deleted_at"] = None
+    if ignore_conflicts:
+        payload["child_id"] = None
+        payload["is_flexible"] = True
 
     try:
         supabase.table("events").update(payload).eq("id", row["id"]).eq("family_id", family_id).execute()
@@ -392,7 +396,33 @@ def _safe_overlap_update(supabase, family_id: str, row: Dict[str, Any]) -> bool:
             return False
 
 
-def _safe_overlap_insert(supabase, row: Dict[str, Any]) -> bool:
+def _build_conflict_ignoring_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Bypass overlap checks while keeping assignees and times intact."""
+    safe = dict(row)
+    child_ids = safe.get("child_ids")
+    if not child_ids and safe.get("child_id") is not None:
+        safe["child_ids"] = [safe.get("child_id")]
+    safe["is_flexible"] = True
+    return safe
+
+
+def _safe_overlap_insert(supabase, row: Dict[str, Any], *, ignore_conflicts: bool = False) -> bool:
+    if ignore_conflicts:
+        try:
+            supabase.table("events").insert(_build_conflict_ignoring_row(row)).execute()
+            return True
+        except Exception as e0:
+            err0 = _format_db_exc(e0)
+            if _looks_like_overlap_constraint_error(err0):
+                pass
+            else:
+                missing_uid0 = _extract_missing_event_revision_user_id(err0)
+                if missing_uid0 and _ensure_event_revision_user_fk_target(supabase, missing_uid0):
+                    try:
+                        supabase.table("events").insert(_build_conflict_ignoring_row(row)).execute()
+                        return True
+                    except Exception:
+                        pass
     def _parse_iso(ts: Any) -> Optional[datetime]:
         if not ts:
             return None
@@ -559,6 +589,7 @@ def regenerate_block(
     family_timezone: Optional[str] = None,
     log_event_fn=None,
     user_id: str = None,
+    ignore_conflicts: bool = False,
 ) -> Dict[str, int]:
     """
     Regenerate plan events for a single block only.
@@ -650,6 +681,7 @@ def regenerate_block(
                     "title": subject_name,
                     "generation_batch_id": generation_batch_id,
                     "deleted_at": e.get("deleted_at"),
+                    "status": "scheduled",
                     "is_flexible": True,
                 })
             else:
@@ -792,7 +824,7 @@ def regenerate_block(
         )
     for row in to_update:
         try:
-            if _safe_overlap_update(supabase, family_id, row):
+            if _safe_overlap_update(supabase, family_id, row, ignore_conflicts=ignore_conflicts):
                 updated_count += 1
             else:
                 print(f"[BACKEND] block_regen update failed for id={row.get('id')}: overlap-safe fallback also failed", flush=True)
@@ -802,7 +834,7 @@ def regenerate_block(
     inserted_count = 0
     if to_insert:
         for row in to_insert:
-            if _safe_overlap_insert(supabase, row):
+            if _safe_overlap_insert(supabase, row, ignore_conflicts=ignore_conflicts):
                 inserted_count += 1
             else:
                 print(

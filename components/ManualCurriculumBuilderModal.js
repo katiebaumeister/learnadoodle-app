@@ -113,6 +113,11 @@ function buildCommitDraft(draft) {
   };
 }
 
+function lessonIdFromDraftTempId(tempId) {
+  const match = String(tempId || '').match(/^existing-l-(.+)$/);
+  return match ? match[1] : null;
+}
+
 function readDraftLessonDragPayload(ev) {
   try {
     const dt = ev?.nativeEvent?.dataTransfer ?? ev?.dataTransfer;
@@ -169,14 +174,20 @@ export default function ManualCurriculumBuilderModal({
   replaceExisting = false,
   createCalendarEvents = false,
   headerTitle = null,
+  embedded = false,
+  autoSave = false,
+  renderAfterUnitLessons = null,
+  getLessonScheduleLabel = null,
+  getUnitDropWebProps = null,
 }) {
   const toast = useToast();
   const overlayRef = useRef(null);
-  useModalStackElevation(overlayRef, visible, 10002);
+  useModalStackElevation(overlayRef, visible && !embedded, 10002);
 
   const [draft, setDraft] = useState({ title: null, units: [emptyUnit(1)] });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [dirty, setDirty] = useState(false);
   const [expandedUnits, setExpandedUnits] = useState(() => new Set([0]));
   const [loadedExisting, setLoadedExisting] = useState(false);
   const didHydrateRef = useRef(false);
@@ -208,12 +219,17 @@ export default function ManualCurriculumBuilderModal({
   }, [closeWebDraftUnitMenu, closeWebDraftLessonMenu]);
 
   useEffect(() => {
-    if (!visible) {
-      didHydrateRef.current = false;
-      return undefined;
+    if (!embedded) {
+      if (!visible) {
+        didHydrateRef.current = false;
+        return undefined;
+      }
+      if (didHydrateRef.current) return undefined;
+      didHydrateRef.current = true;
+    } else {
+      if (!visible) return undefined;
+      if (dirty) return undefined;
     }
-    if (didHydrateRef.current) return undefined;
-    didHydrateRef.current = true;
 
     if (initialDraft?.units?.length) {
       const normalized = normalizeImportedDraft(initialDraft);
@@ -221,6 +237,14 @@ export default function ManualCurriculumBuilderModal({
       setExpandedUnits(new Set(normalized.units.map((_, i) => i)));
       setLoadedExisting(true);
       setError(null);
+      setDirty(false);
+      if (embedded) didHydrateRef.current = true;
+      return undefined;
+    }
+    if (embedded) {
+      if (!loadExisting) {
+        resetDraft();
+      }
       return undefined;
     }
     if (!loadExisting || !familyId || !subjectId) {
@@ -244,13 +268,14 @@ export default function ManualCurriculumBuilderModal({
           setDraft(mapped);
           setExpandedUnits(new Set([0]));
           setLoadedExisting(true);
+          setDirty(false);
         }
       } catch (_) {}
     })();
     return () => {
       cancelled = true;
     };
-  }, [visible, initialDraft, loadExisting, familyId, subjectId, academicYearId, resetDraft]);
+  }, [visible, embedded, initialDraft, loadExisting, familyId, subjectId, academicYearId, resetDraft, dirty]);
 
   const handleClose = useCallback(() => {
     resetDraft();
@@ -260,6 +285,7 @@ export default function ManualCurriculumBuilderModal({
   const patchDraft = useCallback((updater) => {
     setDraft((prev) => {
       const next = updater(prev);
+      if (next !== prev) setDirty(true);
       return next === prev ? prev : next;
     });
   }, []);
@@ -488,7 +514,7 @@ export default function ManualCurriculumBuilderModal({
     return validationError;
   }, [validationError]);
 
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(async ({ closeOnSuccess = true } = {}) => {
     if (!subjectId || !familyId || !subjectName) return;
     if (blockingError) {
       setError(blockingError);
@@ -512,9 +538,14 @@ export default function ManualCurriculumBuilderModal({
         setError(err?.message || s('courseStructure.manualBuilder.errorSave'));
         return;
       }
-      toast?.push(s('courseStructure.manualBuilder.saveSuccess'), 'success');
+      if (!autoSave) {
+        toast?.push(s('courseStructure.manualBuilder.saveSuccess'), 'success');
+      }
+      setDirty(false);
       onSaved?.();
-      handleClose();
+      if (closeOnSuccess && !embedded) {
+        handleClose();
+      }
     } catch (e) {
       setError(e?.message || s('courseStructure.manualBuilder.errorSave'));
     } finally {
@@ -533,7 +564,17 @@ export default function ManualCurriculumBuilderModal({
     createCalendarEvents,
     academicYearId,
     blockingError,
+    embedded,
+    autoSave,
   ]);
+
+  useEffect(() => {
+    if (!embedded || !autoSave || !dirty || saving || !subjectId || !familyId) return undefined;
+    const timer = setTimeout(() => {
+      handleSave({ closeOnSuccess: false });
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [embedded, autoSave, dirty, saving, subjectId, familyId, draft, handleSave]);
 
   const renderWebDraftUnitMenuPortal = () => {
     if (Platform.OS !== 'web' || draftBuilderUnitMenuKey === null || !webDraftUnitMenuLayout) return null;
@@ -769,49 +810,37 @@ export default function ManualCurriculumBuilderModal({
   const displayTitle = headerTitle
     || (loadedExisting ? `Edit units — ${subjectName || 'Subject'}` : 'Add units');
 
-  if (!visible) return null;
+  if (!visible && !embedded) return null;
 
   const units = draft.units || [];
 
-  return (
-    <Modal visible={visible} animationType="fade" transparent onRequestClose={handleClose}>
-      <View ref={overlayRef} style={styles.overlay} collapsable={false}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={handleClose} />
-        <View style={styles.shell}>
-          <View style={styles.header}>
-            <Text style={styles.headerTitle}>{displayTitle}</Text>
-            <TouchableOpacity
-              onPress={handleClose}
-              style={styles.closeCircle}
-              accessibilityRole="button"
-              accessibilityLabel="Close"
-              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <X size={20} color={MUTED} />
-            </TouchableOpacity>
+  const editorBody = (
+    <>
+      <ScrollView
+        style={[styles.scroll, embedded && styles.embeddedScroll]}
+        contentContainerStyle={[styles.scrollContent, embedded && styles.embeddedScrollContent]}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        nestedScrollEnabled
+      >
+        {error ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{error}</Text>
           </View>
+        ) : null}
 
-          <ScrollView
-              style={styles.scroll}
-              contentContainerStyle={styles.scrollContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              {error ? (
-                <View style={styles.errorBanner}>
-                  <Text style={styles.errorText}>{error}</Text>
-                </View>
-              ) : null}
+        <View style={{ gap: 14 }}>
+          {units.map((unit, unitIdx) => {
+            const isExpanded = expandedUnits.has(unitIdx);
+            const lessons = unit.lessons || [];
+            const lessonCount = lessons.length;
 
-              <View style={{ gap: 14 }}>
-                {units.map((unit, unitIdx) => {
-                  const isExpanded = expandedUnits.has(unitIdx);
-                  const lessons = unit.lessons || [];
-                  const lessonCount = lessons.length;
-
-                  return (
-                    <View key={unit.temp_id || unitIdx} style={styles.unitCard}>
+            return (
+              <View
+                key={unit.temp_id || unitIdx}
+                style={styles.unitCard}
+                {...(typeof getUnitDropWebProps === 'function' ? getUnitDropWebProps(unitIdx) : {})}
+              >
                       <View style={styles.unitHeaderRow}>
                         <TouchableOpacity
                           onPress={() => {
@@ -958,14 +987,21 @@ export default function ManualCurriculumBuilderModal({
                                       </View>
                                     )}
                                     <Text style={styles.lessonBullet}>•</Text>
-                                    <TextInput
-                                      style={styles.lessonTitleInput}
-                                      value={lesson.title || ''}
-                                      onChangeText={(v) => updateLesson(unitIdx, lessonIdx, 'title', v)}
-                                      placeholder="Lesson title"
-                                      placeholderTextColor={MUTED}
-                                      {...(Platform.OS === 'web' && { cursor: 'text' })}
-                                    />
+                                    <View style={styles.lessonTitleFieldWrap}>
+                                      <TextInput
+                                        style={styles.lessonTitleInput}
+                                        value={lesson.title || ''}
+                                        onChangeText={(v) => updateLesson(unitIdx, lessonIdx, 'title', v)}
+                                        placeholder="Lesson title"
+                                        placeholderTextColor={MUTED}
+                                        {...(Platform.OS === 'web' && { cursor: 'text' })}
+                                      />
+                                      {embedded && typeof getLessonScheduleLabel === 'function' ? (
+                                        <Text style={styles.lessonScheduleMeta} numberOfLines={1}>
+                                          {getLessonScheduleLabel(lessonIdFromDraftTempId(lesson.temp_id)) || 'Not scheduled'}
+                                        </Text>
+                                      ) : null}
+                                    </View>
                                     <View style={{ position: 'relative', zIndex: 15 }}>
                                       <TouchableOpacity
                                         onPress={(e) => openLessonMenu(unitIdx, lessonIdx, e)}
@@ -1023,6 +1059,9 @@ export default function ManualCurriculumBuilderModal({
                               <Plus size={16} color={ACCENT} />
                               <Text style={styles.addLessonLinkText}>{s('planMyYear.multiSubjectUnits.addLessonLink')}</Text>
                             </TouchableOpacity>
+                            {typeof renderAfterUnitLessons === 'function'
+                              ? renderAfterUnitLessons(unitIdx)
+                              : null}
                           </View>
                         </View>
                       ) : null}
@@ -1031,41 +1070,83 @@ export default function ManualCurriculumBuilderModal({
                 })}
               </View>
 
-              <TouchableOpacity
-                style={styles.addUnitLink}
-                onPress={addUnit}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Plus size={16} color={ACCENT} />
-                <Text style={styles.addLessonLinkText}>{s('planMyYear.multiSubjectUnits.addUnitLink')}</Text>
-              </TouchableOpacity>
-            </ScrollView>
+        <TouchableOpacity
+          style={styles.addUnitLink}
+          onPress={addUnit}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Plus size={16} color={ACCENT} />
+          <Text style={styles.addLessonLinkText}>{s('planMyYear.multiSubjectUnits.addUnitLink')}</Text>
+        </TouchableOpacity>
+      </ScrollView>
 
-          <View style={styles.footer}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={handleClose}
-                disabled={saving}
-                {...(Platform.OS === 'web' && { cursor: saving ? 'not-allowed' : 'pointer' })}
-              >
-                <Text style={styles.cancelText}>{s('global.actions.cancel')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.saveButton, (saving || blockingError) && styles.saveButtonDisabled]}
-                onPress={handleSave}
-                disabled={saving || Boolean(blockingError)}
-                {...(Platform.OS === 'web' && { cursor: saving || blockingError ? 'not-allowed' : 'pointer' })}
-              >
-                {saving ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <View style={styles.saveInner}>
-                    <Sparkles size={14} color="#FFFFFF" />
-                    <Text style={styles.saveText}>Save</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            </View>
+      {embedded ? (
+        autoSave && (saving || dirty) ? (
+          <View style={styles.embeddedStatusRow}>
+            <Text style={styles.embeddedStatusText}>
+              {saving ? 'Saving changes…' : 'Saving soon…'}
+            </Text>
+          </View>
+        ) : null
+      ) : (
+        <View style={styles.footer}>
+          <TouchableOpacity
+            style={styles.cancelButton}
+            onPress={handleClose}
+            disabled={saving}
+            {...(Platform.OS === 'web' && { cursor: saving ? 'not-allowed' : 'pointer' })}
+          >
+            <Text style={styles.cancelText}>{s('global.actions.cancel')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.saveButton, (saving || blockingError) && styles.saveButtonDisabled]}
+            onPress={() => handleSave({ closeOnSuccess: true })}
+            disabled={saving || Boolean(blockingError)}
+            {...(Platform.OS === 'web' && { cursor: saving || blockingError ? 'not-allowed' : 'pointer' })}
+          >
+            {saving ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <View style={styles.saveInner}>
+                <Sparkles size={14} color="#FFFFFF" />
+                <Text style={styles.saveText}>Save</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <View style={styles.embeddedRoot}>
+        {editorBody}
+        {renderWebDraftUnitMenuPortal()}
+        {renderWebDraftLessonMenuPortal()}
+      </View>
+    );
+  }
+
+  return (
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={handleClose}>
+      <View ref={overlayRef} style={styles.overlay} collapsable={false}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={handleClose} />
+        <View style={styles.shell}>
+          <View style={styles.header}>
+            <Text style={styles.headerTitle}>{displayTitle}</Text>
+            <TouchableOpacity
+              onPress={handleClose}
+              style={styles.closeCircle}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <X size={20} color={MUTED} />
+            </TouchableOpacity>
+          </View>
+          {editorBody}
         </View>
       </View>
       {renderWebDraftUnitMenuPortal()}
@@ -1127,6 +1208,37 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 36,
     paddingBottom: 20,
+  },
+  embeddedRoot: {
+    width: '100%',
+    overflow: 'visible',
+  },
+  embeddedScroll: {
+    flexGrow: 0,
+  },
+  embeddedScrollContent: {
+    paddingHorizontal: 0,
+    paddingBottom: 8,
+  },
+  embeddedStatusRow: {
+    paddingTop: 4,
+    paddingBottom: 2,
+    alignItems: 'flex-end',
+  },
+  embeddedStatusText: {
+    fontSize: 12,
+    color: MUTED,
+  },
+  lessonTitleFieldWrap: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  lessonScheduleMeta: {
+    fontSize: 12,
+    color: MUTED,
+    paddingHorizontal: 8,
+    paddingBottom: 2,
   },
   errorBanner: {
     marginBottom: 12,

@@ -2202,19 +2202,6 @@ export default function SubjectsPage({
     }
   }, []);
 
-  const handleEditSubjectForSubject = useCallback((subject) => {
-    if (!subject) return;
-    if (typeof onEditSubject === 'function') {
-      onEditSubject(subject);
-      return;
-    }
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openAddSubjectModal', {
-        detail: { subject },
-      }));
-    }
-  }, [onEditSubject]);
-
   const handleConfigureScheduleForSubject = useCallback((subject) => {
     if (!subject) return;
     handleSubjectClick(subject, null, null, 'configure_schedule');
@@ -3118,11 +3105,6 @@ export default function SubjectsPage({
           onNavigateToPlanner={handleNavigateToPlanner}
           onAddSyllabus={handleAddSyllabus}
           onAddEvent={onAddEvent}
-          onEditSubject={
-            canShowEditSubjectButton && canManageSubjectsActions
-              ? handleEditSubjectForSubject
-              : undefined
-          }
           onConfigureSchedule={
             !isChildView && canManageSubjectsActions ? handleConfigureScheduleForSubject : undefined
           }

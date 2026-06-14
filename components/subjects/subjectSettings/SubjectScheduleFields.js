@@ -9,8 +9,16 @@ import {
   normalizeHm,
 } from '../../../lib/subjectConfigureSchedule';
 
+function isWeekdayActive(weekdays, dayNum) {
+  return (weekdays || []).some((day) => Number(day) === dayNum);
+}
+
 function toggleWeekday(current, dayNum) {
-  const set = new Set(current || []);
+  const set = new Set(
+    (current || [])
+      .map((day) => parseInt(day, 10))
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6),
+  );
   if (set.has(dayNum)) set.delete(dayNum);
   else set.add(dayNum);
   return [...set].sort((a, b) => a - b);
@@ -20,12 +28,6 @@ const SCHEDULE_FIELD_DEFAULTS = {
   time: '09:00',
   duration: '60',
 };
-
-function clearIfDefaultValue(currentValue, defaultValue, onClear) {
-  if (String(currentValue ?? '') === defaultValue) {
-    onClear('');
-  }
-}
 
 export default function SubjectScheduleFields({
   schoolYear,
@@ -46,9 +48,6 @@ export default function SubjectScheduleFields({
   onEndDateChange,
   onOpenStartDatePicker,
   onOpenEndDatePicker,
-  showRemoveEventsButton = false,
-  onRemoveAllEvents,
-  removingEvents = false,
   embeddedInForm = false,
 }) {
   const schoolYearTriggerRef = useRef(null);
@@ -175,7 +174,7 @@ export default function SubjectScheduleFields({
         <Text style={styles.fieldLabel}>Days</Text>
         <View style={styles.chipRow}>
           {WEEKDAY_OPTIONS.map(({ num, label }) => {
-            const active = weekdays.includes(num);
+            const active = isWeekdayActive(weekdays, num);
             return (
               <TouchableOpacity
                 key={num}
@@ -207,8 +206,7 @@ export default function SubjectScheduleFields({
           <Text style={styles.fieldLabel}>Time</Text>
           <TextInput
             value={startTime}
-            onChangeText={(text) => onStartTimeChange(normalizeHm(text.replace(/[^\d:]/g, ''), startTime || ''))}
-            onFocus={() => clearIfDefaultValue(startTime, SCHEDULE_FIELD_DEFAULTS.time, onStartTimeChange)}
+            onChangeText={(text) => onStartTimeChange(normalizeHm(text.replace(/[^\d:]/g, ''), startTime || SCHEDULE_FIELD_DEFAULTS.time))}
             placeholder="09:00"
             style={styles.fieldInput}
           />
@@ -218,10 +216,6 @@ export default function SubjectScheduleFields({
           <TextInput
             value={durationMinutes === '' || durationMinutes == null ? '' : String(durationMinutes)}
             onChangeText={(text) => onDurationMinutesChange(text.replace(/[^\d]/g, ''))}
-            onFocus={() => {
-              const value = durationMinutes === '' || durationMinutes == null ? '' : String(durationMinutes);
-              clearIfDefaultValue(value, SCHEDULE_FIELD_DEFAULTS.duration, onDurationMinutesChange);
-            }}
             placeholder="60"
             keyboardType="numeric"
             style={styles.fieldInput}
@@ -234,22 +228,6 @@ export default function SubjectScheduleFields({
           {startDateField}
           {endDateField}
         </>
-      ) : null}
-
-      {showRemoveEventsButton ? (
-        <TouchableOpacity
-          style={[
-            scheduleHelpStyles.removeBtn,
-            removingEvents && scheduleHelpStyles.removeBtnDisabled,
-          ]}
-          onPress={onRemoveAllEvents}
-          disabled={removingEvents}
-          {...(Platform.OS === 'web' && { cursor: removingEvents ? 'default' : 'pointer' })}
-        >
-          <Text style={scheduleHelpStyles.removeBtnText}>
-            {removingEvents ? 'Removing…' : 'Remove all events'}
-          </Text>
-        </TouchableOpacity>
       ) : null}
     </View>
   );
@@ -278,29 +256,3 @@ const localStyles = StyleSheet.create({
     fontWeight: '600',
   },
 });
-
-const scheduleHelpStyles = {
-  removeBtn: {
-    marginTop: 4,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#FECACA',
-    backgroundColor: '#FEF2F2',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  removeBtnDisabled: {
-    opacity: 0.5,
-    ...(Platform.OS === 'web' && { cursor: 'default' }),
-  },
-  removeBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#B91C1C',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-};
