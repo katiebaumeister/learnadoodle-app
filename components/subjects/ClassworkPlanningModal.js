@@ -7,15 +7,36 @@ import {
   Modal,
   Platform,
   ActivityIndicator,
+  Pressable,
+  ScrollView,
 } from 'react-native';
-import { designTokens } from '../../theme/designTokens';
+import AppModalShell from '../ui/AppModalShell';
+import { ModalFooter } from '../ui/ModalFooter';
+import { createModalStyles as sharedStyles } from '../create/shared/createModalStyles';
+import { LEARNADOODLE_LIGHT_BLUE } from '../../theme/comingSoonModalTheme';
 
-const { colors: tok } = designTokens;
+const PLANNING_MODAL_MAX_WIDTH = 480;
 const WEB_DIALOG_Z_INDEX = 2147483647;
 
-function ModalBody({
+function ScheduleLinesList({ lines = [], heading = 'Learning days' }) {
+  if (!lines.length) return null;
+  return (
+    <View style={styles.scheduleSection}>
+      <Text style={styles.scheduleHeading}>{heading}</Text>
+      {lines.map((line, index) => (
+        <Text key={`schedule-line-${index}`} style={styles.scheduleLine}>
+          {line}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+function ModalContent({
   title,
   message,
+  scheduleLines = [],
+  scheduleLinesHeading = 'Learning days',
   loading = false,
   working = false,
   confirmLabel = 'Confirm',
@@ -25,58 +46,72 @@ function ModalBody({
   onConfirm,
   onCancel,
 }) {
-  return (
-    <View style={styles.cardInner}>
-      <View style={styles.headerRow}>
-        <Text style={styles.title} numberOfLines={3}>
-          {title}
-        </Text>
-        <TouchableOpacity
-          style={styles.closeButton}
-          onPress={onCancel}
-          activeOpacity={0.75}
-          accessibilityRole="button"
-          accessibilityLabel="Close"
-          disabled={working}
-        >
-          <Text style={styles.closeButtonIcon}>×</Text>
-        </TouchableOpacity>
-      </View>
-      {loading ? (
-        <View style={styles.loadingRow}>
-          <ActivityIndicator size="small" color="#2563EB" />
-          <Text style={styles.message}>{message || 'Loading…'}</Text>
-        </View>
-      ) : (
-        <Text style={styles.message}>{message}</Text>
-      )}
-      <View style={styles.actions}>
-        <TouchableOpacity
-          style={styles.cancelButton}
-          onPress={onCancel}
-          activeOpacity={0.85}
-          disabled={working}
-        >
-          <Text style={styles.cancelButtonText}>{cancelLabel}</Text>
-        </TouchableOpacity>
-        {showConfirm ? (
-          <TouchableOpacity
-            style={[
-              styles.confirmButton,
-              (confirmDisabled || working || loading) && styles.confirmButtonDisabled,
-            ]}
-            onPress={onConfirm}
-            activeOpacity={0.85}
-            disabled={confirmDisabled || working || loading}
-          >
-            {working ? <ActivityIndicator size="small" color="#FFFFFF" /> : null}
-            <Text style={styles.confirmButtonText}>
-              {working ? 'Working…' : confirmLabel}
-            </Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
+  const hasScrollableBody = scheduleLines.length > 0;
+
+  const footer = showConfirm ? (
+    <ModalFooter
+      mode={confirmLabel === 'Done' ? 'edit' : 'add'}
+      primaryLabel={working ? 'Working…' : confirmLabel}
+      onCancel={onCancel}
+      onPrimary={onConfirm}
+      accent={LEARNADOODLE_LIGHT_BLUE}
+      disabled={working || loading}
+      visuallyDisabled={confirmDisabled || loading}
+      loading={working || loading}
+    />
+  ) : (
+    <View style={styles.singleActionRow}>
+      <TouchableOpacity
+        style={styles.closeOnlyButton}
+        onPress={onCancel}
+        activeOpacity={0.9}
+        disabled={working}
+        accessibilityRole="button"
+        accessibilityLabel={cancelLabel}
+        {...(Platform.OS === 'web' && { cursor: working ? 'not-allowed' : 'pointer' })}
+      >
+        <Text style={styles.closeOnlyButtonText}>{cancelLabel}</Text>
+      </TouchableOpacity>
     </View>
+  );
+
+  const bodyContent = loading ? (
+    <View style={styles.loadingRow}>
+      <ActivityIndicator size="small" color={LEARNADOODLE_LIGHT_BLUE} />
+      <Text style={styles.message}>{message || 'Loading…'}</Text>
+    </View>
+  ) : (
+    <>
+      {message ? <Text style={styles.message}>{message}</Text> : null}
+      <ScheduleLinesList lines={scheduleLines} heading={scheduleLinesHeading} />
+    </>
+  );
+
+  return (
+    <AppModalShell
+      title={title}
+      onClose={working ? undefined : onCancel}
+      shellStyle={[sharedStyles.compactShell, styles.planningShell]}
+      titleRowStyle={sharedStyles.compactTitleRow}
+      contentContainerStyle={sharedStyles.contentContainer}
+      bodyStyle={sharedStyles.shellBody}
+      disableShellScroll={!hasScrollableBody}
+      maxWidth={PLANNING_MODAL_MAX_WIDTH}
+      footer={footer}
+    >
+      {hasScrollableBody ? (
+        <ScrollView
+          style={styles.bodyScroll}
+          contentContainerStyle={styles.bodyScrollContent}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={false}
+        >
+          {bodyContent}
+        </ScrollView>
+      ) : (
+        bodyContent
+      )}
+    </AppModalShell>
   );
 }
 
@@ -84,6 +119,8 @@ export default function ClassworkPlanningModal({
   visible,
   title = '',
   message = '',
+  scheduleLines = [],
+  scheduleLinesHeading = 'Learning days',
   loading = false,
   working = false,
   confirmLabel = 'Confirm',
@@ -96,19 +133,20 @@ export default function ClassworkPlanningModal({
   if (!visible) return null;
 
   const content = (
-    <TouchableOpacity
-      style={[styles.overlay, Platform.OS === 'web' && styles.overlayWebPortal]}
-      activeOpacity={1}
-      onPress={working ? undefined : onCancel}
-    >
-      <TouchableOpacity
-        style={styles.card}
-        activeOpacity={1}
-        onPress={(e) => e?.stopPropagation?.()}
-      >
-        <ModalBody
+    <View style={[styles.overlay, Platform.OS === 'web' && styles.overlayWebPortal]}>
+      <Pressable
+        style={styles.backdrop}
+        onPress={working ? undefined : onCancel}
+        accessibilityRole="button"
+        accessibilityLabel="Close dialog"
+        {...(Platform.OS === 'web' && { cursor: 'default' })}
+      />
+      <View style={styles.modalWrap}>
+        <ModalContent
           title={title}
           message={message}
+          scheduleLines={scheduleLines}
+          scheduleLinesHeading={scheduleLinesHeading}
           loading={loading}
           working={working}
           confirmLabel={confirmLabel}
@@ -118,8 +156,8 @@ export default function ClassworkPlanningModal({
           onConfirm={onConfirm}
           onCancel={onCancel}
         />
-      </TouchableOpacity>
-    </TouchableOpacity>
+      </View>
+    </View>
   );
 
   if (Platform.OS === 'web' && typeof document !== 'undefined' && document.body) {
@@ -141,120 +179,112 @@ export default function ClassworkPlanningModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    padding: 20,
     ...(Platform.OS === 'web' && {
       position: 'fixed',
       top: 0,
       left: 0,
       right: 0,
       bottom: 0,
+      width: '100vw',
+      height: '100vh',
       zIndex: 1000000,
     }),
   },
   overlayWebPortal: {
     zIndex: WEB_DIALOG_Z_INDEX,
   },
-  card: {
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 0,
+  },
+  modalWrap: {
     width: '100%',
-    maxWidth: 460,
-    backgroundColor: tok.paper,
-    borderRadius: 28,
-    padding: 32,
+    maxWidth: PLANNING_MODAL_MAX_WIDTH,
+    zIndex: 1,
+  },
+  planningShell: {
+    maxWidth: PLANNING_MODAL_MAX_WIDTH,
+    minHeight: 0,
+    height: 'auto',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.18)',
+      maxHeight: '88vh',
     }),
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.14,
-    shadowRadius: 28,
-    elevation: 16,
   },
-  cardInner: {
-    width: '100%',
+  bodyScroll: {
+    maxHeight: Platform.OS === 'web' ? 320 : 280,
   },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
+  bodyScrollContent: {
+    paddingBottom: 4,
     gap: 12,
-    marginBottom: 12,
-  },
-  title: {
-    flex: 1,
-    fontSize: 22,
-    fontWeight: '700',
-    color: tok.ink,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F1F5F9',
-  },
-  closeButtonIcon: {
-    fontSize: 22,
-    lineHeight: 24,
-    color: '#64748B',
-    marginTop: -2,
   },
   message: {
     fontSize: 15,
     lineHeight: 22,
-    color: tok.muted,
-    marginBottom: 24,
+    color: '#475569',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       whiteSpace: 'pre-line',
+    }),
+  },
+  scheduleSection: {
+    marginTop: 4,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    gap: 8,
+  },
+  scheduleHeading: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  scheduleLine: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    marginBottom: 24,
   },
-  actions: {
+  singleActionRow: {
+    width: '100%',
+    minHeight: 64,
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'flex-end',
-    alignItems: 'center',
-    gap: 12,
   },
-  cancelButton: {
+  closeOnlyButton: {
+    minHeight: 50,
+    paddingVertical: 12,
     paddingHorizontal: 18,
-    paddingVertical: 11,
-    borderRadius: 9999,
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-  },
-  cancelButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  confirmButton: {
-    flexDirection: 'row',
+    borderColor: '#E5E7EB',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-    borderRadius: 9999,
-    backgroundColor: '#2563EB',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
-  confirmButtonDisabled: {
-    opacity: 0.55,
-  },
-  confirmButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
+  closeOnlyButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
   },
 });

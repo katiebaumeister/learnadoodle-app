@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Pressable,
   View,
@@ -14,6 +14,7 @@ import {
   ArrowLeft,
   Edit2,
   Calendar,
+  CalendarDays,
   Clock,
   Plus,
   Sparkles,
@@ -546,6 +547,16 @@ export default function SubjectDetailPage({
   useEffect(() => {
     learningGoalsUnitsRef.current = Array.isArray(learningGoalsUnits) ? learningGoalsUnits : [];
   }, [learningGoalsUnits]);
+
+  useLayoutEffect(() => {
+    if (!familyId || !subjectData?.subject?.id) return;
+    const cached = getSubjectProgressCache(familyId, subjectData.subject.id);
+    if (Array.isArray(cached?.curriculumUnits) && cached.curriculumUnits.length > 0) {
+      setLearningGoalsUnits(cached.curriculumUnits);
+      setLearningGoalsSource(cached.curriculumSavedContentSource || null);
+    }
+  }, [familyId, subjectData?.subject?.id]);
+
   const loadLearningGoalsStructure = useCallback(async () => {
     const sid = subjectData?.subject?.id;
     if (!familyId || !sid) {
@@ -860,11 +871,17 @@ export default function SubjectDetailPage({
     () => buildLearningGoalsUnitsFromEvents(subjectEvents),
     [subjectEvents]
   );
+  const cachedCurriculumUnits = useMemo(() => {
+    if (!familyId || !subject?.id) return [];
+    const cached = getSubjectProgressCache(familyId, subject.id);
+    return Array.isArray(cached?.curriculumUnits) ? cached.curriculumUnits : [];
+  }, [familyId, subject?.id]);
   const effectiveLearningGoalsUnits = useMemo(() => {
     const fetched = Array.isArray(learningGoalsUnits) ? learningGoalsUnits : [];
     if (fetched.length > 0) return fetched;
+    if (cachedCurriculumUnits.length > 0) return cachedCurriculumUnits;
     return immediateLearningGoalsUnits;
-  }, [learningGoalsUnits, immediateLearningGoalsUnits]);
+  }, [learningGoalsUnits, cachedCurriculumUnits, immediateLearningGoalsUnits]);
   const totalLearningGoalLessons = useMemo(
     () => (effectiveLearningGoalsUnits || []).reduce((sum, unit) => sum + ((unit?.lessons || []).length || 0), 0),
     [effectiveLearningGoalsUnits]
@@ -3573,6 +3590,17 @@ export default function SubjectDetailPage({
               <View />
             )}
             <View style={styles.headerTopActions}>
+              {isParentViewer && typeof onOpenPlannerSettings === 'function' ? (
+                <TouchableOpacity
+                  style={styles.headerTopActionBtn}
+                  onPress={openAttendanceTargetPreferences}
+                  accessibilityLabel="Edit school year"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <CalendarDays size={18} color="#334155" strokeWidth={2.25} />
+                  <Text style={styles.headerTopActionText}>Edit school year</Text>
+                </TouchableOpacity>
+              ) : null}
               {isParentViewer ? (
                 <TouchableOpacity
                   style={styles.headerTopActionBtn}

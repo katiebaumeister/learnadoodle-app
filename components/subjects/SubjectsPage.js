@@ -27,6 +27,7 @@ import {
 
 import { colors } from '../../theme/colors';
 import { getSubjectsWithOverview, getSubjectDetail } from '../../lib/services/subjectsClient';
+import { prefetchSubjectProgressPlanEntry } from '../../lib/prefetchSubjectProgressPlan';
 import { isAbortLikeError } from '../../lib/apiClient';
 import { getAttendanceLogs } from '../../lib/services/recordsClient';
 import { generateAttendanceReport } from '../../lib/services/attendanceClient';
@@ -454,7 +455,12 @@ export default function SubjectsPage({
                 ...(prev || {}),
                 [subject.id]: detailData,
               }));
-              
+              prefetchSubjectProgressPlanEntry(
+                familyId,
+                subject.id,
+                subject.name || detailData?.subject?.name || 'Subject',
+              ).catch(() => {});
+
               // Update parent cache if callback provided
               if (onSubjectDetailUpdate) {
                 onSubjectDetailUpdate(subject.id, detailData);
@@ -1052,7 +1058,10 @@ export default function SubjectsPage({
     setPendingProgressAction(progressAction || null);
     setSelectedSubjectId(subject.id);
     setExpandedSummaryMetric(null);
-  }, [detectedSectionFromSearch]);
+    if (familyId) {
+      prefetchSubjectProgressPlanEntry(familyId, subject.id, subject.name || 'Subject').catch(() => {});
+    }
+  }, [detectedSectionFromSearch, familyId]);
 
   const handleSearchSubmit = useCallback(() => {
     if (!searchTokens.length) return;

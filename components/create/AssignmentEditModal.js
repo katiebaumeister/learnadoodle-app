@@ -34,6 +34,7 @@ import { defaultWorkSpec } from '../../lib/workEventHelpers';
 import { parseStudentResponseType } from '../../lib/studentResponseTypes';
 import {
   assignmentEditFormFromEvent,
+  createPlannerEventForAssignment,
   deleteAssignmentAndEvent,
   fetchEventForAssignmentEdit,
   resolveLinkedEventIdFromAssignment,
@@ -205,11 +206,38 @@ export default function AssignmentEditModal({
   }, [title, subjectId, assigneeIds, workSpec?.student_response_type]);
 
   const handleSave = useCallback(async () => {
-    if (!validate() || !eventId) return;
+    if (!validate()) return;
     setSubmitting(true);
     try {
+      let resolvedEventId = eventId;
+      let resolvedEvent = eventRow;
+      if (!resolvedEventId && assignment?.id) {
+        if (!dueDate) {
+          toast.push('Add a due date to show this assignment on the planner', 'error');
+          return;
+        }
+        resolvedEvent = await createPlannerEventForAssignment({
+          familyId,
+          assignment,
+          title,
+          childIds: assigneeIds,
+          subjectId,
+          instructions,
+          workSpecInput: workSpec,
+          dueDate,
+          unitTitle,
+          curriculumLessonId,
+          lessonLabel,
+        });
+        resolvedEventId = resolvedEvent?.id;
+        setEventRow(resolvedEvent);
+      }
+      if (!resolvedEventId) {
+        toast.push('Could not save assignment', 'error');
+        return;
+      }
       const updated = await updateAssignmentFromEditForm({
-        eventId,
+        eventId: resolvedEventId,
         familyId,
         title,
         childIds: assigneeIds,
@@ -237,6 +265,7 @@ export default function AssignmentEditModal({
   }, [
     validate,
     eventId,
+    eventRow,
     familyId,
     title,
     assigneeIds,
@@ -472,6 +501,9 @@ export default function AssignmentEditModal({
                       onDateChange={setDueDate}
                       onOpenDatePicker={() => setDatePickerTarget('due')}
                     />
+                    <Text style={styles.fieldHint}>
+                      Due date places this assignment on your planner.
+                    </Text>
 
                     <View style={styles.assignmentPanelFormGroup}>
                       <Text style={styles.fieldLabel}>Points</Text>
