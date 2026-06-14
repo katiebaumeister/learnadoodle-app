@@ -123,6 +123,14 @@ export default function SubjectGradesPanel({
 
     return [...byChild.values()]
       .map((row) => {
+        const missingWork = row.assignments
+          .filter((a) => isMissingWork(a))
+          .map((a) => ({
+            id: a.id,
+            title: a.title || 'Assignment',
+            onPress: () => onOpenAssignment?.(a),
+          }));
+
         const recentGrades = [
           ...row.assignments
             .filter((a) => gradeDisplayForAssignment(a))
@@ -147,6 +155,7 @@ export default function SubjectGradesPanel({
           ...row,
           overall: row.count > 0 ? Math.round(row.sum / row.count) : null,
           recentGrades,
+          missingWork,
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -203,6 +212,33 @@ export default function SubjectGradesPanel({
           </View>
 
           <View style={styles.recentSection}>
+            {section.missingWork.length > 0 ? (
+              <>
+                <SectionHeader title="Missing work" />
+                <View style={styles.gradeList}>
+                  {section.missingWork.map((item) => (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={[styles.gradeRow, styles.missingRow]}
+                      onPress={item.onPress}
+                      activeOpacity={0.75}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <View style={styles.gradeRowContent}>
+                        <Text style={styles.gradeRowTitle} numberOfLines={2}>
+                          {item.title}
+                        </Text>
+                      </View>
+                      <View style={styles.gradeRowTrailing}>
+                        <Text style={styles.missingRowLabel}>Open in classwork</Text>
+                        <ChevronRight size={18} color="#94A3B8" strokeWidth={2.25} />
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            ) : null}
+
             <SectionHeader title="Recent grades" />
             {section.recentGrades.length === 0 ? (
               <Text style={styles.recentEmpty}>No grades yet.</Text>
@@ -417,5 +453,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: CLASSWORK_FG,
     ...LEAGUE_FONT,
+  },
+  missingRow: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  missingRowLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#B45309',
+    ...COOPER_FONT,
   },
 });

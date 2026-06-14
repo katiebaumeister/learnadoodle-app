@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import {
   FileText,
+  GripVertical,
   MoreVertical,
   Plus,
   X,
@@ -38,6 +39,66 @@ import {
   CLASSWORK_BG,
 } from '../../lib/classworkPanelTheme';
 
+const ASSIGNMENT_PLACEMENT_DRAG_MIME = 'application/x-learnadoodle-assignment-placement';
+
+function readAssignmentDragPayload(ev) {
+  try {
+    const dt = ev?.nativeEvent?.dataTransfer ?? ev?.dataTransfer;
+    const raw = dt?.getData?.(ASSIGNMENT_PLACEMENT_DRAG_MIME);
+    if (!raw) return null;
+    const payload = JSON.parse(raw);
+    if (!payload?.assignmentId) return null;
+    return payload;
+  } catch (_) {
+    return null;
+  }
+}
+
+function assignmentDragWebProps({
+  assignmentId,
+  fromUnitId = null,
+  fromLessonId = null,
+  enabled = true,
+  onDragStart,
+}) {
+  if (Platform.OS !== 'web' || !enabled || !assignmentId) return {};
+  return {
+    draggable: true,
+    onDragStart: (ev) => {
+      onDragStart?.(assignmentId);
+      try {
+        const dt = ev?.nativeEvent?.dataTransfer ?? ev?.dataTransfer;
+        if (dt?.setData) {
+          dt.setData(
+            ASSIGNMENT_PLACEMENT_DRAG_MIME,
+            JSON.stringify({ assignmentId: String(assignmentId), fromUnitId, fromLessonId }),
+          );
+          dt.effectAllowed = 'move';
+        }
+      } catch (_) {}
+    },
+  };
+}
+
+function dropTargetWebProps({ onDrop, isActive = false }) {
+  if (Platform.OS !== 'web' || !onDrop) return {};
+  return {
+    onDragOver: (ev) => {
+      ev?.preventDefault?.();
+      if (ev?.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+    },
+    onDragEnter: (ev) => {
+      ev?.preventDefault?.();
+    },
+    onDrop: (ev) => {
+      ev?.preventDefault?.();
+      const payload = readAssignmentDragPayload(ev);
+      if (payload) onDrop(payload);
+    },
+    ...(isActive ? { 'data-drop-active': 'true' } : {}),
+  };
+}
+
 function MenuPanel({ items = [], onClose }) {
   if (!items.length) return null;
   return (
@@ -61,11 +122,33 @@ function MenuPanel({ items = [], onClose }) {
   );
 }
 
-function SectionHeader({ title }) {
+function SectionHeader({ title, count = null }) {
   return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionHeaderText}>{title}</Text>
-      <View style={styles.sectionHeaderRule} />
+    <View style={styles.topicHeader}>
+      <Text style={styles.topicHeaderText}>{title}</Text>
+      {count != null ? (
+        <Text style={styles.topicHeaderCount}>{count}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function UnitTopicSection({
+  title,
+  count,
+  children,
+  dropActive = false,
+  dropWebProps = {},
+}) {
+  return (
+    <View style={styles.sectionBlock}>
+      <SectionHeader title={title} count={count} />
+      <View
+        style={[styles.topicCard, dropActive && styles.topicCardDropActive]}
+        {...dropWebProps}
+      >
+        {children}
+      </View>
     </View>
   );
 }
@@ -83,6 +166,10 @@ function LessonPeerRow({
   closeMenu,
   highlighted = false,
   rowRef,
+  isLast = false,
+  lessonDropActive = false,
+  onLessonDrop,
+  onLessonDragEnter,
 }) {
   const menuKey = `lesson-${unit.unitId}-${lesson.lessonId}`;
   const menuOpen = menuState?.key === menuKey;
@@ -115,35 +202,39 @@ function LessonPeerRow({
     }
   }
 
+  const lessonDropProps = dropTargetWebProps({
+    onDrop: onLessonDrop,
+    isActive: lessonDropActive,
+  });
+  const lessonDragEnterProps = Platform.OS === 'web' && onLessonDragEnter
+    ? { onDragEnter: onLessonDragEnter }
+    : {};
+
   return (
     <View
       ref={rowRef}
       style={[
         styles.peerRow,
+        !isLast && styles.peerRowBorder,
         menuOpen && Platform.OS === 'web' && styles.peerRowMenuOpen,
         highlighted && styles.peerRowHighlight,
+        lessonDropActive && styles.peerRowDropActive,
       ]}
+      {...lessonDropProps}
+      {...lessonDragEnterProps}
     >
-      <View style={styles.lessonDot} />
+      <View style={styles.lessonIconWrap}>
+        <View style={styles.lessonDot} />
+      </View>
       <View style={styles.peerBody}>
         <Text style={styles.peerTitle}>{lesson.title || 'Lesson'}</Text>
         <View style={styles.peerMetaRow}>
           {lesson.schedule?.dateLabel ? (
             <Text style={styles.peerMetaScheduled}>
-              Scheduled → {lesson.schedule.dateLabel}
+              {lesson.schedule.dateLabel}
             </Text>
           ) : (
-            <>
-              <Text style={styles.peerMetaMuted}>Not scheduled</Text>
-              {isParentViewer && lesson.lessonId ? (
-                <TouchableOpacity
-                  onPress={() => onSchedule({ ...lesson, unitTitle: unit.title, unitId: unit.unitId })}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={styles.peerAction}>Schedule</Text>
-                </TouchableOpacity>
-              ) : null}
-            </>
+            <Text style={styles.peerMetaMuted}>Not scheduled</Text>
           )}
           {lesson.schedule?.dateLabel && isParentViewer ? (
             <TouchableOpacity
@@ -152,8 +243,20 @@ function LessonPeerRow({
             >
               <Text style={styles.peerAction}>View on planner</Text>
             </TouchableOpacity>
+          ) : isParentViewer && lesson.lessonId && !lesson.schedule?.dateLabel ? (
+            <TouchableOpacity
+              onPress={() => onSchedule({ ...lesson, unitTitle: unit.title, unitId: unit.unitId })}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.peerAction}>Schedule</Text>
+            </TouchableOpacity>
           ) : null}
         </View>
+      </View>
+      <View style={styles.peerTrailing}>
+        {lesson.schedule?.dateLabel ? (
+          <Text style={styles.peerDateRight}>{lesson.schedule.dateLabel}</Text>
+        ) : null}
       </View>
       {isParentViewer && menuItems.length > 0 ? (
         <View style={styles.menuAnchor}>
@@ -174,34 +277,71 @@ function LessonPeerRow({
 function AssignmentPeerRow({
   assignment,
   attachedLessonTitle,
+  learningDay = null,
   isParentViewer,
   onPress,
   onMenu,
+  onViewOnPlanner,
   highlighted = false,
   rowRef,
+  isLast = false,
+  fromUnitId = null,
+  fromLessonId = null,
+  dragging = false,
+  onDragStartAssignment,
 }) {
   const status = getWorkStatusLabel(assignment);
   const dueLine = formatDueShort(assignment.due_date);
   const attachmentLine = attachedLessonTitle
-    ? `Attached to ${attachedLessonTitle}`
-    : 'No lesson';
+    ? attachedLessonTitle
+    : null;
+  const rightDateLine = dueLine || (learningDay?.dateLabel ? `Learning day ${learningDay.dateLabel}` : null);
+  const canDrag = isParentViewer && Platform.OS === 'web';
 
-  return (
-    <TouchableOpacity
-      ref={rowRef}
-      style={[styles.peerRow, highlighted && styles.peerRowHighlight]}
-      onPress={() => onPress?.(assignment)}
-      activeOpacity={0.75}
-      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-    >
-      <FileText size={16} color="#64748B" style={styles.peerIconDoc} />
+  const rowContent = (
+    <>
+      {canDrag ? (
+        <View
+          style={styles.gripHandle}
+          {...assignmentDragWebProps({
+            assignmentId: assignment.id,
+            fromUnitId,
+            fromLessonId,
+            enabled: canDrag,
+            onDragStart: onDragStartAssignment,
+          })}
+          accessibilityLabel="Drag assignment to another unit"
+        >
+          <GripVertical size={16} color={CLASSWORK_MUTED} />
+        </View>
+      ) : (
+        <View style={styles.gripSpacer} />
+      )}
+      <View style={styles.assignmentIconWrap}>
+        <FileText size={18} color="#5F6368" />
+      </View>
       <View style={styles.peerBody}>
         <Text style={styles.peerTitle}>{assignment.title || 'Assignment'}</Text>
-        <View style={styles.peerMetaStack}>
-          {dueLine ? <Text style={styles.peerMetaLine}>Due {dueLine}</Text> : null}
-          <Text style={styles.peerMetaLine}>{attachmentLine}</Text>
-          {status ? <Text style={styles.peerStatus}>{status}</Text> : null}
-        </View>
+        {attachmentLine ? (
+          <Text style={styles.peerMetaLine} numberOfLines={1}>{attachmentLine}</Text>
+        ) : (
+          <Text style={styles.peerMetaMuted}>No lesson</Text>
+        )}
+        {learningDay?.event && isParentViewer ? (
+          <TouchableOpacity
+            onPress={() => onViewOnPlanner?.(learningDay.event)}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={styles.peerAction}>View on planner</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      <View style={styles.peerTrailing}>
+        {rightDateLine ? (
+          <Text style={styles.peerDateRight}>{rightDateLine}</Text>
+        ) : status ? (
+          <Text style={styles.peerStatusRight}>{status}</Text>
+        ) : null}
       </View>
       {isParentViewer ? (
         <TouchableOpacity
@@ -216,6 +356,23 @@ function AssignmentPeerRow({
           <MoreVertical size={16} color={CLASSWORK_MUTED} />
         </TouchableOpacity>
       ) : null}
+    </>
+  );
+
+  return (
+    <TouchableOpacity
+      ref={rowRef}
+      style={[
+        styles.peerRow,
+        !isLast && styles.peerRowBorder,
+        highlighted && styles.peerRowHighlight,
+        dragging && styles.peerRowDragging,
+      ]}
+      onPress={() => onPress?.(assignment)}
+      activeOpacity={0.75}
+      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+    >
+      {rowContent}
     </TouchableOpacity>
   );
 }
@@ -386,6 +543,9 @@ export default function SubjectClassworkSection({
   const [attachTarget, setAttachTarget] = useState(null);
   const [menuState, setMenuState] = useState(null);
   const [schedulingAll, setSchedulingAll] = useState(false);
+  const [draggingAssignmentId, setDraggingAssignmentId] = useState(null);
+  const [dragOverTarget, setDragOverTarget] = useState(null);
+  const [movingPlacement, setMovingPlacement] = useState(false);
   const [scheduleModal, setScheduleModal] = useState({
     visible: false,
     title: 'Schedule all lessons',
@@ -536,6 +696,96 @@ export default function SubjectClassworkSection({
     });
   }, [subjectId]);
 
+  const handleViewEventOnPlanner = useCallback((event) => {
+    if (!event) return;
+    dispatchNavigateToPlanner({
+      subjectId,
+      date: plannerDateParamFromEvent(event),
+      eventId: event?.id,
+      view: 'month',
+    });
+  }, [subjectId]);
+
+  const findAssignmentById = useCallback((assignmentId) => {
+    return (assignments || []).find((a) => String(a?.id) === String(assignmentId)) || null;
+  }, [assignments]);
+
+  const moveAssignmentPlacement = useCallback(async ({
+    assignmentId,
+    unitId = null,
+    lessonId = null,
+    lessonTitle = null,
+    unitTitle = null,
+  }) => {
+    const assignment = findAssignmentById(assignmentId);
+    if (!assignment?.id || movingPlacement) return;
+    setMovingPlacement(true);
+    try {
+      await updateAssignmentPlacement({
+        assignmentId: assignment.id,
+        familyId,
+        unitId,
+        lessonId,
+        lessonTitle,
+        unitTitle,
+        linkedEventIds: assignment.linked_event_ids,
+      });
+      toast.push('Assignment moved', 'success');
+      onPlacementChanged?.();
+    } catch (err) {
+      toast.push(err?.message || 'Could not move assignment', 'error');
+    } finally {
+      setMovingPlacement(false);
+      setDraggingAssignmentId(null);
+      setDragOverTarget(null);
+    }
+  }, [findAssignmentById, movingPlacement, familyId, toast, onPlacementChanged]);
+
+  const handleUnitDrop = useCallback((unitId, unitTitle) => (payload) => {
+    if (!payload?.assignmentId) return;
+    const fromUnitId = payload.fromUnitId != null ? String(payload.fromUnitId) : null;
+    const targetUnitId = unitId != null ? String(unitId) : null;
+    if (fromUnitId === targetUnitId && !payload.fromLessonId) return;
+    moveAssignmentPlacement({
+      assignmentId: payload.assignmentId,
+      unitId: targetUnitId,
+      lessonId: null,
+      unitTitle,
+    });
+  }, [moveAssignmentPlacement]);
+
+  const handleLessonDragEnter = useCallback((lessonDropKey) => () => {
+    setDragOverTarget(lessonDropKey);
+  }, []);
+
+  const handleAssignmentDragStart = useCallback((assignmentId) => {
+    setDraggingAssignmentId(String(assignmentId));
+  }, []);
+
+  const handleLessonDrop = useCallback((unit, lesson) => (payload) => {
+    if (!payload?.assignmentId || !lesson?.lessonId) return;
+    const fromUnitId = payload.fromUnitId != null ? String(payload.fromUnitId) : null;
+    const fromLessonId = payload.fromLessonId != null ? String(payload.fromLessonId) : null;
+    if (fromUnitId === String(unit.unitId) && fromLessonId === String(lesson.lessonId)) return;
+    moveAssignmentPlacement({
+      assignmentId: payload.assignmentId,
+      unitId: String(unit.unitId),
+      lessonId: String(lesson.lessonId),
+      lessonTitle: lesson.title,
+      unitTitle: unit.title,
+    });
+  }, [moveAssignmentPlacement]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const clearDrag = () => {
+      setDraggingAssignmentId(null);
+      setDragOverTarget(null);
+    };
+    window.addEventListener('dragend', clearDrag);
+    return () => window.removeEventListener('dragend', clearDrag);
+  }, []);
+
   useEffect(() => {
     if (!highlightLessonId && !highlightAssignmentId) return undefined;
     const t = setTimeout(() => {
@@ -570,8 +820,8 @@ export default function SubjectClassworkSection({
   };
 
   const noUnitItems = useMemo(
-    () => buildNoUnitPeerItems(model.noUnitAssignments),
-    [model.noUnitAssignments],
+    () => buildNoUnitPeerItems(model.noUnitAssignments, model.eventById),
+    [model.noUnitAssignments, model.eventById],
   );
 
   const hasContent = model.units.length > 0 || model.noUnitAssignments.length > 0;
@@ -629,80 +879,131 @@ export default function SubjectClassworkSection({
       ) : null}
       <View style={styles.wrap}>
       {noUnitItems.length > 0 ? (
-        <View style={styles.sectionBlock}>
-          <SectionHeader title="NO UNIT" />
-          <View style={styles.peerList}>
-            {noUnitItems.map((item) => (
-              <AssignmentPeerRow
-                key={item.assignment.id}
-                assignment={item.assignment}
-                attachedLessonTitle={null}
-                isParentViewer={isParentViewer}
-                onPress={onOpenAssignment}
-                onMenu={setPlacementAssignment}
-                highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
-                rowRef={(node) => {
-                  if (node && item.assignment?.id) {
-                    assignmentRowRefs.current[String(item.assignment.id)] = node;
-                  }
-                }}
-              />
-            ))}
-          </View>
-        </View>
+        <UnitTopicSection
+          title="No unit"
+          count={noUnitItems.length}
+          dropActive={dragOverTarget === 'no-unit'}
+          dropWebProps={{
+            ...dropTargetWebProps({
+              onDrop: handleUnitDrop(null, null),
+              isActive: dragOverTarget === 'no-unit',
+            }),
+            ...(Platform.OS === 'web' ? {
+              onDragEnter: () => setDragOverTarget('no-unit'),
+              onDragLeave: (ev) => {
+                if (!ev?.currentTarget?.contains?.(ev?.relatedTarget)) {
+                  setDragOverTarget((prev) => (prev === 'no-unit' ? null : prev));
+                }
+              },
+            } : {}),
+          }}
+        >
+          {noUnitItems.map((item, index) => (
+            <AssignmentPeerRow
+              key={item.assignment.id}
+              assignment={item.assignment}
+              attachedLessonTitle={null}
+              learningDay={item.learningDay}
+              isParentViewer={isParentViewer}
+              onPress={onOpenAssignment}
+              onMenu={setPlacementAssignment}
+              onViewOnPlanner={handleViewEventOnPlanner}
+              highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
+              isLast={index === noUnitItems.length - 1}
+              fromUnitId={null}
+              fromLessonId={null}
+              dragging={String(draggingAssignmentId || '') === String(item.assignment.id)}
+              onDragStartAssignment={handleAssignmentDragStart}
+              rowRef={(node) => {
+                if (node && item.assignment?.id) {
+                  assignmentRowRefs.current[String(item.assignment.id)] = node;
+                }
+              }}
+            />
+          ))}
+        </UnitTopicSection>
       ) : null}
 
-      {model.units.map((unit, unitIndex) => {
-        const peerItems = buildUnitPeerItems(unit);
+      {model.units.map((unit) => {
+        const peerItems = buildUnitPeerItems(unit, model.eventById);
         if (peerItems.length === 0) return null;
-        const headerTitle = `UNIT ${unitIndex + 1} — ${unit.title}`.toUpperCase();
+        const dropKey = `unit-${unit.unitId}`;
         return (
-          <View key={unit.unitId} style={styles.sectionBlock}>
-            <SectionHeader title={headerTitle} />
-            <View style={styles.peerList}>
-              {peerItems.map((item) => {
-                if (item.kind === 'lesson') {
-                  return (
-                    <LessonPeerRow
-                      key={`lesson-${item.lesson.lessonId || item.lesson.title}`}
-                      lesson={item.lesson}
-                      unit={unit}
-                      isParentViewer={isParentViewer}
-                      onSchedule={setScheduleLesson}
-                      onAttach={setAttachTarget}
-                      onViewOnPlanner={handleViewOnPlanner}
-                      hasUnattachedAssignments={model.noUnitAssignments.length > 0}
-                      menuState={menuState}
-                      setMenuState={setMenuState}
-                      closeMenu={closeMenu}
-                      highlighted={String(highlightLessonId || '') === String(item.lesson.lessonId)}
-                      rowRef={(node) => {
-                        if (node && item.lesson?.lessonId) {
-                          lessonRowRefs.current[String(item.lesson.lessonId)] = node;
-                        }
-                      }}
-                    />
-                  );
-                }
+          <UnitTopicSection
+            key={unit.unitId}
+            title={unit.title}
+            count={peerItems.length}
+            dropActive={dragOverTarget === dropKey}
+            dropWebProps={{
+              ...dropTargetWebProps({
+                onDrop: handleUnitDrop(unit.unitId, unit.title),
+                isActive: dragOverTarget === dropKey,
+              }),
+              ...(Platform.OS === 'web' ? {
+                onDragEnter: () => setDragOverTarget(dropKey),
+                onDragLeave: (ev) => {
+                  if (!ev?.currentTarget?.contains?.(ev?.relatedTarget)) {
+                    setDragOverTarget((prev) => (prev === dropKey ? null : prev));
+                  }
+                },
+              } : {}),
+            }}
+          >
+            {peerItems.map((item, index) => {
+              const isLast = index === peerItems.length - 1;
+              if (item.kind === 'lesson') {
+                const lessonDropKey = `lesson-${unit.unitId}-${item.lesson.lessonId}`;
                 return (
-                  <AssignmentPeerRow
-                    key={item.assignment.id}
-                    assignment={item.assignment}
-                    attachedLessonTitle={item.attachedLessonTitle}
+                  <LessonPeerRow
+                    key={`lesson-${item.lesson.lessonId || item.lesson.title}`}
+                    lesson={item.lesson}
+                    unit={unit}
                     isParentViewer={isParentViewer}
-                    onPress={onOpenAssignment}
-                    onMenu={setPlacementAssignment}
-                    highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
+                    onSchedule={setScheduleLesson}
+                    onAttach={setAttachTarget}
+                    onViewOnPlanner={handleViewOnPlanner}
+                    hasUnattachedAssignments={model.noUnitAssignments.length > 0}
+                    menuState={menuState}
+                    setMenuState={setMenuState}
+                    closeMenu={closeMenu}
+                    highlighted={String(highlightLessonId || '') === String(item.lesson.lessonId)}
+                    isLast={isLast}
+                    lessonDropActive={dragOverTarget === lessonDropKey}
+                    onLessonDrop={handleLessonDrop(unit, item.lesson)}
+                    onLessonDragEnter={handleLessonDragEnter(lessonDropKey)}
                     rowRef={(node) => {
-                      if (node && item.assignment?.id) {
-                        assignmentRowRefs.current[String(item.assignment.id)] = node;
+                      if (node && item.lesson?.lessonId) {
+                        lessonRowRefs.current[String(item.lesson.lessonId)] = node;
                       }
                     }}
                   />
                 );
-              })}
-            </View>
-          </View>
+              }
+              return (
+                <AssignmentPeerRow
+                  key={item.assignment.id}
+                  assignment={item.assignment}
+                  attachedLessonTitle={item.attachedLessonTitle}
+                  learningDay={item.learningDay}
+                  isParentViewer={isParentViewer}
+                  onPress={onOpenAssignment}
+                  onMenu={setPlacementAssignment}
+                  onViewOnPlanner={handleViewEventOnPlanner}
+                  highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
+                  isLast={isLast}
+                  fromUnitId={unit.unitId}
+                  fromLessonId={item.attachedLessonId}
+                  dragging={String(draggingAssignmentId || '') === String(item.assignment.id)}
+                  onDragStartAssignment={handleAssignmentDragStart}
+                  rowRef={(node) => {
+                    if (node && item.assignment?.id) {
+                      assignmentRowRefs.current[String(item.assignment.id)] = node;
+                    }
+                  }}
+                />
+              );
+            })}
+          </UnitTopicSection>
         );
       })}
 
@@ -812,49 +1113,99 @@ const styles = StyleSheet.create({
   wrap: {
     paddingHorizontal: 14,
     paddingBottom: 28,
-    gap: 28,
+    gap: 20,
   },
   sectionBlock: {
-    gap: 10,
-  },
-  sectionHeader: {
     gap: 8,
   },
-  sectionHeaderText: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.6,
-    color: '#64748B',
+  topicHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 2,
+  },
+  topicHeaderText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: CLASSWORK_FG,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  sectionHeaderRule: {
-    height: 1,
-    backgroundColor: '#E2E8F0',
+  topicHeaderCount: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: CLASSWORK_MUTED,
   },
-  peerList: {
-    gap: 14,
-    paddingTop: 4,
+  topicCard: {
+    backgroundColor: CLASSWORK_BG,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: CLASSWORK_BORDER,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
+    }),
+  },
+  topicCardDropActive: {
+    borderColor: '#93C5FD',
+    backgroundColor: '#F8FBFF',
   },
   peerRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 10,
-    paddingVertical: 2,
-    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    minHeight: 56,
+    backgroundColor: CLASSWORK_BG,
+  },
+  peerRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
   peerRowHighlight: {
     backgroundColor: '#FEF9C3',
-    borderWidth: 1,
-    borderColor: '#FDE047',
-    paddingHorizontal: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#FACC15',
+    paddingLeft: 9,
+  },
+  peerRowDragging: {
+    opacity: 0.45,
+  },
+  peerRowDropActive: {
+    backgroundColor: '#EFF6FF',
+    outlineWidth: Platform.OS === 'web' ? 2 : 0,
+    outlineStyle: Platform.OS === 'web' ? 'dashed' : undefined,
+    outlineColor: Platform.OS === 'web' ? '#93C5FD' : undefined,
   },
   peerRowMenuOpen: {
     zIndex: 60,
   },
-  peerIconDoc: {
-    marginTop: 2,
+  gripHandle: {
+    width: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && { cursor: 'grab' }),
+  },
+  gripSpacer: {
+    width: 20,
+    flexShrink: 0,
+  },
+  lessonIconWrap: {
+    width: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  assignmentIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
     flexShrink: 0,
   },
   lessonDot: {
@@ -863,19 +1214,25 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     borderWidth: 2,
     borderColor: '#94A3B8',
-    marginTop: 5,
     flexShrink: 0,
   },
   peerBody: {
     flex: 1,
     minWidth: 0,
-    gap: 4,
+    gap: 2,
+  },
+  peerTrailing: {
+    minWidth: 88,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    flexShrink: 0,
+    paddingRight: 2,
   },
   peerTitle: {
     fontSize: 15,
     fontWeight: '600',
     color: CLASSWORK_FG,
-    lineHeight: 21,
+    lineHeight: 20,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -885,9 +1242,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: 8,
-  },
-  peerMetaStack: {
-    gap: 2,
   },
   peerMetaScheduled: {
     fontSize: 13,
@@ -901,16 +1255,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748B',
   },
+  peerDateRight: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'right',
+  },
+  peerStatusRight: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6366F1',
+    textAlign: 'right',
+  },
   peerAction: {
     fontSize: 13,
     fontWeight: '600',
     color: '#2563EB',
-  },
-  peerStatus: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6366F1',
-    marginTop: 2,
   },
   iconBtn: {
     padding: 4,

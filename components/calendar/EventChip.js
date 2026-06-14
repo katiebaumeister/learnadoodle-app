@@ -60,10 +60,16 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     [ev?.id, ev?.child_id, ev?.child_ids, children]
   );
 
-  // Get background color based on planner category (four colors only)
-  const getBackgroundColor = () => categoryMeta.color;
+  // Get background color based on planner category (three filter colors; US holidays stay blank)
+  const getBackgroundColor = () => {
+    if (isPublicHoliday) return 'transparent';
+    return categoryMeta.color;
+  };
 
-  const getHoverBackgroundColor = () => categoryMeta.hoverColor || categoryMeta.color;
+  const getHoverBackgroundColor = () => {
+    if (isPublicHoliday) return 'rgba(0, 0, 0, 0.02)';
+    return categoryMeta.hoverColor || categoryMeta.color;
+  };
 
   const getTitleColor = () => {
     if (isPlaceholder) return '#6B7280';

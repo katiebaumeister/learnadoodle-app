@@ -13,7 +13,7 @@ export const PLANNER_SMART_ACTION_SECTIONS = [
     id: 'plan-ahead',
     title: 'Plan Ahead',
     modes: [
-      { id: 'school-year-settings', title: 'School Year Settings' },
+      { id: 'school-year-settings', title: 'Edit School Year' },
       { id: 'what-if', title: 'What-If Scenarios' },
     ],
   },
@@ -29,7 +29,7 @@ export const PLANNER_SMART_ACTION_SECTIONS = [
 ];
 
 export const PLANNER_SMART_ACTION_TOOLS = [
-  { id: 'school-year-settings', title: 'School Year Settings' },
+  { id: 'school-year-settings', title: 'Edit School Year' },
   { id: 'bulk-attendance', title: 'Bulk Attendance' },
   { id: 'export-attendance', title: 'Export Attendance' },
 ];
