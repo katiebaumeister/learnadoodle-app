@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -19,12 +19,18 @@ import {
   buildUnitPeerItems,
   buildNoUnitPeerItems,
 } from '../../lib/subjectClassworkModel';
+import { autoAssignLessonsToUnlinkedEvents } from '../../lib/subjectLessonLinking';
+import {
+  dispatchNavigateToPlanner,
+  plannerDateParamFromEvent,
+} from '../../lib/subjectClassworkNavigation';
 import { getWorkStatusLabel } from '../../lib/workEventHelpers';
 import { formatDueShort } from '../tutor/tutorHelpUtils';
 import { updateAssignmentPlacement } from '../../lib/services/assignmentPlacementClient';
 import { useToast } from '../Toast';
 import AssignPlacementModal from './AssignPlacementModal';
 import ScheduleLessonModal from './ScheduleLessonModal';
+import ClassworkPlanningModal from './ClassworkPlanningModal';
 import {
   CLASSWORK_FG,
   CLASSWORK_MUTED,
@@ -70,10 +76,13 @@ function LessonPeerRow({
   isParentViewer,
   onSchedule,
   onAttach,
+  onViewOnPlanner,
   hasUnattachedAssignments,
   menuState,
   setMenuState,
   closeMenu,
+  highlighted = false,
+  rowRef,
 }) {
   const menuKey = `lesson-${unit.unitId}-${lesson.lessonId}`;
   const menuOpen = menuState?.key === menuKey;
@@ -97,10 +106,24 @@ function LessonPeerRow({
         }),
       });
     }
+    if (lesson.schedule?.event) {
+      menuItems.push({
+        key: 'planner',
+        label: 'View on planner',
+        onPress: () => onViewOnPlanner?.(lesson),
+      });
+    }
   }
 
   return (
-    <View style={[styles.peerRow, menuOpen && Platform.OS === 'web' && styles.peerRowMenuOpen]}>
+    <View
+      ref={rowRef}
+      style={[
+        styles.peerRow,
+        menuOpen && Platform.OS === 'web' && styles.peerRowMenuOpen,
+        highlighted && styles.peerRowHighlight,
+      ]}
+    >
       <View style={styles.lessonDot} />
       <View style={styles.peerBody}>
         <Text style={styles.peerTitle}>{lesson.title || 'Lesson'}</Text>
@@ -122,6 +145,14 @@ function LessonPeerRow({
               ) : null}
             </>
           )}
+          {lesson.schedule?.dateLabel && isParentViewer ? (
+            <TouchableOpacity
+              onPress={() => onViewOnPlanner?.(lesson)}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.peerAction}>View on planner</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
       {isParentViewer && menuItems.length > 0 ? (
@@ -146,6 +177,8 @@ function AssignmentPeerRow({
   isParentViewer,
   onPress,
   onMenu,
+  highlighted = false,
+  rowRef,
 }) {
   const status = getWorkStatusLabel(assignment);
   const dueLine = formatDueShort(assignment.due_date);
@@ -155,7 +188,8 @@ function AssignmentPeerRow({
 
   return (
     <TouchableOpacity
-      style={styles.peerRow}
+      ref={rowRef}
+      style={[styles.peerRow, highlighted && styles.peerRowHighlight]}
       onPress={() => onPress?.(assignment)}
       activeOpacity={0.75}
       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -229,14 +263,46 @@ function AttachAssignmentModal({
 function ClassworkActionSet({
   onManageUnits,
   onCreateAssignment,
+  onGapAnalysis,
+  showGapAnalysis = false,
+  gapAnalysisWorking = false,
+  onScheduleAllLessons,
+  showScheduleAllLessons = false,
+  schedulingAll = false,
   unitsActionLabel = 'Add unit',
 }) {
   const showUnits = !!onManageUnits;
   const showAssignment = !!onCreateAssignment;
-  if (!showUnits && !showAssignment) return null;
+  if (!showUnits && !showAssignment && !showScheduleAllLessons && !showGapAnalysis) return null;
 
   return (
     <View style={styles.actionSet}>
+      {showGapAnalysis ? (
+        <TouchableOpacity
+          style={[styles.actionPillBtn, gapAnalysisWorking && styles.actionPillBtnDisabled]}
+          onPress={onGapAnalysis}
+          disabled={gapAnalysisWorking}
+          accessibilityLabel="Gap analysis"
+          {...(Platform.OS === 'web' && { cursor: gapAnalysisWorking ? 'default' : 'pointer' })}
+        >
+          <Text style={styles.actionPillBtnText}>
+            {gapAnalysisWorking ? 'Working…' : 'Gap analysis'}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+      {showScheduleAllLessons ? (
+        <TouchableOpacity
+          style={[styles.actionPillBtn, schedulingAll && styles.actionPillBtnDisabled]}
+          onPress={onScheduleAllLessons}
+          disabled={schedulingAll}
+          accessibilityLabel="Schedule all lessons"
+          {...(Platform.OS === 'web' && { cursor: schedulingAll ? 'default' : 'pointer' })}
+        >
+          <Text style={styles.actionPillBtnText}>
+            {schedulingAll ? 'Scheduling…' : 'Schedule all lessons'}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
       {showUnits ? (
         <TouchableOpacity
           style={styles.actionPillBtn}
@@ -298,18 +364,190 @@ export default function SubjectClassworkSection({
   onManageUnits,
   unitsActionLabel = 'Add units',
   onPlacementChanged,
+  highlightLessonId = null,
+  highlightAssignmentId = null,
+  onGapAnalysis = null,
+  gapAnalysisWorking = false,
 }) {
   const toast = useToast();
   const model = useMemo(
     () => buildSubjectClassworkModel({ units, assignments, events }),
     [units, assignments, events],
   );
+  const totalLessonCount = useMemo(
+    () => (units || []).reduce(
+      (sum, unit) => sum + (unit?.lessons || []).filter((lesson) => lesson?.id != null).length,
+      0,
+    ),
+    [units],
+  );
   const [placementAssignment, setPlacementAssignment] = useState(null);
   const [scheduleLesson, setScheduleLesson] = useState(null);
   const [attachTarget, setAttachTarget] = useState(null);
   const [menuState, setMenuState] = useState(null);
+  const [schedulingAll, setSchedulingAll] = useState(false);
+  const [scheduleModal, setScheduleModal] = useState({
+    visible: false,
+    title: 'Schedule all lessons',
+    message: '',
+    showConfirm: false,
+    confirmLabel: 'Schedule lessons',
+    cancelLabel: 'Close',
+    working: false,
+    mode: 'info',
+  });
+  const lessonRowRefs = useRef({});
+  const assignmentRowRefs = useRef({});
 
   const closeMenu = useCallback(() => setMenuState(null), []);
+
+  const closeScheduleModal = useCallback(() => {
+    if (schedulingAll) return;
+    setScheduleModal({
+      visible: false,
+      title: 'Schedule all lessons',
+      message: '',
+      showConfirm: false,
+      confirmLabel: 'Schedule lessons',
+      cancelLabel: 'Close',
+      working: false,
+      mode: 'info',
+    });
+  }, [schedulingAll]);
+
+  const openScheduleAllModal = useCallback(() => {
+    if (!familyId || !subjectId || schedulingAll) return;
+    const count = model.unscheduledLessonCount;
+    if (count <= 0) {
+      if (totalLessonCount <= 0) {
+        setScheduleModal({
+          visible: true,
+          title: 'Schedule all lessons',
+          message: 'Add units and lessons first. This will place each lesson on the next open learning day on your planner.',
+          showConfirm: false,
+          confirmLabel: 'OK',
+          cancelLabel: 'Close',
+          working: false,
+          mode: 'info',
+        });
+      } else {
+        setScheduleModal({
+          visible: true,
+          title: 'Schedule all lessons',
+          message: 'All curriculum lessons are already linked to learning days on your planner.',
+          showConfirm: false,
+          confirmLabel: 'OK',
+          cancelLabel: 'Close',
+          working: false,
+          mode: 'info',
+        });
+      }
+      return;
+    }
+    setScheduleModal({
+      visible: true,
+      title: 'Schedule all lessons',
+      message: [
+        `${count} lesson${count === 1 ? '' : 's'} ${count === 1 ? 'is' : 'are'} not scheduled yet.`,
+        '',
+        'We will link each lesson to the next open learning day for this subject, in unit order.',
+      ].join('\n'),
+      showConfirm: true,
+      confirmLabel: 'Schedule lessons',
+      cancelLabel: 'Cancel',
+      working: false,
+      mode: 'schedule',
+    });
+  }, [familyId, subjectId, schedulingAll, model.unscheduledLessonCount, totalLessonCount]);
+
+  const confirmScheduleAllModal = useCallback(async () => {
+    if (scheduleModal.mode === 'done' || scheduleModal.mode === 'info' || !scheduleModal.showConfirm) {
+      closeScheduleModal();
+      return;
+    }
+    setScheduleModal((prev) => ({ ...prev, working: true }));
+    setSchedulingAll(true);
+    try {
+      const { assigned } = await autoAssignLessonsToUnlinkedEvents({
+        familyId,
+        subjectId,
+        subjectEvents: events,
+        units,
+        limit: Math.max(model.unscheduledLessonCount, 20),
+      });
+      if (assigned > 0) {
+        onPlacementChanged?.();
+        setScheduleModal({
+          visible: true,
+          title: 'Lessons scheduled',
+          message: `Scheduled ${assigned} lesson${assigned === 1 ? '' : 's'} on upcoming learning days.`,
+          showConfirm: true,
+          confirmLabel: 'Done',
+          cancelLabel: 'Close',
+          working: false,
+          mode: 'done',
+        });
+      } else {
+        setScheduleModal({
+          visible: true,
+          title: 'Schedule all lessons',
+          message: 'No open learning days are available for this subject. Use Gap analysis to add sessions or extend your school year.',
+          showConfirm: false,
+          confirmLabel: 'OK',
+          cancelLabel: 'Close',
+          working: false,
+          mode: 'info',
+        });
+      }
+    } catch (err) {
+      setScheduleModal({
+        visible: true,
+        title: 'Could not schedule lessons',
+        message: err?.message || 'Something went wrong.',
+        showConfirm: false,
+        confirmLabel: 'OK',
+        cancelLabel: 'Close',
+        working: false,
+        mode: 'info',
+      });
+    } finally {
+      setSchedulingAll(false);
+    }
+  }, [
+    scheduleModal.mode,
+    scheduleModal.showConfirm,
+    familyId,
+    subjectId,
+    events,
+    units,
+    model.unscheduledLessonCount,
+    closeScheduleModal,
+    onPlacementChanged,
+  ]);
+
+  const handleViewOnPlanner = useCallback((lesson) => {
+    const event = lesson?.schedule?.event;
+    if (!event) return;
+    dispatchNavigateToPlanner({
+      subjectId,
+      date: plannerDateParamFromEvent(event),
+      eventId: lesson?.schedule?.eventId || event?.id,
+      view: 'month',
+    });
+  }, [subjectId]);
+
+  useEffect(() => {
+    if (!highlightLessonId && !highlightAssignmentId) return undefined;
+    const t = setTimeout(() => {
+      const lessonRef = highlightLessonId ? lessonRowRefs.current[highlightLessonId] : null;
+      const assignmentRef = highlightAssignmentId ? assignmentRowRefs.current[highlightAssignmentId] : null;
+      const node = lessonRef || assignmentRef;
+      if (node && typeof node.scrollIntoView === 'function') {
+        node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 280);
+    return () => clearTimeout(t);
+  }, [highlightLessonId, highlightAssignmentId, model]);
 
   const handleAttachAssignment = async (assignment) => {
     if (!attachTarget?.lessonId || !assignment?.id) return;
@@ -346,11 +584,28 @@ export default function SubjectClassworkSection({
             <ClassworkActionSet
               onManageUnits={onManageUnits}
               onCreateAssignment={onCreateAssignment}
+              onGapAnalysis={onGapAnalysis}
+              showGapAnalysis={!!onGapAnalysis}
+              gapAnalysisWorking={gapAnalysisWorking}
+              onScheduleAllLessons={openScheduleAllModal}
+              showScheduleAllLessons={isParentViewer}
+              schedulingAll={schedulingAll}
               unitsActionLabel={unitsActionLabel}
             />
           </ClassworkToolbar>
         ) : null}
         <EmptyClassworkState isParentViewer={isParentViewer} />
+        <ClassworkPlanningModal
+          visible={scheduleModal.visible}
+          title={scheduleModal.title}
+          message={scheduleModal.message}
+          working={scheduleModal.working}
+          showConfirm={scheduleModal.showConfirm}
+          confirmLabel={scheduleModal.confirmLabel}
+          cancelLabel={scheduleModal.cancelLabel}
+          onConfirm={confirmScheduleAllModal}
+          onCancel={closeScheduleModal}
+        />
       </View>
     );
   }
@@ -362,6 +617,12 @@ export default function SubjectClassworkSection({
           <ClassworkActionSet
             onManageUnits={onManageUnits}
             onCreateAssignment={onCreateAssignment}
+            onGapAnalysis={onGapAnalysis}
+            showGapAnalysis={!!onGapAnalysis}
+            gapAnalysisWorking={gapAnalysisWorking}
+            onScheduleAllLessons={openScheduleAllModal}
+            showScheduleAllLessons={isParentViewer}
+            schedulingAll={schedulingAll}
             unitsActionLabel={unitsActionLabel}
           />
         </ClassworkToolbar>
@@ -379,6 +640,12 @@ export default function SubjectClassworkSection({
                 isParentViewer={isParentViewer}
                 onPress={onOpenAssignment}
                 onMenu={setPlacementAssignment}
+                highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
+                rowRef={(node) => {
+                  if (node && item.assignment?.id) {
+                    assignmentRowRefs.current[String(item.assignment.id)] = node;
+                  }
+                }}
               />
             ))}
           </View>
@@ -403,10 +670,17 @@ export default function SubjectClassworkSection({
                       isParentViewer={isParentViewer}
                       onSchedule={setScheduleLesson}
                       onAttach={setAttachTarget}
+                      onViewOnPlanner={handleViewOnPlanner}
                       hasUnattachedAssignments={model.noUnitAssignments.length > 0}
                       menuState={menuState}
                       setMenuState={setMenuState}
                       closeMenu={closeMenu}
+                      highlighted={String(highlightLessonId || '') === String(item.lesson.lessonId)}
+                      rowRef={(node) => {
+                        if (node && item.lesson?.lessonId) {
+                          lessonRowRefs.current[String(item.lesson.lessonId)] = node;
+                        }
+                      }}
                     />
                   );
                 }
@@ -418,6 +692,12 @@ export default function SubjectClassworkSection({
                     isParentViewer={isParentViewer}
                     onPress={onOpenAssignment}
                     onMenu={setPlacementAssignment}
+                    highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
+                    rowRef={(node) => {
+                      if (node && item.assignment?.id) {
+                        assignmentRowRefs.current[String(item.assignment.id)] = node;
+                      }
+                    }}
                   />
                 );
               })}
@@ -461,6 +741,18 @@ export default function SubjectClassworkSection({
         lessonLabel={attachTarget?.label || 'lesson'}
         assignments={model.noUnitAssignments}
         onSelect={handleAttachAssignment}
+      />
+
+      <ClassworkPlanningModal
+        visible={scheduleModal.visible}
+        title={scheduleModal.title}
+        message={scheduleModal.message}
+        working={scheduleModal.working}
+        showConfirm={scheduleModal.showConfirm}
+        confirmLabel={scheduleModal.confirmLabel}
+        cancelLabel={scheduleModal.cancelLabel}
+        onConfirm={confirmScheduleAllModal}
+        onCancel={closeScheduleModal}
       />
     </View>
   );
@@ -506,6 +798,9 @@ const styles = StyleSheet.create({
       cursor: 'pointer',
     }),
   },
+  actionPillBtnDisabled: {
+    opacity: 0.6,
+  },
   actionPillBtnText: {
     fontSize: 15,
     fontWeight: '500',
@@ -547,6 +842,13 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 10,
     paddingVertical: 2,
+    borderRadius: 8,
+  },
+  peerRowHighlight: {
+    backgroundColor: '#FEF9C3',
+    borderWidth: 1,
+    borderColor: '#FDE047',
+    paddingHorizontal: 8,
   },
   peerRowMenuOpen: {
     zIndex: 60,

@@ -78,8 +78,21 @@ import AttachLessonToEventModal from './AttachLessonToEventModal';
 import SubjectClassroomTabs from './SubjectClassroomTabs';
 import SubjectClassworkSection from './SubjectClassworkSection';
 import SubjectGradesPanel from './SubjectGradesPanel';
+import SubjectGapAnalysisModal from './SubjectGapAnalysisModal';
 import { parseSubjectGradingSettings, getGradingMethodLabel } from '../../lib/subjectGradingSettings';
 import { buildSubjectClassworkModel } from '../../lib/subjectClassworkModel';
+import { executeSubjectGapFix, previewSubjectGapFix } from '../../lib/subjectAddSessions';
+import {
+  appendLocalFixGapHistoryEntry,
+  buildFixGapHistoryRunDetails,
+  buildLocalFixGapHistoryEntry,
+  canUndoFixGapEntry,
+  formatFixGapHistorySlotLabel,
+  getLatestUndoableFixGapEntry,
+  loadSubjectFixGapHistory,
+  normalizeFixGapSlots,
+  undoSubjectFixGapLatest,
+} from '../../lib/subjectFixGapHistory';
 
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_ASSIGNMENTS_SECTION = false;
@@ -448,6 +461,8 @@ export default function SubjectDetailPage({
   initialScrollToSectionId = null,
   initialOpenMaterialId = null,
   initialProgressAction = null,
+  initialClassworkFocus = null,
+  onNavigateToPlanner = null,
   layoutVariant = 'default',
 }) {
   const initialSubjectIdForProgressCache = subjectId || preloadedSubjectData?.subject?.id;
@@ -487,8 +502,26 @@ export default function SubjectDetailPage({
   const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
   const [showAttendanceGapSuggestion, setShowAttendanceGapSuggestion] = useState(false);
   const [classroomTab, setClassroomTab] = useState('bulletin');
+  const [highlightLessonId, setHighlightLessonId] = useState(null);
+  const [highlightAssignmentId, setHighlightAssignmentId] = useState(null);
   const [showAttendanceSuggestionConfirmModal, setShowAttendanceSuggestionConfirmModal] = useState(false);
   const [applyingAttendanceSuggestion, setApplyingAttendanceSuggestion] = useState(false);
+  const [gapAnalysisWorking, setGapAnalysisWorking] = useState(false);
+  const [gapUndoing, setGapUndoing] = useState(false);
+  const [gapHistoryRuns, setGapHistoryRuns] = useState([]);
+  const [gapSlotLines, setGapSlotLines] = useState([]);
+  const [gapModal, setGapModal] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    loading: false,
+    working: false,
+    showConfirm: false,
+    confirmLabel: 'OK',
+    cancelLabel: 'Close',
+    mode: 'info',
+  });
+  const gapPreviewRef = useRef(null);
   const [showEditUnitsModal, setShowEditUnitsModal] = useState(false);
   const [editUnitsInitialDraft, setEditUnitsInitialDraft] = useState(null);
   const [showAttachLessonModal, setShowAttachLessonModal] = useState(false);
@@ -507,6 +540,7 @@ export default function SubjectDetailPage({
   const loadingRef = useRef(false);
   const autoOpenedMaterialKeyRef = useRef(null);
   const autoOpenedProgressActionRef = useRef(null);
+  const highlightClearTimeoutRef = useRef(null);
   const materialHighlightTimeoutRef = useRef(null);
   const materialContextMenuIdRef = useRef(`subject-detail-material-context-menu-${Math.random().toString(36).slice(2)}`);
   useEffect(() => {
@@ -921,6 +955,9 @@ export default function SubjectDetailPage({
       if (action === 'configure_schedule') {
         openSubjectSettings('schedule');
       }
+      if (action === 'classwork' || action === 'schedule_lessons') {
+        setClassroomTab('classwork');
+      }
     }, 260);
     return () => clearTimeout(t);
   }, [
@@ -930,6 +967,29 @@ export default function SubjectDetailPage({
     openUnitsEditor,
     openSubjectSettings,
   ]);
+
+  useEffect(() => {
+    const focus = initialClassworkFocus;
+    if (!focus || !subjectId) return;
+    if (focus.tab) setClassroomTab(focus.tab);
+    else setClassroomTab('classwork');
+    if (focus.lessonId) {
+      setHighlightLessonId(String(focus.lessonId));
+      if (highlightClearTimeoutRef.current) clearTimeout(highlightClearTimeoutRef.current);
+      highlightClearTimeoutRef.current = setTimeout(() => {
+        setHighlightLessonId(null);
+        highlightClearTimeoutRef.current = null;
+      }, 3200);
+    }
+    if (focus.assignmentId) {
+      setHighlightAssignmentId(String(focus.assignmentId));
+      if (highlightClearTimeoutRef.current) clearTimeout(highlightClearTimeoutRef.current);
+      highlightClearTimeoutRef.current = setTimeout(() => {
+        setHighlightAssignmentId(null);
+        highlightClearTimeoutRef.current = null;
+      }, 3200);
+    }
+  }, [initialClassworkFocus, subjectId]);
 
   useEffect(() => {
     if (!initialOpenMaterialId) return;
@@ -1737,7 +1797,9 @@ export default function SubjectDetailPage({
   const unitsEditorLabel = hasLearningGoalsContent ? 'Edit units' : 'Add units';
 
   const bulletinTabCaption = 'Recent activity and communications';
-  const classworkTabCaption = 'Organize lessons and assignments';
+  const classworkTabCaption = classworkModel.unscheduledLessonCount > 0
+    ? `${classworkModel.unscheduledLessonCount} lesson${classworkModel.unscheduledLessonCount === 1 ? '' : 's'} not scheduled`
+    : 'Organize lessons and assignments';
   const gradesTabCaption = 'Review grades and missing work';
 
   const openEventWorkflow = useCallback((event, {
@@ -1832,6 +1894,20 @@ export default function SubjectDetailPage({
     }
     return Math.max(0, Number(attendanceTargetProgress.remaining) || 0);
   }, [attendanceTargetProgress]);
+  const sessionsGapSurplusDays = useMemo(() => {
+    if (!attendanceTargetProgress) return 0;
+    const projected = attendanceTargetProgress.mode === 'days'
+      ? Number(attendanceTargetProgress.projectedDays ?? attendanceTargetProgress.actual ?? 0)
+      : Number(attendanceTargetProgress.actual ?? 0);
+    const target = Number(attendanceTargetProgress.target ?? 0);
+    return Math.max(0, Number((projected - target).toFixed(1)));
+  }, [attendanceTargetProgress]);
+  const sessionsPlanningStatus = useMemo(() => {
+    if (!attendanceTargetProgress) return 'no_target';
+    if (sessionsGapSurplusDays > 0) return 'ahead';
+    if (attendanceGapAmount > 0) return 'gap';
+    return 'on_track';
+  }, [attendanceTargetProgress, attendanceGapAmount, sessionsGapSurplusDays]);
   const showAttendanceGapChip = Boolean(
     attendanceTargetProgress
     && !attendanceTargetProgress.met
@@ -2211,6 +2287,17 @@ export default function SubjectDetailPage({
     setAssignedDetailAssignment(a);
   }, [isParentViewer]);
 
+  const openAssignmentInClasswork = useCallback((assignment) => {
+    if (!assignment?.id) return;
+    setClassroomTab('classwork');
+    setHighlightAssignmentId(String(assignment.id));
+    if (highlightClearTimeoutRef.current) clearTimeout(highlightClearTimeoutRef.current);
+    highlightClearTimeoutRef.current = setTimeout(() => {
+      setHighlightAssignmentId(null);
+      highlightClearTimeoutRef.current = null;
+    }, 3200);
+  }, []);
+
   const handleAssignmentActivityPress = useCallback((item) => {
     if (!item?.assignmentId) return;
     const match = subjectAssignments.find(
@@ -2224,6 +2311,330 @@ export default function SubjectDetailPage({
     await loadLearningGoalsStructure();
     await loadSubjectDetail({ silent: true });
   }, [loadLearningGoalsStructure, loadSubjectDetail]);
+
+  const gapAcademicYearId = subjectPlanYearId || subjectPlanYearIdFromEvents || null;
+
+  const reloadGapHistory = useCallback(async () => {
+    if (!familyId || !subject?.id || !gapAcademicYearId) {
+      setGapHistoryRuns([]);
+      return [];
+    }
+    const { runs } = await loadSubjectFixGapHistory({
+      familyId,
+      academicYearId: gapAcademicYearId,
+      subjectId: subject.id,
+    });
+    setGapHistoryRuns(runs);
+    return runs;
+  }, [familyId, subject?.id, gapAcademicYearId]);
+
+  const gapHistoryRunDetails = useMemo(
+    () => buildFixGapHistoryRunDetails(gapHistoryRuns, subject?.id),
+    [gapHistoryRuns, subject?.id],
+  );
+
+  const canUndoGapAnalysis = useMemo(() => {
+    const latest = getLatestUndoableFixGapEntry(gapHistoryRuns);
+    return canUndoFixGapEntry(latest);
+  }, [gapHistoryRuns]);
+
+  const closeGapAnalysisModal = useCallback(() => {
+    if (gapAnalysisWorking || gapUndoing) return;
+    gapPreviewRef.current = null;
+    setGapSlotLines([]);
+    setGapModal({
+      visible: false,
+      title: '',
+      message: '',
+      loading: false,
+      working: false,
+      showConfirm: false,
+      confirmLabel: 'OK',
+      cancelLabel: 'Close',
+      mode: 'info',
+    });
+  }, [gapAnalysisWorking, gapUndoing]);
+
+  const openGapAnalysisModal = useCallback(() => {
+    if (!familyId || !subject?.id || gapAnalysisWorking || gapUndoing) return;
+    const gapMode = attendanceTargetProgress?.mode === 'hours' ? 'hours' : 'days';
+    const unit = gapMode === 'hours' ? 'hour' : 'day';
+    const units = gapMode === 'hours' ? 'hours' : 'days';
+
+    reloadGapHistory();
+    setGapSlotLines([]);
+
+    if (sessionsPlanningStatus === 'no_target') {
+      gapPreviewRef.current = null;
+      setGapModal({
+        visible: true,
+        title: 'Gap analysis',
+        message: 'No year target is set for this subject yet.\n\nSet an instructional day target in School Year Settings to compare planned sessions against your goal.',
+        loading: false,
+        working: false,
+        showConfirm: false,
+        confirmLabel: 'OK',
+        cancelLabel: 'Close',
+        mode: 'info',
+      });
+      return;
+    }
+
+    if (sessionsPlanningStatus === 'on_track') {
+      gapPreviewRef.current = null;
+      setGapModal({
+        visible: true,
+        title: 'Gap analysis',
+        message: `You are on track for your year target of ${attendanceTargetProgress.target} ${units}.`,
+        loading: false,
+        working: false,
+        showConfirm: false,
+        confirmLabel: 'OK',
+        cancelLabel: 'Close',
+        mode: 'info',
+      });
+      return;
+    }
+
+    if (sessionsPlanningStatus === 'ahead') {
+      const rounded = gapMode === 'hours'
+        ? Number(sessionsGapSurplusDays).toFixed(1)
+        : Math.round(sessionsGapSurplusDays);
+      gapPreviewRef.current = null;
+      setGapModal({
+        visible: true,
+        title: 'Gap analysis',
+        message: `Projected ${rounded} ${Number(rounded) === 1 ? unit : units} ahead of your year target of ${attendanceTargetProgress.target} ${units}.`,
+        loading: false,
+        working: false,
+        showConfirm: false,
+        confirmLabel: 'OK',
+        cancelLabel: 'Close',
+        mode: 'info',
+      });
+      return;
+    }
+
+    gapPreviewRef.current = null;
+    setGapModal({
+      visible: true,
+      title: 'Gap analysis',
+      message: 'Checking open learning windows in your saved school year range…',
+      loading: true,
+      working: false,
+      showConfirm: false,
+      confirmLabel: 'Add sessions',
+      cancelLabel: 'Cancel',
+      mode: 'add_sessions',
+    });
+
+    (async () => {
+      try {
+        const plan = subjectPlanData?.plan || {};
+        const schoolYearRange = fullYearRangeFromSchoolYearLabel(subject?.school_year);
+        const preview = await previewSubjectGapFix({
+          familyId,
+          subjectId: subject.id,
+          academicYearId: gapAcademicYearId,
+          attendanceTargetProgress,
+          planRange: {
+            startYmd: String(plan?.start_date || schoolYearRange?.start_date || '').slice(0, 10),
+            endYmd: String(plan?.end_date || schoolYearRange?.end_date || '').slice(0, 10),
+          },
+        });
+        gapPreviewRef.current = preview;
+        if (preview.noCapacity) {
+          setGapSlotLines([]);
+          setGapModal({
+            visible: true,
+            title: 'Gap analysis',
+            message: `You are projected ${Math.round(preview.requestedGap)} ${units} short, but no open learning windows remain in your saved range.\n\nTry extending the school year or adding more learning days in School Year Settings.`,
+            loading: false,
+            working: false,
+            showConfirm: false,
+            confirmLabel: 'OK',
+            cancelLabel: 'Close',
+            mode: 'info',
+          });
+          return;
+        }
+        const previewSlots = normalizeFixGapSlots(
+          Array.isArray(preview.dryRunPreview?.selectedAssignments)
+            ? preview.dryRunPreview.selectedAssignments
+            : (Array.isArray(preview.dryRunPreview?.debugSelectedSlots) ? preview.dryRunPreview.debugSelectedSlots : []),
+          { subjectId: subject.id, subjectName: subject?.name || '' },
+        );
+        setGapSlotLines(previewSlots.map((slot) => formatFixGapHistorySlotLabel(slot)));
+        setGapModal({
+          visible: true,
+          title: 'Close the gap?',
+          message: [
+            `You are projected ${Math.round(preview.requestedGap)} ${unit}${Math.round(preview.requestedGap) === 1 ? '' : 's'} short of your ${preview.targetDays} ${units} target.`,
+            '',
+            `We found ${preview.sessionsToAdd} open learning window${preview.sessionsToAdd === 1 ? '' : 's'} on your normal schedule.`,
+            'New sessions will skip holidays and breaks. Unscheduled curriculum lessons will be linked when possible.',
+          ].join('\n'),
+          loading: false,
+          working: false,
+          showConfirm: true,
+          confirmLabel: 'Add sessions',
+          cancelLabel: 'Cancel',
+          mode: 'add_sessions',
+        });
+      } catch (err) {
+        setGapSlotLines([]);
+        setGapModal({
+          visible: true,
+          title: 'Gap analysis',
+          message: err?.message || 'Could not analyze the gap right now.',
+          loading: false,
+          working: false,
+          showConfirm: false,
+          confirmLabel: 'OK',
+          cancelLabel: 'Close',
+          mode: 'info',
+        });
+      }
+    })();
+  }, [
+    familyId,
+    subject?.id,
+    subject?.name,
+    subject?.school_year,
+    gapAnalysisWorking,
+    gapUndoing,
+    gapAcademicYearId,
+    reloadGapHistory,
+    sessionsPlanningStatus,
+    sessionsGapSurplusDays,
+    attendanceTargetProgress,
+    subjectPlanData?.plan,
+  ]);
+
+  const confirmGapAnalysisModal = useCallback(async () => {
+    if (gapModal.mode === 'done' || gapModal.mode === 'info' || !gapModal.showConfirm) {
+      closeGapAnalysisModal();
+      return;
+    }
+    const preview = gapPreviewRef.current;
+    if (!preview?.payloadBase) {
+      closeGapAnalysisModal();
+      return;
+    }
+    setGapModal((prev) => ({ ...prev, working: true }));
+    setGapAnalysisWorking(true);
+    try {
+      const result = await executeSubjectGapFix({
+        familyId,
+        subjectId: subject.id,
+        payloadBase: preview.payloadBase,
+        subjectEvents,
+        units: effectiveLearningGoalsUnits,
+      });
+      const localEntry = buildLocalFixGapHistoryEntry({
+        fixResult: result.fixResult,
+        subjectId: subject.id,
+        subjectName: subject?.name || '',
+      });
+      if (localEntry && gapAcademicYearId) {
+        appendLocalFixGapHistoryEntry({
+          familyId,
+          academicYearId: gapAcademicYearId,
+          subjectId: subject.id,
+          entry: localEntry,
+        });
+      }
+      await reloadGapHistory();
+      await handleClassworkPlacementChanged();
+      gapPreviewRef.current = null;
+      setGapSlotLines([]);
+      setGapModal({
+        visible: true,
+        title: 'Gap closed',
+        message: [
+          result.summary,
+          result.lessonsLinked > 0
+            ? 'New sessions appear on your planner; linked lessons show on Learning Schedule.'
+            : 'New sessions appear on your planner.',
+        ].join('\n\n'),
+        loading: false,
+        working: false,
+        showConfirm: true,
+        confirmLabel: 'Done',
+        cancelLabel: 'Close',
+        mode: 'done',
+      });
+    } catch (err) {
+      setGapModal({
+        visible: true,
+        title: 'Could not add sessions',
+        message: err?.message || 'Something went wrong.',
+        loading: false,
+        working: false,
+        showConfirm: false,
+        confirmLabel: 'OK',
+        cancelLabel: 'Close',
+        mode: 'info',
+      });
+    } finally {
+      setGapAnalysisWorking(false);
+    }
+  }, [
+    gapModal.mode,
+    gapModal.showConfirm,
+    familyId,
+    subject?.id,
+    subject?.name,
+    gapAcademicYearId,
+    subjectEvents,
+    effectiveLearningGoalsUnits,
+    closeGapAnalysisModal,
+    reloadGapHistory,
+    handleClassworkPlacementChanged,
+  ]);
+
+  const handleUndoGapAnalysis = useCallback(async () => {
+    if (gapUndoing || gapAnalysisWorking || !canUndoGapAnalysis) return;
+    setGapUndoing(true);
+    try {
+      const result = await undoSubjectFixGapLatest({
+        familyId,
+        academicYearId: gapAcademicYearId,
+        subjectId: subject.id,
+        historyRuns: gapHistoryRuns,
+      });
+      setGapHistoryRuns(result.runs);
+      await handleClassworkPlacementChanged();
+      setGapSlotLines([]);
+      setGapModal((prev) => ({
+        ...prev,
+        title: 'Undo complete',
+        message: result.summary,
+        showConfirm: false,
+        confirmLabel: 'OK',
+        mode: 'info',
+      }));
+    } catch (err) {
+      setGapModal((prev) => ({
+        ...prev,
+        title: 'Could not undo',
+        message: err?.message || 'Something went wrong.',
+        showConfirm: false,
+        mode: 'info',
+      }));
+    } finally {
+      setGapUndoing(false);
+    }
+  }, [
+    gapUndoing,
+    gapAnalysisWorking,
+    canUndoGapAnalysis,
+    familyId,
+    subject?.id,
+    gapAcademicYearId,
+    gapHistoryRuns,
+    handleClassworkPlacementChanged,
+  ]);
 
   const handleOpenAssignedFromModal = useCallback(
     (a) => {
@@ -3213,6 +3624,10 @@ export default function SubjectDetailPage({
             onManageUnits={openUnitsEditor}
             unitsActionLabel={unitsEditorLabel}
             onPlacementChanged={handleClassworkPlacementChanged}
+            highlightLessonId={highlightLessonId}
+            highlightAssignmentId={highlightAssignmentId}
+            onGapAnalysis={isParentViewer ? openGapAnalysisModal : null}
+            gapAnalysisWorking={gapAnalysisWorking}
           />
         ) : null}
 
@@ -3223,7 +3638,7 @@ export default function SubjectDetailPage({
             children={children.filter((c) =>
               assignedChildren.some((id) => String(id) === String(c.id)),
             )}
-            onOpenAssignment={openAssignedWorkItem}
+            onOpenAssignment={openAssignmentInClasswork}
             onOpenGradedItem={(item) => {
               if (item?.eventId) handleOpenEventDetails(item.eventId, item.event);
             }}
@@ -3803,6 +4218,23 @@ export default function SubjectDetailPage({
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+      <SubjectGapAnalysisModal
+        visible={gapModal.visible}
+        title={gapModal.title}
+        message={gapModal.message}
+        slotLines={gapSlotLines}
+        historyRuns={gapHistoryRunDetails}
+        loading={gapModal.loading}
+        working={gapModal.working}
+        undoing={gapUndoing}
+        canUndo={canUndoGapAnalysis}
+        showConfirm={gapModal.showConfirm}
+        confirmLabel={gapModal.confirmLabel}
+        cancelLabel={gapModal.cancelLabel}
+        onConfirm={confirmGapAnalysisModal}
+        onCancel={closeGapAnalysisModal}
+        onUndo={handleUndoGapAnalysis}
+      />
       <EditSubjectSettingsModal
         visible={showEditSettingsModal}
         onClose={() => setShowEditSettingsModal(false)}

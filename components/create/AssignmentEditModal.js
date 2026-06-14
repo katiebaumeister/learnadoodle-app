@@ -19,9 +19,11 @@ import AssignmentResourceFields from './shared/AssignmentResourceFields';
 import { materialIdsFromSelection } from './shared/EventAttachmentsField';
 import FamilyMemberPicker, { resolveDefaultAssigneeIds } from './shared/FamilyMemberPicker';
 import SubjectSelectField from './shared/SubjectSelectField';
+import ClassworkPlacementFields from './shared/ClassworkPlacementFields';
 import { SingleDateField } from './shared/ScheduleDateFields';
 import { SectionHeading } from './shared/assignmentFormParts';
-import AssignmentEditFooter from './assignment/AssignmentEditFooter';
+import { Users } from 'lucide-react';
+import { ModalFooter } from '../ui/ModalFooter';
 import AssignmentSubmissionsModal from './AssignmentSubmissionsModal';
 import StudentResponseSection from './assignment/StudentResponseSection';
 import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
@@ -81,6 +83,10 @@ export default function AssignmentEditModal({
   const [materialId, setMaterialId] = useState(null);
   const [assigneeIds, setAssigneeIds] = useState([]);
   const [subjectId, setSubjectId] = useState(null);
+  const [unitId, setUnitId] = useState(null);
+  const [unitTitle, setUnitTitle] = useState('');
+  const [curriculumLessonId, setCurriculumLessonId] = useState(null);
+  const [lessonLabel, setLessonLabel] = useState('');
   const [dueDate, setDueDate] = useState(null);
   const [points, setPoints] = useState('');
   const [rubricId, setRubricId] = useState(null);
@@ -140,7 +146,7 @@ export default function AssignmentEditModal({
         if (cancelled) return;
         setEventRow(loadedEvent);
 
-        const form = assignmentEditFormFromEvent(loadedEvent);
+        const form = assignmentEditFormFromEvent(loadedEvent, assignment);
         setTitle(form.title || assignment?.title || '');
         setInstructions(form.instructions || assignment?.description || '');
         setWorkSpec({
@@ -158,6 +164,10 @@ export default function AssignmentEditModal({
             }),
         );
         setSubjectId(form.subjectId || assignment?.related_subject || null);
+        setUnitId(form.unitId);
+        setUnitTitle(form.unitTitle);
+        setCurriculumLessonId(form.curriculumLessonId);
+        setLessonLabel(form.lessonLabel);
         setDueDate(form.dueDate || (assignment?.due_date ? new Date(`${String(assignment.due_date).slice(0, 10)}T12:00:00`) : null));
         setPoints(form.points || '');
         setRubricId(form.rubricId);
@@ -210,6 +220,11 @@ export default function AssignmentEditModal({
         materialIds: materialIdsFromSelection(materialId),
         points: Number(points) || null,
         rubricId,
+        unitId,
+        unitTitle,
+        curriculumLessonId,
+        lessonLabel,
+        assignment,
       });
       toast.push('Assignment updated', 'success');
       onSaved?.(updated);
@@ -232,6 +247,11 @@ export default function AssignmentEditModal({
     materialId,
     points,
     rubricId,
+    unitId,
+    unitTitle,
+    curriculumLessonId,
+    lessonLabel,
+    assignment,
     onSaved,
     onClose,
     toast,
@@ -314,15 +334,26 @@ export default function AssignmentEditModal({
           bodyStyle={styles.assignmentModalBody}
           disableShellScroll
           footer={(
-            <AssignmentEditFooter
+            <ModalFooter
+              mode="edit"
+              primaryLabel={submitting ? 'Saving…' : 'Save changes'}
+              destructiveLabel="Delete assignment"
               onCancel={onClose}
               onDelete={confirmDelete}
-              onViewSubmissions={() => setShowSubmissions(true)}
-              onSave={handleSave}
-              saving={submitting}
-              deleting={deleting}
-              saveDisabled={!canSave}
-              onBlockedSave={() => validate()}
+              onPrimary={handleSave}
+              onBlockedPrimary={() => validate()}
+              secondaryActions={[
+                {
+                  key: 'view-submissions',
+                  label: 'View submissions',
+                  icon: Users,
+                  onPress: () => setShowSubmissions(true),
+                },
+              ]}
+              accent="#9ECFFB"
+              disabled={submitting || deleting}
+              visuallyDisabled={!canSave}
+              loading={submitting || deleting}
             />
           )}
         >
@@ -398,7 +429,13 @@ export default function AssignmentEditModal({
                     <SubjectSelectField
                       subjects={subjects}
                       subjectId={subjectId}
-                      onSubjectChange={setSubjectId}
+                      onSubjectChange={(nextSubjectId) => {
+                        setSubjectId(nextSubjectId);
+                        setUnitId(null);
+                        setUnitTitle('');
+                        setCurriculumLessonId(null);
+                        setLessonLabel('');
+                      }}
                       label="Subject"
                       required
                       error={errors.subject}
@@ -410,6 +447,23 @@ export default function AssignmentEditModal({
                       onChange={setAssigneeIds}
                       label="Children"
                       error={errors.assignee}
+                    />
+
+                    <ClassworkPlacementFields
+                      familyId={familyId}
+                      subjectId={subjectId}
+                      unitId={unitId}
+                      unitTitle={unitTitle}
+                      curriculumLessonId={curriculumLessonId}
+                      lessonLabel={lessonLabel}
+                      onUnitChange={({ unitId: nextUnitId, unitTitle: nextUnitTitle }) => {
+                        setUnitId(nextUnitId || null);
+                        setUnitTitle(nextUnitTitle || '');
+                      }}
+                      onLessonChange={({ curriculumLessonId: nextLessonId, lessonLabel: nextLessonLabel }) => {
+                        setCurriculumLessonId(nextLessonId || null);
+                        setLessonLabel(nextLessonLabel || '');
+                      }}
                     />
 
                     <SingleDateField

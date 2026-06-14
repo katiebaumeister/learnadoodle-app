@@ -38,6 +38,10 @@ import { useSession } from '../../contexts/SessionContext';
 import { useOptionalFamilyUserControls } from '../../contexts/FamilyUserControlsContext';
 import SubjectOverviewCard from './SubjectOverviewCard';
 import SubjectDetailPage from './SubjectDetailPage';
+import {
+  consumePendingClassworkFocus,
+  OPEN_SUBJECT_CLASSWORK_EVENT,
+} from '../../lib/subjectClassworkNavigation';
 import LearningSubjectsListView from '../learning/LearningSubjectsListView';
 import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal';
 import SubjectsPlanBuilder from './SubjectsPlanBuilder';
@@ -302,6 +306,7 @@ export default function SubjectsPage({
   const [pendingScrollToSectionId, setPendingScrollToSectionId] = useState(null);
   const [pendingOpenMaterialId, setPendingOpenMaterialId] = useState(null);
   const [pendingProgressAction, setPendingProgressAction] = useState(null);
+  const [pendingClassworkFocus, setPendingClassworkFocus] = useState(null);
   const [expandedSummaryMetric, setExpandedSummaryMetric] = useState(null);
   const [openComplianceRequirement, setOpenComplianceRequirement] = useState(null);
   const [complianceRowHoverKey, setComplianceRowHoverKey] = useState(null);
@@ -326,6 +331,33 @@ export default function SubjectsPage({
     setShowPlanningPreferencesModal(false);
     setPlanningPreferencesSchoolYearLabel(null);
   }, []);
+
+  const applyClassworkFocus = useCallback((detail) => {
+    if (!detail?.subjectId) return;
+    setSelectedSubjectId(detail.subjectId);
+    setPendingClassworkFocus({
+      tab: detail.tab || 'classwork',
+      lessonId: detail.lessonId || null,
+      assignmentId: detail.assignmentId || null,
+    });
+    setPendingProgressAction(null);
+    setExpandedSummaryMetric(null);
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const pending = consumePendingClassworkFocus();
+    if (pending?.subjectId) applyClassworkFocus(pending);
+    const handler = (event) => applyClassworkFocus(event?.detail || {});
+    window.addEventListener(OPEN_SUBJECT_CLASSWORK_EVENT, handler);
+    return () => window.removeEventListener(OPEN_SUBJECT_CLASSWORK_EVENT, handler);
+  }, [applyClassworkFocus]);
+
+  useEffect(() => {
+    if (!selectedSubjectId || !pendingClassworkFocus) return undefined;
+    const t = setTimeout(() => setPendingClassworkFocus(null), 600);
+    return () => clearTimeout(t);
+  }, [selectedSubjectId, pendingClassworkFocus]);
 
   const [subjectsExportType, setSubjectsExportType] = useState('schedule');
   const [subjectsExportFormat, setSubjectsExportFormat] = useState('excel');
@@ -2095,6 +2127,7 @@ export default function SubjectsPage({
     setPendingScrollToSectionId(null);
     setPendingOpenMaterialId(null);
     setPendingProgressAction(null);
+    setPendingClassworkFocus(null);
   };
 
   const openSubjectToSection = (subjectId, sectionId) => {
@@ -2789,6 +2822,8 @@ export default function SubjectsPage({
           initialScrollToSectionId={pendingScrollToSectionId}
           initialOpenMaterialId={pendingOpenMaterialId}
           initialProgressAction={pendingProgressAction}
+          initialClassworkFocus={pendingClassworkFocus}
+          onNavigateToPlanner={handleNavigateToPlanner}
           onSubjectDataUpdate={(data) => {
             const updatedCache = {
               ...subjectDetailCache,

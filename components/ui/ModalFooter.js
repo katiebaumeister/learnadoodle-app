@@ -11,6 +11,7 @@ export function ModalFooter({
   onDelete,
   accent = '#7C70F4',
   destructiveLabel,
+  secondaryActions = [],
   disabled,
   visuallyDisabled = false,
   loading = false,
@@ -19,6 +20,7 @@ export function ModalFooter({
 }) {
   const isPrimaryBlocked = Boolean(disabled || visuallyDisabled);
   const showDelete = mode === 'edit' && !!destructiveLabel;
+  const extraSecondaryActions = Array.isArray(secondaryActions) ? secondaryActions : [];
   const rowStyle = compact ? styles.rowCompact : styles.row;
   const cancelStyle = compact ? styles.cancelButtonCompact : styles.cancelButton;
   const primaryStyle = compact ? styles.primaryCompact : styles.primary;
@@ -95,6 +97,29 @@ export function ModalFooter({
             <Text style={modalButtonStyles.secondaryButtonText}>{destructiveLabel}</Text>
           </TouchableOpacity>
         ) : null}
+        {extraSecondaryActions.map((action) => {
+          const ActionIcon = action?.icon;
+          const actionKey = action?.key || action?.label;
+          if (!actionKey || typeof action?.onPress !== 'function') return null;
+          return (
+            <TouchableOpacity
+              key={actionKey}
+              onPress={action.onPress}
+              disabled={loading || action.disabled}
+              style={[
+                modalButtonStyles.secondaryButton,
+                (loading || action.disabled) && modalButtonStyles.buttonDisabled,
+              ]}
+              activeOpacity={0.9}
+              accessibilityRole="button"
+              accessibilityLabel={action.accessibilityLabel || action.label}
+              {...(Platform.OS === 'web' && { cursor: loading || action.disabled ? 'not-allowed' : 'pointer' })}
+            >
+              {ActionIcon ? <ActionIcon size={16} color={MODAL_ACCENT_TEXT} /> : null}
+              <Text style={modalButtonStyles.secondaryButtonText}>{action.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
         <TouchableOpacity
           onPress={() => {
             if (loading) return;

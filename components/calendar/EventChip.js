@@ -11,6 +11,7 @@ import {
   getPlannerCategoryColorKey,
   getPlannerCategoryMeta,
 } from '../../lib/planner/plannerEventCategories';
+import { getPlannerEventChipTitle } from '../../lib/planner/plannerLearningDayChip';
 
 export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [], plannerCalendarChip = false, weekBoardChip = false }) {
   const isDoneStatus = (statusValue) => {
@@ -51,6 +52,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     ev?.status === 'placeholder' ||
     ev?.placeholder === true
   );
+  const chipTitle = getPlannerEventChipTitle(ev);
 
   // Get participating child IDs (whole-family when none set) — memoized to prevent infinite loops
   const participatingChildIds = useMemo(
@@ -62,6 +64,13 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   const getBackgroundColor = () => categoryMeta.color;
 
   const getHoverBackgroundColor = () => categoryMeta.hoverColor || categoryMeta.color;
+
+  const getTitleColor = () => {
+    if (isPlaceholder) return '#6B7280';
+    return '#111827';
+  };
+
+  const getTitleWeight = () => '500';
 
   const getTextColor = () => categoryMeta.chipText;
 
@@ -480,15 +489,11 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   if (compact && fullWidth) {
     const baseStyle = {
       borderRadius: 6,
-      borderWidth: 0,
       backgroundColor: getBackgroundColor(),
       paddingHorizontal: 4,
       paddingVertical: 4,
       width: '100%',
       opacity: shouldShowLighterText ? 0.5 : 1,
-      ...(Platform.OS === 'web' && {
-        cursor: 'pointer',
-      }),
     };
 
     const content = (
@@ -597,8 +602,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
               style={{
                 fontSize: titleFontSize,
                 lineHeight: titleFontSize + 4,
-                color: isPlaceholder ? '#6B7280' : '#111827',
-                fontWeight: '500',
+                color: getTitleColor(),
+                fontWeight: getTitleWeight(),
                 textAlign: 'left',
                 textDecorationLine: shouldShowDoneStyling ? 'line-through' : 'none',
                 opacity: shouldShowLighterText ? 0.5 : 1,
@@ -616,7 +621,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
               numberOfLines={1}
               ellipsizeMode="tail"
             >
-              {ev.title || 'Untitled Event'}
+              {chipTitle}
             </Text>
             {displayTime && !hideTime && !isPublicHoliday && (
               <Text style={{
@@ -653,8 +658,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                   style={{
                     fontSize: titleFontSize,
                     lineHeight: titleFontSize + 4,
-                    color: isPlaceholder ? '#6B7280' : '#111827',
-                    fontWeight: '500',
+                    color: getTitleColor(),
+                    fontWeight: getTitleWeight(),
                     textAlign: 'left',
                     textDecorationLine: shouldShowDoneStyling ? 'line-through' : 'none',
                     opacity: shouldShowLighterText ? 0.5 : 1,
@@ -671,7 +676,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                   numberOfLines={1}
                   ellipsizeMode="tail"
                 >
-                  {ev.title || 'Untitled Event'}
+                  {chipTitle}
                 </Text>
                 {displayTime && !hideTime && !isPublicHoliday && (
                   <Text style={{ 
@@ -723,8 +728,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                   style={{
                     fontSize: titleFontSize,
                     lineHeight: titleFontSize + 4,
-                    color: '#111827', // High contrast black
-                    fontWeight: '500', // Medium weight - less bold than before
+                    color: getTitleColor(),
+                    fontWeight: getTitleWeight(),
                     textAlign: 'left',
                     textDecorationLine: shouldShowDoneStyling ? 'line-through' : 'none',
                     opacity: shouldShowLighterText ? 0.5 : 1,
@@ -741,7 +746,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                   numberOfLines={1}
                   ellipsizeMode="tail"
                 >
-                  {ev.title || 'Untitled Event'}
+                  {chipTitle}
                 </Text>
                 {displayTime && !hideTime && !isPublicHoliday && (
                   <Text style={{ 
@@ -795,7 +800,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   if (compact) {
     const baseStyle = {
       borderRadius: 6,
-      borderWidth: 0,
       backgroundColor: getBackgroundColor(),
       paddingHorizontal: 6,
       paddingVertical: 3,
@@ -911,8 +915,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
             style={{
               fontSize: 12,
               lineHeight: 16,
-              color: isPlaceholder ? '#6B7280' : '#111827',
-              fontWeight: '600',
+              color: getTitleColor(),
+              fontWeight: getTitleWeight() === '400' ? '500' : '600',
               textAlign: 'left',
               textDecorationLine: shouldShowDoneStyling ? 'line-through' : 'none',
               opacity: shouldShowDoneStyling ? 0.5 : 1,
@@ -929,7 +933,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
             numberOfLines={1}
             ellipsizeMode="tail"
           >
-            {ev.title || 'Untitled Event'}
+            {chipTitle}
           </Text>
           {displayTime && !hideTime && (
             <Text style={{ 
@@ -1154,8 +1158,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
           style={{ 
             fontSize: 12,
             lineHeight: 16,
-            color: isPlaceholder ? '#6B7280' : '#111827',
-            fontWeight: '600',
+            color: getTitleColor(),
+            fontWeight: getTitleWeight() === '400' ? '600' : getTitleWeight(),
             textAlign: 'left',
             textDecorationLine: isDone ? 'line-through' : 'none',
             opacity: shouldShowDoneStyling ? 0.5 : 1,
@@ -1172,7 +1176,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
           numberOfLines={1}
           ellipsizeMode="tail"
         >
-          {ev.title || 'Untitled Event'}
+          {chipTitle}
         </Text>
         {displayTime && !hideTime && (
             <Text style={{ 

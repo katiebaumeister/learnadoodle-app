@@ -42,7 +42,8 @@ export function dispatchPlannerSmartAction(modeId) {
   window.dispatchEvent(new CustomEvent('plannerSmartAction', { detail: { modeId } }));
 }
 
+import { dispatchOpenSchoolYearSettingsModal } from '../../lib/planYearRetirement';
+
 export function dispatchOpenEditSchoolYearModal(schoolYearLabel = null) {
-  if (typeof window === 'undefined') return;
-  window.dispatchEvent(new CustomEvent('openEditSchoolYearModal', { detail: { schoolYearLabel } }));
+  dispatchOpenSchoolYearSettingsModal(schoolYearLabel);
 }

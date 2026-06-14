@@ -92,6 +92,7 @@ import SubjectUnitsEditorHost from './subjects/SubjectUnitsEditorHost';
 import {
   dispatchOpenSubjectUnitsEditor,
   dispatchOpenSchoolYearSettings,
+  dispatchOpenSchoolYearSettingsModal,
   handleLegacyPlanYearRequest,
   handleLegacyBuildCurriculumRequest,
   sanitizeLegacyPlanYearView,
@@ -2460,7 +2461,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           (initialEvent && isDayOffOrHolidayEvent(initialEvent)) ||
           String(eventId || '').startsWith('holiday-')
         ) {
-          dispatchOpenSchoolYearSettings();
+          dispatchOpenSchoolYearSettingsModal();
           return;
         }
 
@@ -2475,14 +2476,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 isDayOffOrHolidayEvent(initialEvent) ||
                 String(eventId || '').startsWith('holiday-')
               ) {
-                dispatchOpenSchoolYearSettings();
+                dispatchOpenSchoolYearSettingsModal();
                 return;
               }
               throw new Error('Event not found');
             }
 
             if (isDayOffOrHolidayEvent(eventRow)) {
-              dispatchOpenSchoolYearSettings();
+              dispatchOpenSchoolYearSettingsModal();
               return;
             }
 
@@ -2513,7 +2514,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               isDayOffOrHolidayEvent(initialEvent) ||
               String(eventId || '').startsWith('holiday-')
             ) {
-              dispatchOpenSchoolYearSettings();
+              dispatchOpenSchoolYearSettingsModal();
               return;
             }
             setEventModalEventId(eventId);
@@ -2781,7 +2782,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           break;
         case 'school-year-settings':
         case 'plan-year':
-          dispatchOpenSchoolYearSettings();
+          dispatchOpenSchoolYearSettingsModal();
           break;
         case 'what-if':
           setShowWhatIfModal(true);
@@ -3111,7 +3112,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   const openPlannerCreateModal = useCallback((kind) => {
     if (kind === 'day_off') {
-      dispatchOpenSchoolYearSettings();
+      dispatchOpenSchoolYearSettingsModal();
       setShowPlannerCreateMenu(false);
       return;
     }

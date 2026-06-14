@@ -4,6 +4,7 @@ import { colors, shadows } from '../../theme/colors';
 import { BookOpen, FlaskConical, Palette, Music, Dumbbell, Code, Globe, Calculator } from 'lucide-react';
 
 import { getPlannerEventTypeColors } from '../../lib/planner/plannerEventCategories';
+import { getPlannerEventChipTitle } from '../../lib/planner/plannerLearningDayChip';
 
 // Avatar-based color mapping
 const AVATAR_COLORS = {
@@ -326,8 +327,7 @@ export default function DraggableEvent({
   const subjectName = ev.subject_name || 'Event';
   const category = getSubjectCategory(subjectName);
   const categoryLabel = category === 'core' ? 'Core Subject' : category === 'creative' ? 'Creative' : category === 'physical' ? 'Physical' : 'Other';
-  // Show event title, fallback to subject name if no title
-  const eventTitle = ev.title || subjectName;
+  const eventTitle = getPlannerEventChipTitle(ev);
   
   // Calculate height for compact single-line card style
   // Padding: 6px top + 6px bottom = 12px
@@ -418,6 +418,7 @@ export default function DraggableEvent({
           borderRadius: 8,
           borderStyle: isBlackoutDay ? 'dashed' : 'solid',
           borderWidth: 0,
+          borderColor: 'transparent',
           cursor: isBlackoutDay ? 'not-allowed' : 'pointer',
           overflow: 'hidden',
           opacity: opacity,

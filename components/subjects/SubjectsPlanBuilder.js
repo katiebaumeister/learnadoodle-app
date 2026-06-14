@@ -1915,7 +1915,7 @@ export default function SubjectsPlanBuilder({
     title: '',
     bodyLines: [],
     previewLines: [],
-    confirmLabel: 'Fix gap',
+    confirmLabel: 'Add sessions',
     confirmDisabled: false,
     confirmAction: 'fix_gap',
     showLowerTargetOption: false,
@@ -4539,7 +4539,7 @@ export default function SubjectsPlanBuilder({
       title: '',
       bodyLines: [],
       previewLines: [],
-      confirmLabel: 'Fix gap',
+      confirmLabel: 'Add sessions',
       confirmDisabled: false,
       confirmAction: 'fix_gap',
       showLowerTargetOption: false,
@@ -4648,6 +4648,7 @@ export default function SubjectsPlanBuilder({
               ...(windowHintLines.length > 0 ? windowHintLines : ['- Across your current available weekdays and times']),
               '- Avoiding breaks and holidays in your saved range',
               `- This keeps your normal ${cadenceRhythmLabel !== 'No days set' ? cadenceRhythmLabel : 'Mon-Fri'} rhythm`,
+              'Unscheduled curriculum lessons will be linked to new sessions when possible.',
             ]
             : [
               `You are projected to finish ${Math.round(Math.max(0, requestedGap))} ${scopeLabel} day${Math.round(Math.max(0, requestedGap)) === 1 ? '' : 's'} short.`,
@@ -4656,6 +4657,7 @@ export default function SubjectsPlanBuilder({
               '- Avoiding breaks and holidays in your saved range',
               `- This keeps your normal ${cadenceRhythmLabel !== 'No days set' ? cadenceRhythmLabel : 'Mon-Fri'} rhythm`,
               `After adding these, you'll still be ${Math.round(remainingAfterSuggestedAdd)} day${Math.round(remainingAfterSuggestedAdd) === 1 ? '' : 's'} short.`,
+              'Unscheduled curriculum lessons will be linked to new sessions when possible.',
             ]
         )
         : [
@@ -5498,13 +5500,12 @@ export default function SubjectsPlanBuilder({
         return;
       }
       clearFixGapFailureToasts();
-      const gapLabel = `0 ${requestedTargetKind === 'hours' ? 'hours' : 'days'} gap`;
-      const fixOutcomePrefix = 'Fixed';
-      const lessonLinkSuffix = curriculumLessonsLinked > 0
-        ? ` Linked ${curriculumLessonsLinked} curriculum ${curriculumLessonsLinked === 1 ? 'lesson' : 'lessons'}.`
+      const sessionLabel = `${successfulInsertCount} session${successfulInsertCount === 1 ? '' : 's'} added`;
+      const lessonLabel = curriculumLessonsLinked > 0
+        ? `, ${curriculumLessonsLinked} lesson${curriculumLessonsLinked === 1 ? '' : 's'} linked`
         : '';
       toast?.push?.(
-        `${fixOutcomePrefix} ${scope === 'overall' ? 'overall' : rowName} gap: ${toOneDecimal(afterProjectedValue)}/${toOneDecimal(targetDays)} ${requestedTargetKind === 'hours' ? 'hours' : 'days'} (${gapLabel}).${lessonLinkSuffix}`,
+        `Add sessions: ${sessionLabel}${lessonLabel}.`,
         'success'
       );
     } catch (err) {
@@ -6680,7 +6681,7 @@ export default function SubjectsPlanBuilder({
             (fixingGap || !canFixGap) && styles.yearTargetsGapActionPillDisabled,
           ]}
           accessibilityRole="button"
-          accessibilityLabel="Fix gap"
+          accessibilityLabel="Add sessions"
           {...(Platform.OS === 'web' && { cursor: (fixingGap || !canFixGap) ? 'default' : 'pointer' })}
         >
           <Text
@@ -6689,7 +6690,7 @@ export default function SubjectsPlanBuilder({
               (fixingGap || !canFixGap) && styles.yearTargetsGapActionPillTextDisabled,
             ]}
           >
-            {fixingGap ? 'Fixing...' : 'Fix gap'}
+            {fixingGap ? 'Adding sessions…' : 'Add sessions'}
           </Text>
         </TouchableOpacity>
       ) : null}
@@ -7235,7 +7236,7 @@ export default function SubjectsPlanBuilder({
                 if (savedRangeEnded) {
                   return 'No eligible learning days remain in this saved range. Change School Year Settings to extend the range.';
                 }
-                return `Fix gap will add up to ${overallShortfallDays} placeholder learning day${overallShortfallDays === 1 ? '' : 's'} across the remaining school year while avoiding holidays and days that already count.`;
+                return `Add sessions will create up to ${overallShortfallDays} learning day${overallShortfallDays === 1 ? '' : 's'} across the remaining school year while avoiding holidays and days that already count. Unscheduled lessons will be linked when possible.`;
               })()
             ),
             suggestedPlanChanges: [],
@@ -7271,7 +7272,7 @@ export default function SubjectsPlanBuilder({
       shortDays: Math.abs(actionableRowGapValue),
       lowSessionsPerWeek: 0,
       highSessionsPerWeek: 0,
-      suggestionSummaryText: 'No automatic suggestion yet. Expand to review saved target details or use Fix gap.',
+      suggestionSummaryText: 'No automatic suggestion yet. Expand to review saved target details or use Add sessions.',
       extensionAddedDatesLabel: '',
       suggestedAddedDaysLabel: '',
       suggestedPlanChanges: [],
@@ -7462,7 +7463,7 @@ export default function SubjectsPlanBuilder({
             (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsGapActionPillTextDisabled,
           ]}
         >
-          {fixingGapRowId === rowId ? 'Fixing...' : 'Fix gap'}
+          {fixingGapRowId === rowId ? 'Adding sessions…' : 'Add sessions'}
         </Text>
       </TouchableOpacity>
     ) : null;
@@ -8129,7 +8130,7 @@ export default function SubjectsPlanBuilder({
             <TouchableOpacity style={styles.applySuggestionConfirmModal} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
               <View style={styles.applySuggestionConfirmHeader}>
                 <Text style={styles.applySuggestionConfirmTitle}>
-                  {fixGapConfirmContent.title || 'Confirm Fix gap'}
+                  {fixGapConfirmContent.title || 'Confirm add sessions'}
                 </Text>
                 <TouchableOpacity
                   style={styles.subjectPickerClose}
@@ -8221,7 +8222,7 @@ export default function SubjectsPlanBuilder({
                         && styles.applySuggestionConfirmActionBtnTextDisabled,
                     ]}
                   >
-                    {fixGapConfirmContent.confirmLabel || 'Fix gap'}
+                    {fixGapConfirmContent.confirmLabel || 'Add sessions'}
                   </Text>
                 </TouchableOpacity>
               </View>

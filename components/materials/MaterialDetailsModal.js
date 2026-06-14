@@ -13,13 +13,13 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import { X, Trash2, Edit2, Calendar, DollarSign, MapPin, ExternalLink, FileText, UserCircle, Star, Tag, HardDrive, Type } from 'lucide-react';
+import { X, Calendar, DollarSign, MapPin, ExternalLink, FileText, UserCircle, Star, Tag, HardDrive, Type } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getMaterial } from '../../lib/services/materialsClient';
 import { normalizeMaterial, normalizeUpload, roleLabel as getRoleLabel } from '../../lib/docs/roles';
 import MaterialScheduleLinksSection from './MaterialScheduleLinksSection';
 import ConfirmDialog from '../ConfirmDialog';
-import { destructiveButtonStyles, destructiveIconColor } from '../ui/destructiveButtonStyles';
+import { ModalFooter } from '../ui/ModalFooter';
 
 const FG = '#111827';
 const SUB = '#6b7280';
@@ -441,30 +441,15 @@ export default function MaterialDetailsModal({
           {/* Footer with Edit and Delete buttons */}
           {!loading && (
             <View style={styles.footer}>
-              <View style={styles.footerActions}>
-                <TouchableOpacity
-                  style={styles.cancelButton}
-                  onPress={onClose}
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setShowDeleteConfirm(true)}
-                  style={destructiveButtonStyles.buttonCompact}
-                >
-                  <Trash2 size={16} color={destructiveIconColor} />
-                  <Text style={destructiveButtonStyles.buttonTextCompact}>Delete</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.editButton}
-                  onPress={() => {
-                    onEdit?.(material);
-                  }}
-                >
-                  <Edit2 size={16} color="#FFFFFF" />
-                  <Text style={styles.editButtonText}>Edit</Text>
-                </TouchableOpacity>
-              </View>
+              <ModalFooter
+                mode="edit"
+                primaryLabel="Edit"
+                destructiveLabel="Delete"
+                onCancel={onClose}
+                onDelete={() => setShowDeleteConfirm(true)}
+                onPrimary={() => onEdit?.(material)}
+                accent={MATERIAL_ACCENT}
+              />
             </View>
           )}
         </View>

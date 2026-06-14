@@ -33,7 +33,15 @@ import {
   softDeleteEventSeries,
 } from '../lib/utils/recurringEventUtils'
 import { isDayOffOrHolidayEvent } from '../lib/create/eventOpenRouting'
-import { dispatchOpenSchoolYearSettings } from '../lib/planYearRetirement'
+import { dispatchOpenSchoolYearSettingsModal } from '../lib/planYearRetirement'
+import { getPlannerEventCategory } from '../lib/planner/plannerEventCategories'
+import { eventHasLinkedLesson } from '../lib/subjectLessonLinking'
+import {
+  dispatchOpenSubjectClasswork,
+  dispatchNavigateToPlanner,
+  OPEN_SUBJECT_CLASSWORK_EVENT,
+  resolveEventSubjectId,
+} from '../lib/subjectClassworkNavigation'
 
 /** Lucide paths — same as MaterialsLibrary context menu (visual parity). */
 const PLANNER_CTX_ICON_PATHS = {
@@ -4075,6 +4083,45 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // Listen for rebalance modal events from PlannerWeek
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const handleOpenSubjectClasswork = () => {
+      if (onTabChange) onTabChange('subjects', 'subjects');
+    };
+
+    const handleNavigateToPlanner = (event) => {
+      const detail = event?.detail || {};
+      if (onTabChange) onTabChange('planner', 'calendar');
+      const view = detail.view || 'month';
+      const queryParams = new URLSearchParams();
+      if (detail.subjectId) queryParams.set('subjectId', detail.subjectId);
+      if (detail.childId) queryParams.set('childId', detail.childId);
+      if (detail.date) queryParams.set('date', detail.date);
+      queryParams.set('view', view);
+      const url = new URL(window.location.href);
+      url.pathname = '/planner';
+      url.search = queryParams.toString();
+      window.history.replaceState({}, '', url.toString());
+      const syncView = () => {
+        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: view }));
+      };
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(syncView);
+      } else {
+        setTimeout(syncView, 0);
+      }
+    };
+
+    window.addEventListener(OPEN_SUBJECT_CLASSWORK_EVENT, handleOpenSubjectClasswork);
+    window.addEventListener('navigateToPlanner', handleNavigateToPlanner);
+
+    return () => {
+      window.removeEventListener(OPEN_SUBJECT_CLASSWORK_EVENT, handleOpenSubjectClasswork);
+      window.removeEventListener('navigateToPlanner', handleNavigateToPlanner);
+    };
+  }, [onTabChange]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     
     const handleOpenRebalance = (e) => {
       const { event, yearPlanId } = e.detail;
@@ -5337,7 +5384,18 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const openEventEditorWithScopePrompt = useCallback(async (ev, options = {}) => {
     if (!ev?.id) return;
     if (isDayOffOrHolidayEvent(ev)) {
-      dispatchOpenSchoolYearSettings();
+      dispatchOpenSchoolYearSettingsModal();
+      return;
+    }
+    if (
+      getPlannerEventCategory(ev) === 'Learning day'
+      && eventHasLinkedLesson(ev)
+      && resolveEventSubjectId(ev)
+    ) {
+      dispatchOpenSubjectClasswork({
+        subjectId: resolveEventSubjectId(ev),
+        lessonId: ev.curriculum_lesson_id != null ? String(ev.curriculum_lesson_id) : null,
+      });
       return;
     }
     const cleanId = cleanPlannerEventId(String(ev.id || ''));
@@ -6161,7 +6219,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           text: 'School year settings',
           iconKey: 'edit2',
           action: () => {
-            dispatchOpenSchoolYearSettings();
+            dispatchOpenSchoolYearSettingsModal();
           },
         });
       } else {
@@ -10145,7 +10203,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         onEventSelect={(event) => {
           if (isDayOffOrHolidayEvent(event)) {
             if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              dispatchOpenSchoolYearSettings();
+              dispatchOpenSchoolYearSettingsModal();
             }
             return;
           }
