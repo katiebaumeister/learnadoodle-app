@@ -1,7 +1,9 @@
-import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, Platform } from 'react-native';
+import React, { useRef, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, Platform, StyleSheet } from 'react-native';
+import { ChevronDown, CheckCircle } from 'lucide-react';
 import { createModalStyles as styles } from '../../create/shared/createModalStyles';
-import ScheduleDateFields from '../../create/shared/ScheduleDateFields';
+import { SingleDateField } from '../../create/shared/ScheduleDateFields';
+import Dropdown from '../../ui/Dropdown';
 import {
   WEEKDAY_OPTIONS,
   normalizeHm,
@@ -14,7 +16,24 @@ function toggleWeekday(current, dayNum) {
   return [...set].sort((a, b) => a - b);
 }
 
+const SCHEDULE_FIELD_DEFAULTS = {
+  time: '09:00',
+  duration: '60',
+};
+
+function clearIfDefaultValue(currentValue, defaultValue, onClear) {
+  if (String(currentValue ?? '') === defaultValue) {
+    onClear('');
+  }
+}
+
 export default function SubjectScheduleFields({
+  schoolYear,
+  schoolYearOptions = [],
+  onSchoolYearChange,
+  schoolTerm,
+  termOptions = [],
+  onSchoolTermChange,
   weekdays,
   onWeekdaysChange,
   startTime,
@@ -32,10 +51,124 @@ export default function SubjectScheduleFields({
   removingEvents = false,
   embeddedInForm = false,
 }) {
+  const schoolYearTriggerRef = useRef(null);
+  const schoolTermTriggerRef = useRef(null);
+  const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
+  const [showSchoolTermDropdown, setShowSchoolTermDropdown] = useState(false);
+
+  const activeTermLabel = (termOptions.find((opt) => opt.id === schoolTerm) || termOptions[0])?.label || 'Full year';
+  const showScopeFields = typeof onSchoolYearChange === 'function';
+
+  const startDateField = (
+    <SingleDateField
+      label="Start date"
+      date={startDate}
+      onDateChange={onStartDateChange}
+      onOpenDatePicker={onOpenStartDatePicker}
+      required
+    />
+  );
+  const endDateField = (
+    <SingleDateField
+      label="End date"
+      date={endDate}
+      onDateChange={onEndDateChange}
+      onOpenDatePicker={onOpenEndDatePicker}
+      required
+    />
+  );
+
   return (
     <View>
       {!embeddedInForm ? (
         <Text style={styles.sectionHeading}>Recurring schedule</Text>
+      ) : null}
+
+      {showScopeFields ? (
+        <>
+          <View style={localStyles.scopeField}>
+        <Text style={styles.fieldLabel}>School year</Text>
+        <TouchableOpacity
+          ref={schoolYearTriggerRef}
+          style={styles.select}
+          onPress={() => {
+            setShowSchoolTermDropdown(false);
+            setShowSchoolYearDropdown((open) => !open);
+          }}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Text style={styles.selectText}>{schoolYear}</Text>
+          <ChevronDown size={18} color="#6b7280" />
+        </TouchableOpacity>
+        <Dropdown
+          visible={showSchoolYearDropdown}
+          triggerRef={schoolYearTriggerRef}
+          onClose={() => setShowSchoolYearDropdown(false)}
+          placement="bottom-start"
+          matchTriggerWidth
+          maxHeight={220}
+        >
+          {schoolYearOptions.map((opt) => (
+            <TouchableOpacity
+              key={opt}
+              style={[localStyles.menuOption, opt === schoolYear && localStyles.menuOptionSelected]}
+              onPress={() => {
+                onSchoolYearChange?.(opt);
+                setShowSchoolYearDropdown(false);
+              }}
+            >
+              <Text style={[localStyles.menuOptionText, opt === schoolYear && localStyles.menuOptionTextSelected]}>
+                {opt}
+              </Text>
+              {opt === schoolYear ? <CheckCircle size={16} color="#6BB3E8" /> : null}
+            </TouchableOpacity>
+          ))}
+        </Dropdown>
+      </View>
+
+      <View style={localStyles.scopeField}>
+        <Text style={styles.fieldLabel}>Term</Text>
+        <TouchableOpacity
+          ref={schoolTermTriggerRef}
+          style={styles.select}
+          onPress={() => {
+            setShowSchoolYearDropdown(false);
+            setShowSchoolTermDropdown((open) => !open);
+          }}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Text style={styles.selectText}>{activeTermLabel}</Text>
+          <ChevronDown size={18} color="#6b7280" />
+        </TouchableOpacity>
+        <Dropdown
+          visible={showSchoolTermDropdown}
+          triggerRef={schoolTermTriggerRef}
+          onClose={() => setShowSchoolTermDropdown(false)}
+          placement="bottom-start"
+          matchTriggerWidth
+          maxHeight={220}
+        >
+          {termOptions.map((opt) => (
+            <TouchableOpacity
+              key={opt.id}
+              style={[localStyles.menuOption, opt.id === schoolTerm && localStyles.menuOptionSelected]}
+              onPress={() => {
+                onSchoolTermChange?.(opt.id);
+                setShowSchoolTermDropdown(false);
+              }}
+            >
+              <Text style={[localStyles.menuOptionText, opt.id === schoolTerm && localStyles.menuOptionTextSelected]}>
+                {opt.label}
+              </Text>
+              {opt.id === schoolTerm ? <CheckCircle size={16} color="#6BB3E8" /> : null}
+            </TouchableOpacity>
+          ))}
+        </Dropdown>
+          </View>
+
+          {startDateField}
+          {endDateField}
+        </>
       ) : null}
 
       <View style={styles.formGroup}>
@@ -75,6 +208,7 @@ export default function SubjectScheduleFields({
           <TextInput
             value={startTime}
             onChangeText={(text) => onStartTimeChange(normalizeHm(text.replace(/[^\d:]/g, ''), startTime || ''))}
+            onFocus={() => clearIfDefaultValue(startTime, SCHEDULE_FIELD_DEFAULTS.time, onStartTimeChange)}
             placeholder="09:00"
             style={styles.fieldInput}
           />
@@ -84,6 +218,10 @@ export default function SubjectScheduleFields({
           <TextInput
             value={durationMinutes === '' || durationMinutes == null ? '' : String(durationMinutes)}
             onChangeText={(text) => onDurationMinutesChange(text.replace(/[^\d]/g, ''))}
+            onFocus={() => {
+              const value = durationMinutes === '' || durationMinutes == null ? '' : String(durationMinutes);
+              clearIfDefaultValue(value, SCHEDULE_FIELD_DEFAULTS.duration, onDurationMinutesChange);
+            }}
             placeholder="60"
             keyboardType="numeric"
             style={styles.fieldInput}
@@ -91,17 +229,12 @@ export default function SubjectScheduleFields({
         </View>
       </View>
 
-      <ScheduleDateFields
-        startDate={startDate}
-        onStartDateChange={onStartDateChange}
-        endDate={endDate}
-        onEndDateChange={onEndDateChange}
-        showEndDate
-        showTimes={false}
-        endDateRequired
-        onOpenStartDatePicker={onOpenStartDatePicker}
-        onOpenEndDatePicker={onOpenEndDatePicker}
-      />
+      {!showScopeFields ? (
+        <>
+          {startDateField}
+          {endDateField}
+        </>
+      ) : null}
 
       {showRemoveEventsButton ? (
         <TouchableOpacity
@@ -121,6 +254,30 @@ export default function SubjectScheduleFields({
     </View>
   );
 }
+
+const localStyles = StyleSheet.create({
+  scopeField: {
+    marginBottom: 14,
+  },
+  menuOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  menuOptionSelected: {
+    backgroundColor: 'rgba(133, 196, 242, 0.12)',
+  },
+  menuOptionText: {
+    fontSize: 14,
+    color: '#374151',
+  },
+  menuOptionTextSelected: {
+    color: '#6BB3E8',
+    fontWeight: '600',
+  },
+});
 
 const scheduleHelpStyles = {
   removeBtn: {

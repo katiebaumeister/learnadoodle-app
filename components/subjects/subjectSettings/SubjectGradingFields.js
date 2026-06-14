@@ -1,10 +1,9 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
-  Switch,
   Platform,
 } from 'react-native';
 import { X, Plus } from 'lucide-react';
@@ -17,22 +16,6 @@ import {
 } from '../../../lib/subjectGradingSettings';
 
 export const gradingFieldStyles = {
-  helpText: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: '#64748B',
-    marginBottom: 12,
-  },
-  switchBlock: {
-    marginBottom: 12,
-  },
-  switchLabel: {
-    flex: 1,
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#334155',
-    paddingRight: 12,
-  },
   fieldRow: {
     marginBottom: 8,
   },
@@ -84,6 +67,9 @@ export const gradingFieldStyles = {
     marginTop: 4,
     marginBottom: 8,
   },
+  categoriesSection: {
+    marginTop: 14,
+  },
   remainingText: {
     fontSize: 13,
     color: '#64748B',
@@ -110,6 +96,15 @@ export default function SubjectGradingFields({
   const remainingPercent = getCategoryWeightRemaining(draft.categories);
   const showCategories = draft.calculation_method === GRADING_CALC_METHOD.WEIGHTED_CATEGORY;
   const localStyles = gradingFieldStyles;
+
+  useEffect(() => {
+    if (
+      draft.calculation_method === GRADING_CALC_METHOD.WEIGHTED_CATEGORY
+      && !(draft.categories || []).length
+    ) {
+      onAddCategory();
+    }
+  }, [draft.calculation_method, draft.categories, onAddCategory]);
 
   return (
     <View>
@@ -142,24 +137,8 @@ export default function SubjectGradingFields({
         })}
       </View>
 
-      {draft.calculation_method !== GRADING_CALC_METHOD.NONE ? (
-        <View style={[styles.inlineSwitchRow, localStyles.switchBlock]}>
-          <Text style={localStyles.switchLabel}>Show overall grade to students</Text>
-          <Switch
-            value={draft.show_overall_to_students}
-            onValueChange={(value) => onUpdateDraft({ show_overall_to_students: value })}
-            trackColor={{ false: '#CBD5E1', true: '#9ECFFB' }}
-            thumbColor="#FFFFFF"
-          />
-        </View>
-      ) : null}
-
       {showCategories ? (
-        <>
-          <View style={styles.sectionDivider} />
-          <Text style={styles.sectionHeading}>Weighted categories</Text>
-          <Text style={localStyles.helpText}>Grade categories must add up to 100%.</Text>
-
+        <View style={localStyles.categoriesSection}>
           {(draft.categories || []).map((category, index) => (
             <View key={category.id || `cat-${index}`} style={localStyles.categoryRow}>
               <View style={localStyles.categoryFields}>
@@ -210,7 +189,7 @@ export default function SubjectGradingFields({
               <Text style={localStyles.addCategoryText}>Add grade category</Text>
             </TouchableOpacity>
           </View>
-        </>
+        </View>
       ) : null}
     </View>
   );

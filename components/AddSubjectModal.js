@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput } from 'react-native';
-import { ChevronDown, CheckCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
@@ -8,16 +7,36 @@ import { parseChildIds } from '../lib/services/subjectsClient';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
-import Dropdown from './ui/Dropdown';
 import ConfirmDialog from './ConfirmDialog';
+import {
+  createModalStyles as sharedStyles,
+  SUBJECT_SETTINGS_MODAL_MAX_WIDTH,
+} from './create/shared/createModalStyles';
+import { SectionHeading } from './create/shared/assignmentFormParts';
+import { AppCalendarDatePickerModal } from './ui/AppCalendarDatePickerModal';
+import SubjectGradingFields from './subjects/subjectSettings/SubjectGradingFields';
+import SubjectScheduleFields from './subjects/subjectSettings/SubjectScheduleFields';
 import {
   deleteSubjectCascade,
   dispatchSubjectDeletedSideEffects,
 } from '../lib/services/deleteSubjectCascade';
 import { seedSubjectGettingStartedBulletinPost } from '../lib/subjectGettingStartedBulletin';
+import {
+  parseSubjectGradingSettings,
+  validateGradingSettings,
+  createEmptyCategory,
+} from '../lib/subjectGradingSettings';
+import { saveSubjectGradingSettings } from '../lib/services/subjectGradingSettingsClient';
+import { getPlanDefaultsFromSettings } from '../lib/services/plannerSettingsClient';
+import {
+  APPLY_SCOPE_FULL_YEAR,
+  applySubjectScheduleToCalendar,
+  getSubjectTermDateRange,
+  isScheduleFormConfigured,
+  ymdToLocalDate,
+} from '../lib/subjectConfigureSchedule';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
-const SUBJECT_MODAL_MAX_WIDTH = 560;
 
 const formatSchoolYearLabel = (startYear) => `${startYear}/${String(startYear + 1).slice(-2)}`;
 const parseSchoolYearLabel = (label) => {
@@ -87,16 +106,21 @@ export default function AddSubjectModal({
   children: propChildren = [] // Pre-loaded children from parent
 }) {
   const [subjectName, setSubjectName] = useState(defaultSubjectName || '');
-  const [subjectNameInputFocused, setSubjectNameInputFocused] = useState(false);
   const [additionalNotes, setAdditionalNotes] = useState('');
   const [selectedChildIds, setSelectedChildIds] = useState([]);
   const [grade, setGrade] = useState('');
   const [gradeManuallyEdited, setGradeManuallyEdited] = useState(false);
   const [schoolYear, setSchoolYear] = useState(initialSchoolYear || getDefaultSchoolYear());
   const [schoolYearOptions, setSchoolYearOptions] = useState(() => getFallbackSchoolYearOptions());
-  const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [schoolTerm, setSchoolTerm] = useState(initialSchoolTerm || getDefaultSchoolTerm());
-  const [showSchoolTermDropdown, setShowSchoolTermDropdown] = useState(false);
+  const [gradingDraft, setGradingDraft] = useState(() => parseSubjectGradingSettings(null));
+  const [weekdays, setWeekdays] = useState([]);
+  const [startTime, setStartTime] = useState('');
+  const [durationMinutes, setDurationMinutes] = useState('');
+  const [startDate, setStartDate] = useState(null);
+  const [endDate, setEndDate] = useState(null);
+  const [datePickerTarget, setDatePickerTarget] = useState(null);
+  const [plannerSettings, setPlannerSettings] = useState(null);
   const [credits, setCredits] = useState('');
   const [logisticalLocation, setLogisticalLocation] = useState('');
   const [logisticalMode, setLogisticalMode] = useState('');
@@ -119,8 +143,84 @@ export default function AddSubjectModal({
   const [deletingSubject, setDeletingSubject] = useState(false);
   const [showDeleteSubjectConfirm, setShowDeleteSubjectConfirm] = useState(false);
   const materialDropdownRef = useRef(null);
-  const schoolYearTriggerRef = useRef(null);
-  const schoolTermTriggerRef = useRef(null);
+
+  const applyTermDates = useCallback((year, term, settings) => {
+    const range = getSubjectTermDateRange(year, term, settings);
+    const start = ymdToLocalDate(range.start_date);
+    const end = ymdToLocalDate(range.end_date);
+    if (start) setStartDate(start);
+    if (end) setEndDate(end);
+  }, []);
+
+  const handleSchoolYearChange = useCallback(async (year) => {
+    setSchoolYear(year);
+    let settings = plannerSettings;
+    if (familyId) {
+      try {
+        const { settings: loaded } = await getPlanDefaultsFromSettings(familyId, year);
+        settings = loaded || null;
+        setPlannerSettings(settings);
+      } catch (_) {
+        settings = null;
+        setPlannerSettings(null);
+      }
+    }
+    applyTermDates(year, schoolTerm, settings);
+  }, [familyId, schoolTerm, plannerSettings, applyTermDates]);
+
+  const handleSchoolTermChange = useCallback((term) => {
+    setSchoolTerm(term);
+    applyTermDates(schoolYear, term, plannerSettings);
+  }, [schoolYear, plannerSettings, applyTermDates]);
+
+  const updateGradingDraft = useCallback((patch) => {
+    setGradingDraft((prev) => ({ ...prev, ...patch }));
+    setError(null);
+  }, []);
+
+  const updateCategory = useCallback((index, patch) => {
+    setGradingDraft((prev) => {
+      const categories = [...(prev.categories || [])];
+      categories[index] = { ...categories[index], ...patch };
+      return { ...prev, categories };
+    });
+    setError(null);
+  }, []);
+
+  const removeCategory = useCallback((index) => {
+    setGradingDraft((prev) => ({
+      ...prev,
+      categories: (prev.categories || []).filter((_, i) => i !== index),
+    }));
+    setError(null);
+  }, []);
+
+  const addCategory = useCallback(() => {
+    setGradingDraft((prev) => ({
+      ...prev,
+      categories: [...(prev.categories || []), createEmptyCategory()],
+    }));
+    setError(null);
+  }, []);
+
+  const datePickerValue = useMemo(() => {
+    if (datePickerTarget === 'end') return endDate;
+    return startDate;
+  }, [datePickerTarget, startDate, endDate]);
+
+  const initScheduleDefaults = useCallback(async (yearLabel, termId) => {
+    let settings = null;
+    if (familyId) {
+      try {
+        const { settings: loaded } = await getPlanDefaultsFromSettings(familyId, yearLabel);
+        settings = loaded || null;
+        setPlannerSettings(settings);
+      } catch (_) {
+        setPlannerSettings(null);
+      }
+    }
+    applyTermDates(yearLabel, termId, settings);
+  }, [familyId, applyTermDates]);
 
   // Update children when prop changes
   useEffect(() => {
@@ -162,6 +262,10 @@ export default function AddSubjectModal({
         setGradeManuallyEdited(false);
         setSchoolYear(initialSchoolYear || getDefaultSchoolYear());
         setSchoolTerm(initialSchoolTerm || getDefaultSchoolTerm());
+        setGradingDraft(parseSubjectGradingSettings(null));
+        setWeekdays([]);
+        setStartTime('');
+        setDurationMinutes('');
         setLogisticalLocation('');
         setLogisticalMode('');
         setLogisticalInstructor('');
@@ -176,6 +280,10 @@ export default function AddSubjectModal({
         } else if (defaultChildId) {
           setSelectedChildIds([defaultChildId]);
         }
+        initScheduleDefaults(
+          initialSchoolYear || getDefaultSchoolYear(),
+          initialSchoolTerm || getDefaultSchoolTerm(),
+        );
       }
     } else if (!visible) {
       // Reset form when modal closes
@@ -185,9 +293,15 @@ export default function AddSubjectModal({
       setGrade('');
       setGradeManuallyEdited(false);
       setSchoolYear(getDefaultSchoolYear());
-      setShowSchoolYearDropdown(false);
       setSchoolTerm(getDefaultSchoolTerm());
-      setShowSchoolTermDropdown(false);
+      setGradingDraft(parseSubjectGradingSettings(null));
+      setWeekdays([]);
+      setStartTime('');
+      setDurationMinutes('');
+      setStartDate(null);
+      setEndDate(null);
+      setDatePickerTarget(null);
+      setPlannerSettings(null);
       setCredits('');
       setLogisticalLocation('');
       setLogisticalMode('');
@@ -198,7 +312,7 @@ export default function AddSubjectModal({
       setShowMaterialDropdown(false);
       setSelectedMaterialId(null);
     }
-  }, [visible, defaultChildId, defaultChildIds, defaultSubjectName, initialSchoolTerm, initialSchoolYear, subject]);
+  }, [visible, defaultChildId, defaultChildIds, defaultSubjectName, initialSchoolTerm, initialSchoolYear, subject, initScheduleDefaults, propChildren]);
 
   useEffect(() => {
     let cancelled = false;
@@ -490,6 +604,12 @@ export default function AddSubjectModal({
       return;
     }
 
+    const { ok: gradingOk, errors: gradingErrors } = validateGradingSettings(gradingDraft);
+    if (!gradingOk) {
+      setError(gradingErrors[0]);
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
 
@@ -535,6 +655,25 @@ export default function AddSubjectModal({
       }
 
       const savedSubjectId = newSubjects?.[0]?.id || existingSubjectId || null;
+
+      if (savedSubjectId) {
+        await saveSubjectGradingSettings(savedSubjectId, familyId, gradingDraft);
+        if (isScheduleFormConfigured({ weekdays, startTime, durationMinutes, startDate, endDate })) {
+          await applySubjectScheduleToCalendar({
+            familyId,
+            subject: { id: savedSubjectId, name: subjectName.trim() },
+            assignedChildIds: selectedChildIds,
+            allChildIds: (children || []).map((c) => c.id).filter(Boolean),
+            weekdays,
+            startTime,
+            durationMinutes: Number(durationMinutes),
+            startDate,
+            endDate,
+            applyScope: APPLY_SCOPE_FULL_YEAR,
+          });
+        }
+      }
+
       if (savedSubjectId && selectedMaterialId) {
         try {
           const { error: materialLinkError } = await supabase
@@ -626,21 +765,21 @@ export default function AddSubjectModal({
       animationType="fade"
       onRequestClose={handleClose}
     >
-      <View ref={overlayRef} style={styles.overlay}>
+      <View ref={overlayRef} style={localStyles.overlay}>
         <TouchableOpacity
           style={StyleSheet.absoluteFill}
           activeOpacity={1}
           onPress={handleClose}
         />
-        <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.modalWrap}>
+        <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={localStyles.modalWrap}>
           <AppModalShell
             title="New subject"
             onClose={handleClose}
             disableShellScroll
-            shellStyle={styles.compactSubjectShell}
-            titleRowStyle={styles.compactTitleRow}
-            contentContainerStyle={styles.scrollContent}
-            bodyStyle={styles.shellBody}
+            shellStyle={[sharedStyles.compactShell, sharedStyles.subjectSettingsModalShell]}
+            titleRowStyle={sharedStyles.subjectSettingsTitleRow}
+            contentContainerStyle={localStyles.bodyContent}
+            bodyStyle={[sharedStyles.shellBody, sharedStyles.subjectSettingsModalBody]}
             footer={(
               <ModalFooter
                 mode="add"
@@ -655,182 +794,179 @@ export default function AddSubjectModal({
               />
             )}
           >
-            {error && !error.includes('children') && (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
-            )}
-
-            {/* Subject Name */}
-            <View style={styles.formGroup}>
-              <Text style={styles.fieldLabel}>Subject name<Text style={styles.required}> *</Text></Text>
-              <TextInput
-                style={[styles.fieldInput, subjectNameInputFocused && styles.fieldInputFocused]}
-                value={subjectName}
-                onChangeText={setSubjectName}
-                placeholder="e.g., Algebra I, World History, Spanish"
-                placeholderTextColor="#9ca3af"
-                autoFocus={!defaultSubjectName}
-                onFocus={() => setSubjectNameInputFocused(true)}
-                onBlur={() => setSubjectNameInputFocused(false)}
-              />
-            </View>
-
-            {/* Students Selection */}
-            {loadingChildren ? (
-              <View style={styles.formGroup}>
-                <Text style={styles.fieldLabel}>Students<Text style={styles.required}> *</Text></Text>
-                <Text style={styles.loadingText}>Loading children...</Text>
-              </View>
-            ) : children.length > 0 ? (
-              <View style={styles.formGroup}>
-                <Text style={styles.fieldLabel}>Students<Text style={styles.required}> *</Text></Text>
-                <View style={styles.chipRow}>
-                  {children.map((child) => {
-                    const isSelected = selectedChildIds.includes(child.id);
-                    return (
-                      <TouchableOpacity
-                        key={child.id}
-                        style={[
-                          styles.childChip,
-                          isSelected && styles.childChipSelected
-                        ]}
-                        onPress={() => {
-                          if (isSelected) {
-                            setSelectedChildIds(selectedChildIds.filter(id => id !== child.id));
-                          } else {
-                            setSelectedChildIds([...selectedChildIds, child.id]);
-                          }
-                        }}
-                      >
-                        <Text style={[
-                          styles.childChipText,
-                          isSelected && styles.childChipTextSelected
-                        ]}>
-                          {child.first_name || child.name}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+            {error && !error.includes('children') ? (
+              <View style={sharedStyles.validationBannerContainer}>
+                <Text style={sharedStyles.validationBannerText}>{error}</Text>
               </View>
             ) : null}
 
-            <View style={styles.formGroup}>
-              <Text style={styles.fieldLabel}>Grade level</Text>
-              <View style={styles.gradeChipRow}>
-                {GRADE_OPTIONS.map((gradeOption) => (
-                  <TouchableOpacity
-                    key={gradeOption}
-                    style={[
-                      styles.gradeChip,
-                      grade === gradeOption && styles.gradeChipSelected
-                    ]}
-                    onPress={() => {
-                      setGrade(gradeOption);
-                      setGradeManuallyEdited(true);
-                    }}
-                  >
-                    <Text style={[
-                      styles.gradeChipText,
-                      grade === gradeOption && styles.gradeChipTextSelected
-                    ]}>
-                      {gradeOption}
+            <View style={sharedStyles.assignmentFormRow}>
+              <View style={sharedStyles.assignmentFormColumnMain}>
+                <View style={sharedStyles.assignmentContentPanel}>
+                  <SectionHeading>Details</SectionHeading>
+
+                  <View style={sharedStyles.formGroup}>
+                    <Text style={sharedStyles.fieldLabel}>
+                      Subject name<Text style={sharedStyles.required}> *</Text>
                     </Text>
-                  </TouchableOpacity>
-                ))}
+                    <TextInput
+                      style={sharedStyles.fieldInput}
+                      value={subjectName}
+                      onChangeText={setSubjectName}
+                      placeholder="e.g., World History"
+                      placeholderTextColor="#9ca3af"
+                      autoFocus={!defaultSubjectName}
+                    />
+                  </View>
+
+                  <View style={sharedStyles.formGroup}>
+                    <Text style={sharedStyles.fieldLabel}>
+                      Students<Text style={sharedStyles.required}> *</Text>
+                    </Text>
+                    {loadingChildren ? (
+                      <Text style={localStyles.loadingText}>Loading students…</Text>
+                    ) : children.length > 0 ? (
+                      <View style={sharedStyles.chipRow}>
+                        {children.map((child) => {
+                          const isSelected = selectedChildIds.includes(child.id);
+                          return (
+                            <TouchableOpacity
+                              key={child.id}
+                              style={[
+                                sharedStyles.dropdownOption,
+                                sharedStyles.assigneePill,
+                                isSelected && sharedStyles.dropdownOptionActive,
+                              ]}
+                              onPress={() => {
+                                setSelectedChildIds((prev) =>
+                                  isSelected
+                                    ? prev.filter((id) => id !== child.id)
+                                    : [...prev, child.id]
+                                );
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text
+                                style={[
+                                  sharedStyles.dropdownOptionText,
+                                  sharedStyles.assigneePillText,
+                                  isSelected && [sharedStyles.assigneePillTextActive, sharedStyles.dropdownOptionTextActive],
+                                ]}
+                              >
+                                {child.first_name || child.name}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ) : null}
+                  </View>
+
+                  <View style={sharedStyles.formGroup}>
+                    <Text style={sharedStyles.fieldLabel}>Grade level</Text>
+                    <View style={sharedStyles.chipRow}>
+                      {GRADE_OPTIONS.map((gradeOption) => {
+                        const isSelected = grade === gradeOption;
+                        return (
+                          <TouchableOpacity
+                            key={gradeOption}
+                            style={[
+                              sharedStyles.dropdownOption,
+                              sharedStyles.assigneePill,
+                              isSelected && sharedStyles.dropdownOptionActive,
+                            ]}
+                            onPress={() => {
+                              setGrade(gradeOption);
+                              setGradeManuallyEdited(true);
+                            }}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text
+                              style={[
+                                sharedStyles.dropdownOptionText,
+                                sharedStyles.assigneePillText,
+                                isSelected && [sharedStyles.assigneePillTextActive, sharedStyles.dropdownOptionTextActive],
+                              ]}
+                            >
+                              {gradeOption}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                </View>
+
+                <View style={[sharedStyles.assignmentAttachPanel, localStyles.gradingPanel]}>
+                  <ScrollView
+                    style={localStyles.gradingPanelScroll}
+                    contentContainerStyle={localStyles.gradingPanelScrollInner}
+                    showsVerticalScrollIndicator
+                    keyboardShouldPersistTaps="handled"
+                    nestedScrollEnabled
+                  >
+                    <SubjectGradingFields
+                      draft={gradingDraft}
+                      onUpdateDraft={updateGradingDraft}
+                      onUpdateCategory={updateCategory}
+                      onRemoveCategory={removeCategory}
+                      onAddCategory={addCategory}
+                    />
+                  </ScrollView>
+                </View>
+              </View>
+
+              <View style={sharedStyles.assignmentFormColumnSide}>
+                <View style={sharedStyles.subjectSettingsSidePanel}>
+                  <SectionHeading>Schedule</SectionHeading>
+                  <ScrollView
+                    style={sharedStyles.subjectSettingsSideFieldsScroll}
+                    contentContainerStyle={sharedStyles.subjectSettingsSideFieldsScrollInner}
+                    showsVerticalScrollIndicator
+                    keyboardShouldPersistTaps="handled"
+                    nestedScrollEnabled
+                  >
+                    <SubjectScheduleFields
+                      embeddedInForm
+                      schoolYear={schoolYear}
+                      schoolYearOptions={schoolYearOptions}
+                      onSchoolYearChange={handleSchoolYearChange}
+                      schoolTerm={schoolTerm}
+                      termOptions={TERM_OPTIONS}
+                      onSchoolTermChange={handleSchoolTermChange}
+                      weekdays={weekdays}
+                      onWeekdaysChange={setWeekdays}
+                      startTime={startTime}
+                      onStartTimeChange={setStartTime}
+                      durationMinutes={durationMinutes}
+                      onDurationMinutesChange={setDurationMinutes}
+                      startDate={startDate}
+                      onStartDateChange={setStartDate}
+                      endDate={endDate}
+                      onEndDateChange={setEndDate}
+                      onOpenStartDatePicker={() => setDatePickerTarget('start')}
+                      onOpenEndDatePicker={() => setDatePickerTarget('end')}
+                    />
+                  </ScrollView>
+                </View>
               </View>
             </View>
-
-            <View style={[styles.formGroup, styles.formGroupLast]}>
-              <View style={styles.stackedFields}>
-              <View style={styles.schoolScopeFieldStacked}>
-                <Text style={styles.fieldLabel}>School year</Text>
-                <TouchableOpacity
-                  ref={schoolYearTriggerRef}
-                  style={styles.dropdownButton}
-                  onPress={() => {
-                    setShowSchoolTermDropdown(false);
-                    setShowSchoolYearDropdown(!showSchoolYearDropdown);
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.dropdownButtonText}>{schoolYear}</Text>
-                  <ChevronDown size={18} color="#6b7280" />
-                </TouchableOpacity>
-                <Dropdown
-                  visible={showSchoolYearDropdown}
-                  triggerRef={schoolYearTriggerRef}
-                  onClose={() => setShowSchoolYearDropdown(false)}
-                  placement="bottom-start"
-                  matchTriggerWidth
-                  maxHeight={220}
-                >
-                  {schoolYearOptions.map((opt) => (
-                    <TouchableOpacity
-                      key={opt}
-                      style={[styles.dropdownOption, opt === schoolYear && styles.dropdownOptionSelected]}
-                      onPress={() => {
-                        setSchoolYear(opt);
-                        setShowSchoolYearDropdown(false);
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.dropdownOptionText, opt === schoolYear && styles.dropdownOptionTextSelected]}>{opt}</Text>
-                      {opt === schoolYear && <CheckCircle size={16} color="#3b82f6" />}
-                    </TouchableOpacity>
-                  ))}
-                </Dropdown>
-              </View>
-              <View style={[styles.schoolScopeFieldStacked, showSchoolTermDropdown && styles.schoolScopeFieldOpen]}>
-                <Text style={styles.fieldLabel}>Term</Text>
-                <TouchableOpacity
-                  ref={schoolTermTriggerRef}
-                  style={styles.dropdownButton}
-                  onPress={() => {
-                    setShowSchoolYearDropdown(false);
-                    setShowSchoolTermDropdown((open) => !open);
-                  }}
-                  activeOpacity={0.7}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={styles.dropdownButtonText}>
-                    {(TERM_OPTIONS.find((opt) => opt.id === schoolTerm) || TERM_OPTIONS[0]).label}
-                  </Text>
-                  <ChevronDown size={18} color="#6b7280" />
-                </TouchableOpacity>
-                <Dropdown
-                  visible={showSchoolTermDropdown}
-                  triggerRef={schoolTermTriggerRef}
-                  onClose={() => setShowSchoolTermDropdown(false)}
-                  placement="top-start"
-                  matchTriggerWidth
-                  maxHeight={220}
-                >
-                  {TERM_OPTIONS.map((opt) => (
-                    <TouchableOpacity
-                      key={opt.id}
-                      style={[styles.dropdownOption, opt.id === schoolTerm && styles.dropdownOptionSelected]}
-                      onPress={() => {
-                        setSchoolTerm(opt.id);
-                        setShowSchoolTermDropdown(false);
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.dropdownOptionText, opt.id === schoolTerm && styles.dropdownOptionTextSelected]}>{opt.label}</Text>
-                      {opt.id === schoolTerm && <CheckCircle size={16} color="#3b82f6" />}
-                    </TouchableOpacity>
-                  ))}
-                </Dropdown>
-              </View>
-              </View>
-            </View>
-
           </AppModalShell>
         </TouchableOpacity>
       </View>
 
     </RNModal>
+
+    <AppCalendarDatePickerModal
+      visible={!!datePickerTarget}
+      onClose={() => setDatePickerTarget(null)}
+      selectedDate={datePickerValue || new Date()}
+      onSelectDate={(d) => {
+        if (datePickerTarget === 'end') setEndDate(d);
+        else setStartDate(d);
+        setDatePickerTarget(null);
+      }}
+    />
 
     <ConfirmDialog
       visible={showDeleteSubjectConfirm}
@@ -853,6 +989,51 @@ export default function AddSubjectModal({
   );
 }
 
+const localStyles = StyleSheet.create({
+  overlay: sharedStyles.overlay,
+  modalWrap: {
+    ...sharedStyles.modalWrap,
+    maxWidth: SUBJECT_SETTINGS_MODAL_MAX_WIDTH,
+  },
+  bodyContent: {
+    flex: 1,
+    minHeight: 0,
+    paddingBottom: 4,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#6b7280',
+    fontStyle: 'italic',
+  },
+  gradingPanel: {
+    flexGrow: 0,
+    flexShrink: 1,
+    alignSelf: 'stretch',
+    paddingBottom: 12,
+    overflow: 'hidden',
+    maxHeight: 220,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  gradingPanelScroll: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      overflowY: 'auto',
+      overflowX: 'hidden',
+    }),
+  },
+  gradingPanelScrollInner: {
+    paddingBottom: 4,
+  },
+});
+
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
@@ -863,7 +1044,7 @@ const styles = StyleSheet.create({
   },
   modalWrap: {
     width: '100%',
-    maxWidth: SUBJECT_MODAL_MAX_WIDTH,
+    maxWidth: SUBJECT_SETTINGS_MODAL_MAX_WIDTH,
   },
   compactSubjectShell: {
     height: 'auto',

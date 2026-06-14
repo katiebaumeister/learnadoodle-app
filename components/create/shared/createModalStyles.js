@@ -6,6 +6,8 @@ export const CREATE_ASSIGNMENT_MODAL_MAX_WIDTH = 1320;
 export const CREATE_ASSIGNMENT_MODAL_HEIGHT = 820;
 export const SCHOOL_YEAR_SETTINGS_MODAL_MAX_WIDTH = 900;
 export const SCHOOL_YEAR_SETTINGS_MODAL_HEIGHT = 800;
+export const SUBJECT_SETTINGS_MODAL_MAX_WIDTH = 1080;
+export const SUBJECT_SETTINGS_MODAL_HEIGHT = 728;
 export const FG = '#111827';
 export const MUTED = '#6b7280';
 export const PLACEHOLDER = '#94A3B8';
@@ -49,6 +51,10 @@ export const createModalStyles = StyleSheet.create({
   compactTitleRow: {
     paddingTop: 16,
     paddingBottom: 8,
+  },
+  subjectSettingsTitleRow: {
+    paddingTop: 12,
+    paddingBottom: 6,
   },
   shellBody: {
     paddingTop: 0,
@@ -316,6 +322,63 @@ export const createModalStyles = StyleSheet.create({
       flex: 'none',
       minHeight: 'auto',
     }),
+  },
+  subjectSettingsModalShell: {
+    ...(Platform.OS === 'web'
+      ? {
+          height: SUBJECT_SETTINGS_MODAL_HEIGHT,
+          minHeight: SUBJECT_SETTINGS_MODAL_HEIGHT,
+          maxHeight: SUBJECT_SETTINGS_MODAL_HEIGHT,
+          borderRadius: 28,
+          boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
+        }
+      : {
+          height: '84%',
+          maxHeight: '84%',
+          minHeight: SUBJECT_SETTINGS_MODAL_HEIGHT,
+        }),
+    overflow: 'hidden',
+  },
+  subjectSettingsModalBody: {
+    flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
+    paddingBottom: 4,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  subjectSettingsSidePanel: {
+    flex: 1,
+    minHeight: 0,
+    width: '100%',
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 16,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.04)',
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+      height: '100%',
+    }),
+  },
+  subjectSettingsSideFieldsScroll: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      overflowY: 'auto',
+      overflowX: 'hidden',
+    }),
+  },
+  subjectSettingsSideFieldsScrollInner: {
+    paddingBottom: 4,
   },
   fieldLabel: {
     fontSize: 12,

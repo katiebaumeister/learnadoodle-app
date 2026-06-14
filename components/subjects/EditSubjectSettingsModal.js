@@ -9,17 +9,16 @@ import {
   StyleSheet,
   Platform,
 } from 'react-native';
-import { ChevronDown, CheckCircle } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
+import { supabase } from '../../lib/supabase';
 import { parseChildIds } from '../../lib/services/subjectsClient';
 import AppModalShell from '../ui/AppModalShell';
 import { ModalFooter } from '../ui/ModalFooter';
 import {
   createModalStyles as styles,
-  CREATE_EVENT_MODAL_MAX_WIDTH,
+  SUBJECT_SETTINGS_MODAL_MAX_WIDTH,
 } from '../create/shared/createModalStyles';
-import Dropdown from '../ui/Dropdown';
+import { SectionHeading } from '../create/shared/assignmentFormParts';
 import ConfirmDialog from '../ConfirmDialog';
 import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
 import SubjectGradingFields from './subjectSettings/SubjectGradingFields';
@@ -34,13 +33,16 @@ import {
   createEmptyCategory,
 } from '../../lib/subjectGradingSettings';
 import { saveSubjectGradingSettings } from '../../lib/services/subjectGradingSettingsClient';
+import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import {
   APPLY_SCOPE_FULL_YEAR,
   applySubjectScheduleToCalendar,
   buildInitialScheduleForm,
   countSubjectScheduleEvents,
+  getSubjectTermDateRange,
   isScheduleFormConfigured,
   removeSubjectScheduleFromCalendar,
+  ymdToLocalDate,
 } from '../../lib/subjectConfigureSchedule';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
@@ -93,9 +95,8 @@ export default function EditSubjectSettingsModal({
   const [grade, setGrade] = useState('');
   const [schoolYear, setSchoolYear] = useState(getDefaultSchoolYear());
   const [schoolYearOptions] = useState(() => getFallbackSchoolYearOptions());
-  const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [schoolTerm, setSchoolTerm] = useState(getDefaultSchoolTerm());
-  const [showSchoolTermDropdown, setShowSchoolTermDropdown] = useState(false);
+  const [plannerSettings, setPlannerSettings] = useState(null);
   const [children, setChildren] = useState(propChildren || []);
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -115,9 +116,36 @@ export default function EditSubjectSettingsModal({
   const [showRemoveScheduleConfirm, setShowRemoveScheduleConfirm] = useState(false);
   const [hasScheduleEvents, setHasScheduleEvents] = useState(false);
 
-  const schoolYearTriggerRef = useRef(null);
-  const schoolTermTriggerRef = useRef(null);
   const hasHydratedRef = useRef(false);
+
+  const applyTermDates = useCallback((year, term, settings) => {
+    const range = getSubjectTermDateRange(year, term, settings);
+    const start = ymdToLocalDate(range.start_date);
+    const end = ymdToLocalDate(range.end_date);
+    if (start) setStartDate(start);
+    if (end) setEndDate(end);
+  }, []);
+
+  const handleSchoolYearChange = useCallback(async (year) => {
+    setSchoolYear(year);
+    let settings = plannerSettings;
+    if (familyId) {
+      try {
+        const { settings: loaded } = await getPlanDefaultsFromSettings(familyId, year);
+        settings = loaded || null;
+        setPlannerSettings(settings);
+      } catch (_) {
+        settings = null;
+        setPlannerSettings(null);
+      }
+    }
+    applyTermDates(year, schoolTerm, settings);
+  }, [familyId, schoolTerm, plannerSettings, applyTermDates]);
+
+  const handleSchoolTermChange = useCallback((term) => {
+    setSchoolTerm(term);
+    applyTermDates(schoolYear, term, plannerSettings);
+  }, [schoolYear, plannerSettings, applyTermDates]);
 
   const effectiveAssignedChildIds = useMemo(() => {
     if (assignedChildIds?.length) return assignedChildIds;
@@ -156,11 +184,26 @@ export default function EditSubjectSettingsModal({
     const hydrate = async () => {
       setSubjectName(subject.name || '');
       setGrade(subject.grade || '');
-      setSchoolYear(subject.school_year || getDefaultSchoolYear());
-      setSchoolTerm(subject.school_term || getDefaultSchoolTerm());
+      const yearLabel = subject.school_year || getDefaultSchoolYear();
+      const termId = subject.school_term || getDefaultSchoolTerm();
+      setSchoolYear(yearLabel);
+      setSchoolTerm(termId);
       setGradingDraft(parseSubjectGradingSettings(initialGradingSettings ?? subject.grading_settings));
       const childIds = subject.child_id ? parseChildIds(subject.child_id) : [];
       setSelectedChildIds(childIds);
+
+      let loadedPlannerSettings = null;
+      if (familyId) {
+        try {
+          const { settings } = await getPlanDefaultsFromSettings(familyId, yearLabel);
+          if (!cancelled) {
+            loadedPlannerSettings = settings || null;
+            setPlannerSettings(loadedPlannerSettings);
+          }
+        } catch (_) {
+          if (!cancelled) setPlannerSettings(null);
+        }
+      }
 
       const initialSchedule = buildInitialScheduleForm({
         subject,
@@ -175,8 +218,15 @@ export default function EditSubjectSettingsModal({
           ? ''
           : String(initialSchedule.durationMinutes),
       );
-      setStartDate(initialSchedule.startDate);
-      setEndDate(initialSchedule.endDate);
+
+      if (initialSchedule.startDate && initialSchedule.endDate) {
+        setStartDate(initialSchedule.startDate);
+        setEndDate(initialSchedule.endDate);
+      } else {
+        const range = getSubjectTermDateRange(yearLabel, termId, loadedPlannerSettings);
+        setStartDate(ymdToLocalDate(range.start_date));
+        setEndDate(ymdToLocalDate(range.end_date));
+      }
 
       try {
         const eventCount = await countSubjectScheduleEvents({
@@ -423,10 +473,10 @@ export default function EditSubjectSettingsModal({
               title="Subject settings"
               onClose={onClose}
               disableShellScroll
-              shellStyle={localStyles.settingsShell}
-              titleRowStyle={styles.compactTitleRow}
-              contentContainerStyle={styles.contentContainer}
-              bodyStyle={styles.shellBody}
+              shellStyle={[styles.compactShell, styles.subjectSettingsModalShell]}
+              titleRowStyle={styles.subjectSettingsTitleRow}
+              contentContainerStyle={localStyles.bodyContent}
+              bodyStyle={[styles.shellBody, styles.subjectSettingsModalBody]}
               footer={(
                 <ModalFooter
                   mode="edit"
@@ -447,206 +497,170 @@ export default function EditSubjectSettingsModal({
                 </View>
               ) : null}
 
-              <ScrollView
-                ref={formScrollRef}
-                style={localStyles.formScroll}
-                contentContainerStyle={localStyles.formScrollContent}
-                showsVerticalScrollIndicator
-                keyboardShouldPersistTaps="handled"
-              >
-                <View
-                  style={styles.settingsSectionPanel}
-                  onLayout={(e) => {
-                    sectionOffsetsRef.current.details = e.nativeEvent.layout.y;
-                  }}
-                >
-                  <Text style={styles.sectionHeading}>Details</Text>
-                  <View style={styles.formGroup}>
-                    <Text style={styles.fieldLabel}>Subject name</Text>
-                    <TextInput
-                      style={styles.fieldInput}
-                      value={subjectName}
-                      onChangeText={setSubjectName}
-                      placeholder="e.g., World History"
-                      placeholderTextColor="#9ca3af"
-                    />
-                  </View>
+              <View style={styles.assignmentFormRow}>
+                <View style={styles.assignmentFormColumnMain}>
+                  <View style={styles.assignmentContentPanel}>
+                    <View
+                      onLayout={(e) => {
+                        sectionOffsetsRef.current.details = e.nativeEvent.layout.y;
+                      }}
+                    >
+                      <SectionHeading>Details</SectionHeading>
 
-                  <View style={styles.formGroup}>
-                    <Text style={styles.fieldLabel}>Students</Text>
-                    {loadingChildren ? (
-                      <Text style={localStyles.loadingText}>Loading students…</Text>
-                    ) : (
-                      <View style={styles.chipRow}>
-                        {children.map((child) => {
-                          const isSelected = selectedChildIds.includes(child.id);
-                          return (
-                            <TouchableOpacity
-                              key={child.id}
-                              style={[localStyles.childChip, isSelected && localStyles.childChipSelected]}
-                              onPress={() => {
-                                setSelectedChildIds((prev) =>
-                                  isSelected
-                                    ? prev.filter((id) => id !== child.id)
-                                    : [...prev, child.id]
-                                );
-                              }}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Text style={[localStyles.childChipText, isSelected && localStyles.childChipTextSelected]}>
-                                {child.first_name || child.name}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
+                      <View style={styles.formGroup}>
+                        <Text style={styles.fieldLabel}>Subject name</Text>
+                        <TextInput
+                          style={styles.fieldInput}
+                          value={subjectName}
+                          onChangeText={setSubjectName}
+                          placeholder="e.g., World History"
+                          placeholderTextColor="#9ca3af"
+                        />
                       </View>
-                    )}
-                  </View>
 
-                  <View style={styles.formGroup}>
-                    <Text style={styles.fieldLabel}>Grade level</Text>
-                    <View style={localStyles.gradeChipRow}>
-                      {GRADE_OPTIONS.map((gradeOption) => (
-                        <TouchableOpacity
-                          key={gradeOption}
-                          style={[localStyles.gradeChip, grade === gradeOption && localStyles.gradeChipSelected]}
-                          onPress={() => setGrade(gradeOption)}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={[localStyles.gradeChipText, grade === gradeOption && localStyles.gradeChipTextSelected]}>
-                            {gradeOption}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
+                      <View style={styles.formGroup}>
+                        <Text style={styles.fieldLabel}>Students</Text>
+                        {loadingChildren ? (
+                          <Text style={localStyles.loadingText}>Loading students…</Text>
+                        ) : (
+                          <View style={styles.chipRow}>
+                            {children.map((child) => {
+                              const isSelected = selectedChildIds.includes(child.id);
+                              return (
+                                <TouchableOpacity
+                                  key={child.id}
+                                  style={[
+                                    styles.dropdownOption,
+                                    styles.assigneePill,
+                                    isSelected && styles.dropdownOptionActive,
+                                  ]}
+                                  onPress={() => {
+                                    setSelectedChildIds((prev) =>
+                                      isSelected
+                                        ? prev.filter((id) => id !== child.id)
+                                        : [...prev, child.id]
+                                    );
+                                  }}
+                                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.dropdownOptionText,
+                                      styles.assigneePillText,
+                                      isSelected && [styles.assigneePillTextActive, styles.dropdownOptionTextActive],
+                                    ]}
+                                  >
+                                    {child.first_name || child.name}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        )}
+                      </View>
+
+                      <View style={styles.formGroup}>
+                        <Text style={styles.fieldLabel}>Grade level</Text>
+                        <View style={styles.chipRow}>
+                          {GRADE_OPTIONS.map((gradeOption) => {
+                            const isSelected = grade === gradeOption;
+                            return (
+                              <TouchableOpacity
+                                key={gradeOption}
+                                style={[
+                                  styles.dropdownOption,
+                                  styles.assigneePill,
+                                  isSelected && styles.dropdownOptionActive,
+                                ]}
+                                onPress={() => setGrade(gradeOption)}
+                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                              >
+                                <Text
+                                  style={[
+                                    styles.dropdownOptionText,
+                                    styles.assigneePillText,
+                                    isSelected && [styles.assigneePillTextActive, styles.dropdownOptionTextActive],
+                                  ]}
+                                >
+                                  {gradeOption}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
                     </View>
                   </View>
 
-                  <View style={localStyles.scopeRow}>
-                    <View style={localStyles.scopeField}>
-                      <Text style={styles.fieldLabel}>School year</Text>
-                      <TouchableOpacity
-                        ref={schoolYearTriggerRef}
-                        style={styles.select}
-                        onPress={() => {
-                          setShowSchoolTermDropdown(false);
-                          setShowSchoolYearDropdown((open) => !open);
+                  <View style={[styles.assignmentAttachPanel, localStyles.gradingPanel]}>
+                    <ScrollView
+                      ref={formScrollRef}
+                      style={localStyles.gradingPanelScroll}
+                      contentContainerStyle={localStyles.gradingPanelScrollInner}
+                      showsVerticalScrollIndicator
+                      keyboardShouldPersistTaps="handled"
+                      nestedScrollEnabled
+                    >
+                      <View
+                        onLayout={(e) => {
+                          sectionOffsetsRef.current.grades = e.nativeEvent.layout.y;
                         }}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Text style={styles.selectText}>{schoolYear}</Text>
-                        <ChevronDown size={18} color="#6b7280" />
-                      </TouchableOpacity>
-                      <Dropdown
-                        visible={showSchoolYearDropdown}
-                        triggerRef={schoolYearTriggerRef}
-                        onClose={() => setShowSchoolYearDropdown(false)}
-                        placement="bottom-start"
-                        matchTriggerWidth
-                        maxHeight={220}
-                      >
-                        {schoolYearOptions.map((opt) => (
-                          <TouchableOpacity
-                            key={opt}
-                            style={[localStyles.menuOption, opt === schoolYear && localStyles.menuOptionSelected]}
-                            onPress={() => {
-                              setSchoolYear(opt);
-                              setShowSchoolYearDropdown(false);
-                            }}
-                          >
-                            <Text style={[localStyles.menuOptionText, opt === schoolYear && localStyles.menuOptionTextSelected]}>
-                              {opt}
-                            </Text>
-                            {opt === schoolYear ? <CheckCircle size={16} color="#6BB3E8" /> : null}
-                          </TouchableOpacity>
-                        ))}
-                      </Dropdown>
-                    </View>
-                    <View style={localStyles.scopeField}>
-                      <Text style={styles.fieldLabel}>Term</Text>
-                      <TouchableOpacity
-                        ref={schoolTermTriggerRef}
-                        style={styles.select}
-                        onPress={() => {
-                          setShowSchoolYearDropdown(false);
-                          setShowSchoolTermDropdown((open) => !open);
-                        }}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text style={styles.selectText}>
-                          {(TERM_OPTIONS.find((opt) => opt.id === schoolTerm) || TERM_OPTIONS[0]).label}
-                        </Text>
-                        <ChevronDown size={18} color="#6b7280" />
-                      </TouchableOpacity>
-                      <Dropdown
-                        visible={showSchoolTermDropdown}
-                        triggerRef={schoolTermTriggerRef}
-                        onClose={() => setShowSchoolTermDropdown(false)}
-                        placement="bottom-start"
-                        matchTriggerWidth
-                        maxHeight={220}
-                      >
-                        {TERM_OPTIONS.map((opt) => (
-                          <TouchableOpacity
-                            key={opt.id}
-                            style={[localStyles.menuOption, opt.id === schoolTerm && localStyles.menuOptionSelected]}
-                            onPress={() => {
-                              setSchoolTerm(opt.id);
-                              setShowSchoolTermDropdown(false);
-                            }}
-                          >
-                            <Text style={[localStyles.menuOptionText, opt.id === schoolTerm && localStyles.menuOptionTextSelected]}>
-                              {opt.label}
-                            </Text>
-                            {opt.id === schoolTerm ? <CheckCircle size={16} color="#6BB3E8" /> : null}
-                          </TouchableOpacity>
-                        ))}
-                      </Dropdown>
-                    </View>
+                        <SubjectGradingFields
+                          draft={gradingDraft}
+                          onUpdateDraft={updateGradingDraft}
+                          onUpdateCategory={updateCategory}
+                          onRemoveCategory={removeCategory}
+                          onAddCategory={addCategory}
+                        />
+                      </View>
+                    </ScrollView>
                   </View>
                 </View>
 
-                <View
-                  style={styles.settingsSectionPanel}
-                  onLayout={(e) => {
-                    sectionOffsetsRef.current.schedule = e.nativeEvent.layout.y;
-                  }}
-                >
-                  <Text style={styles.sectionHeading}>Schedule</Text>
-                  <SubjectScheduleFields
-                      embeddedInForm
-                      weekdays={weekdays}
-                      onWeekdaysChange={setWeekdays}
-                      startTime={startTime}
-                      onStartTimeChange={setStartTime}
-                      durationMinutes={durationMinutes}
-                      onDurationMinutesChange={setDurationMinutes}
-                      startDate={startDate}
-                      onStartDateChange={setStartDate}
-                      endDate={endDate}
-                      onEndDateChange={setEndDate}
-                      onOpenStartDatePicker={() => setDatePickerTarget('start')}
-                      onOpenEndDatePicker={() => setDatePickerTarget('end')}
-                      showRemoveEventsButton={hasScheduleEvents}
-                      onRemoveAllEvents={() => setShowRemoveScheduleConfirm(true)}
-                      removingEvents={removingScheduleEvents}
-                    />
+                <View style={styles.assignmentFormColumnSide}>
+                  <View
+                    style={styles.subjectSettingsSidePanel}
+                    onLayout={(e) => {
+                      sectionOffsetsRef.current.schedule = e.nativeEvent.layout.y;
+                    }}
+                  >
+                    <SectionHeading>Schedule</SectionHeading>
+                    <ScrollView
+                      style={styles.subjectSettingsSideFieldsScroll}
+                      contentContainerStyle={styles.subjectSettingsSideFieldsScrollInner}
+                      showsVerticalScrollIndicator
+                      keyboardShouldPersistTaps="handled"
+                      nestedScrollEnabled
+                    >
+                      <SubjectScheduleFields
+                        embeddedInForm
+                        schoolYear={schoolYear}
+                        schoolYearOptions={schoolYearOptions}
+                        onSchoolYearChange={handleSchoolYearChange}
+                        schoolTerm={schoolTerm}
+                        termOptions={TERM_OPTIONS}
+                        onSchoolTermChange={handleSchoolTermChange}
+                        weekdays={weekdays}
+                        onWeekdaysChange={setWeekdays}
+                        startTime={startTime}
+                        onStartTimeChange={setStartTime}
+                        durationMinutes={durationMinutes}
+                        onDurationMinutesChange={setDurationMinutes}
+                        startDate={startDate}
+                        onStartDateChange={setStartDate}
+                        endDate={endDate}
+                        onEndDateChange={setEndDate}
+                        onOpenStartDatePicker={() => setDatePickerTarget('start')}
+                        onOpenEndDatePicker={() => setDatePickerTarget('end')}
+                        showRemoveEventsButton={hasScheduleEvents}
+                        onRemoveAllEvents={() => setShowRemoveScheduleConfirm(true)}
+                        removingEvents={removingScheduleEvents}
+                      />
+                    </ScrollView>
+                  </View>
                 </View>
-
-                <View
-                  style={styles.settingsSectionPanel}
-                  onLayout={(e) => {
-                    sectionOffsetsRef.current.grades = e.nativeEvent.layout.y;
-                  }}
-                >
-                  <SubjectGradingFields
-                    draft={gradingDraft}
-                    onUpdateDraft={updateGradingDraft}
-                    onUpdateCategory={updateCategory}
-                    onRemoveCategory={removeCategory}
-                    onAddCategory={addCategory}
-                  />
-                </View>
-              </ScrollView>
+              </View>
             </AppModalShell>
           </TouchableOpacity>
         </View>
@@ -696,120 +710,43 @@ const localStyles = StyleSheet.create({
   overlay: styles.overlay,
   modalWrap: {
     ...styles.modalWrap,
-    maxWidth: CREATE_EVENT_MODAL_MAX_WIDTH,
+    maxWidth: SUBJECT_SETTINGS_MODAL_MAX_WIDTH,
   },
-  settingsShell: {
-    ...styles.compactShell,
-    ...(Platform.OS === 'web' && {
-      maxHeight: '90vh',
-    }),
-  },
-  formScroll: {
+  bodyContent: {
     flex: 1,
     minHeight: 0,
-    ...(Platform.OS === 'web' && {
-      overflowY: 'auto',
-      maxHeight: 'calc(90vh - 132px)',
-    }),
-  },
-  formScrollContent: {
     paddingBottom: 4,
-    gap: 0,
-  },
-  scopeRow: {
-    flexDirection: 'row',
-    gap: 12,
-    flexWrap: 'wrap',
-    marginBottom: 4,
-  },
-  scopeField: {
-    flex: 1,
-    minWidth: 180,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   loadingText: {
     fontSize: 14,
     color: '#6b7280',
     fontStyle: 'italic',
   },
-  childChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-  },
-  childChipSelected: {
-    borderColor: '#85C4F2',
-    backgroundColor: 'rgba(133, 196, 242, 0.2)',
-  },
-  childChipText: {
-    fontSize: 12,
-    color: '#6b7280',
-    fontWeight: '400',
+  gradingPanel: {
+    flexGrow: 0,
+    flexShrink: 1,
+    alignSelf: 'stretch',
+    paddingBottom: 12,
+    overflow: 'hidden',
+    maxHeight: 220,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      display: 'flex',
+      flexDirection: 'column',
     }),
   },
-  childChipTextSelected: {
-    color: '#6BB3E8',
-    fontWeight: '700',
+  gradingPanelScroll: {
+    flex: 1,
+    minHeight: 0,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      overflowY: 'auto',
+      overflowX: 'hidden',
     }),
   },
-  gradeChipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    alignItems: 'center',
-  },
-  gradeChip: {
-    minWidth: 32,
-    height: 32,
-    paddingHorizontal: 6,
-    borderRadius: 16,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  gradeChipSelected: {
-    borderColor: '#85C4F2',
-    backgroundColor: 'rgba(133, 196, 242, 0.2)',
-  },
-  gradeChipText: {
-    fontSize: 12,
-    color: '#6b7280',
-    fontWeight: '400',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  gradeChipTextSelected: {
-    color: '#6BB3E8',
-    fontWeight: '700',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  menuOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  menuOptionSelected: {
-    backgroundColor: 'rgba(133, 196, 242, 0.12)',
-  },
-  menuOptionText: {
-    fontSize: 14,
-    color: '#374151',
-  },
-  menuOptionTextSelected: {
-    color: '#6BB3E8',
-    fontWeight: '600',
+  gradingPanelScrollInner: {
+    paddingBottom: 4,
   },
 });
