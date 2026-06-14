@@ -6,8 +6,8 @@ export const CREATE_ASSIGNMENT_MODAL_MAX_WIDTH = 1320;
 export const CREATE_ASSIGNMENT_MODAL_HEIGHT = 820;
 export const SCHOOL_YEAR_SETTINGS_MODAL_MAX_WIDTH = 900;
 export const SCHOOL_YEAR_SETTINGS_MODAL_HEIGHT = 800;
-export const SUBJECT_SETTINGS_MODAL_MAX_WIDTH = 1080;
-export const SUBJECT_SETTINGS_MODAL_HEIGHT = 728;
+export const SUBJECT_SETTINGS_MODAL_MAX_WIDTH = 1000;
+export const SUBJECT_SETTINGS_MODAL_MAX_HEIGHT = 820;
 export const FG = '#111827';
 export const MUTED = '#6b7280';
 export const PLACEHOLDER = '#94A3B8';
@@ -324,49 +324,90 @@ export const createModalStyles = StyleSheet.create({
     }),
   },
   subjectSettingsModalShell: {
+    width: '100%',
+    maxWidth: SUBJECT_SETTINGS_MODAL_MAX_WIDTH,
     ...(Platform.OS === 'web'
       ? {
-          height: SUBJECT_SETTINGS_MODAL_HEIGHT,
-          minHeight: SUBJECT_SETTINGS_MODAL_HEIGHT,
-          maxHeight: SUBJECT_SETTINGS_MODAL_HEIGHT,
+          height: 'auto',
+          minHeight: 0,
+          maxHeight: SUBJECT_SETTINGS_MODAL_MAX_HEIGHT,
           borderRadius: 28,
           boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
         }
       : {
-          height: '84%',
-          maxHeight: '84%',
-          minHeight: SUBJECT_SETTINGS_MODAL_HEIGHT,
+          height: 'auto',
+          maxHeight: SUBJECT_SETTINGS_MODAL_MAX_HEIGHT,
+          minHeight: 0,
         }),
     overflow: 'hidden',
   },
-  subjectSettingsModalBody: {
-    flex: 1,
-    minHeight: 0,
-    overflow: 'hidden',
-    paddingBottom: 4,
+  subjectSettingsScroller: {
+    flexGrow: 0,
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      flex: 'none',
+    }),
+  },
+  subjectSettingsModalWrap: {
+    width: '100%',
+    maxWidth: SUBJECT_SETTINGS_MODAL_MAX_WIDTH,
+    alignSelf: 'center',
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
     }),
   },
+  subjectSettingsModalBody: {
+    flexGrow: 0,
+    flexShrink: 0,
+    overflow: 'visible',
+    paddingBottom: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      flex: 'none',
+    }),
+  },
+  subjectSettingsFormRow: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    alignItems: 'stretch',
+    width: '100%',
+    gap: 20,
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  subjectSettingsFormColumnSide: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 260,
+    width: 260,
+    maxWidth: '100%',
+    alignSelf: 'stretch',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+    }),
+  },
   subjectSettingsSidePanel: {
     flex: 1,
-    minHeight: 0,
-    width: '100%',
+    flexGrow: 1,
     alignSelf: 'stretch',
+    width: '100%',
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderRadius: 16,
     backgroundColor: '#F8FAFC',
     paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 16,
+    paddingTop: 14,
+    paddingBottom: 12,
     ...(Platform.OS === 'web' && {
       boxShadow: '0 1px 3px rgba(15, 23, 42, 0.04)',
       display: 'flex',
       flexDirection: 'column',
-      overflow: 'hidden',
       height: '100%',
+      minHeight: '100%',
     }),
   },
   subjectSettingsSideFieldsScroll: {
@@ -379,6 +420,72 @@ export const createModalStyles = StyleSheet.create({
   },
   subjectSettingsSideFieldsScrollInner: {
     paddingBottom: 4,
+  },
+  subjectSettingsFormColumnMain: {
+    flex: 1,
+    flexGrow: 1,
+    flexBasis: 320,
+    minWidth: 280,
+    maxWidth: '100%',
+    alignSelf: 'stretch',
+    overflow: 'visible',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  subjectSettingsDetailsPanel: {
+    flexGrow: 0,
+    flexShrink: 0,
+    alignSelf: 'stretch',
+  },
+  subjectSettingsGradingPanel: {
+    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    minHeight: 0,
+    alignSelf: 'stretch',
+    overflow: 'hidden',
+    paddingBottom: 16,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  subjectSettingsGradingPanelScroll: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      overflowY: 'auto',
+      overflowX: 'hidden',
+    }),
+  },
+  subjectSettingsGradingPanelScrollInner: {
+    paddingBottom: 4,
+  },
+  subjectSettingsMainColumnScroll: {
+    flexGrow: 0,
+    flexShrink: 0,
+    alignSelf: 'stretch',
+    ...(Platform.OS === 'web' && {
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      maxHeight: 600,
+    }),
+  },
+  subjectSettingsMainColumnScrollInner: {
+    paddingBottom: 2,
+  },
+  subjectSettingsStackedPanel: {
+    flexGrow: 0,
+    flexShrink: 0,
+    alignSelf: 'stretch',
+    marginBottom: 10,
+    paddingTop: 14,
+    paddingBottom: 10,
+  },
+  subjectSettingsGradingPanelBox: {
+    paddingBottom: 14,
   },
   fieldLabel: {
     fontSize: 12,

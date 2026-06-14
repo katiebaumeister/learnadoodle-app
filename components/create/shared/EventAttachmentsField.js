@@ -15,6 +15,7 @@ export default function EventAttachmentsField({
   allowMultiple = false,
   selectedMaterialIds = [],
   onAddExistingMaterial = null,
+  materialFilter = null,
 }) {
   const [materials, setMaterials] = useState([]);
   const [open, setOpen] = useState(false);
@@ -27,7 +28,9 @@ export default function EventAttachmentsField({
     setLoading(true);
     getMaterials(familyId)
       .then((rows) => {
-        if (!cancelled) setMaterials(Array.isArray(rows) ? rows : []);
+        if (cancelled) return;
+        const list = Array.isArray(rows) ? rows : [];
+        setMaterials(typeof materialFilter === 'function' ? list.filter(materialFilter) : list);
       })
       .catch(() => {
         if (!cancelled) setMaterials([]);
@@ -38,7 +41,7 @@ export default function EventAttachmentsField({
     return () => {
       cancelled = true;
     };
-  }, [familyId]);
+  }, [familyId, materialFilter]);
 
   useEffect(() => {
     setOpen(false);

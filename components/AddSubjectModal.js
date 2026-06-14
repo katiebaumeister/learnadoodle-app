@@ -16,6 +16,12 @@ import { SectionHeading } from './create/shared/assignmentFormParts';
 import { AppCalendarDatePickerModal } from './ui/AppCalendarDatePickerModal';
 import SubjectGradingFields from './subjects/subjectSettings/SubjectGradingFields';
 import SubjectScheduleFields from './subjects/subjectSettings/SubjectScheduleFields';
+import SubjectAttachmentsFields from './subjects/subjectSettings/SubjectAttachmentsFields';
+import AddMaterialModal from './materials/AddMaterialModal';
+import {
+  loadSubjectAttachmentIds,
+  saveSubjectAttachmentLinks,
+} from '../lib/services/subjectMaterialLinks';
 import {
   deleteSubjectCascade,
   dispatchSubjectDeletedSideEffects,
@@ -126,10 +132,10 @@ export default function AddSubjectModal({
   const [logisticalMode, setLogisticalMode] = useState('');
   const [logisticalInstructor, setLogisticalInstructor] = useState('');
   const [connectedCalendarTargets, setConnectedCalendarTargets] = useState([]);
-  const [materials, setMaterials] = useState([]);
-  const [loadingMaterials, setLoadingMaterials] = useState(false);
-  const [showMaterialDropdown, setShowMaterialDropdown] = useState(false);
-  const [selectedMaterialId, setSelectedMaterialId] = useState(null);
+  const [syllabusMaterialId, setSyllabusMaterialId] = useState(null);
+  const [lessonPlanMaterialId, setLessonPlanMaterialId] = useState(null);
+  const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
+  const [addMaterialDefaultRole, setAddMaterialDefaultRole] = useState(null);
   const [children, setChildren] = useState(propChildren || []);
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -142,7 +148,6 @@ export default function AddSubjectModal({
   const [showAdditionalNotesAccordion, setShowAdditionalNotesAccordion] = useState(false);
   const [deletingSubject, setDeletingSubject] = useState(false);
   const [showDeleteSubjectConfirm, setShowDeleteSubjectConfirm] = useState(false);
-  const materialDropdownRef = useRef(null);
 
   const applyTermDates = useCallback((year, term, settings) => {
     const range = getSubjectTermDateRange(year, term, settings);
@@ -253,7 +258,19 @@ export default function AddSubjectModal({
         setLogisticalMode(subject.mode || '');
         setLogisticalInstructor(subject.instructor || '');
         setConnectedCalendarTargets(normalizeCalendarTargets(subject.connected_calendar_targets));
-        setShowMaterialDropdown(false);
+        setSyllabusMaterialId(null);
+        setLessonPlanMaterialId(null);
+        if (subject.id && familyId) {
+          loadSubjectAttachmentIds(subject.id, familyId)
+            .then(({ syllabusMaterialId: syllabusId, lessonPlanMaterialId: lessonId }) => {
+              setSyllabusMaterialId(syllabusId);
+              setLessonPlanMaterialId(lessonId);
+            })
+            .catch(() => {
+              setSyllabusMaterialId(null);
+              setLessonPlanMaterialId(null);
+            });
+        }
         // Child IDs will be set in the next useEffect after children load
       } else {
         // Add mode - use defaults
@@ -270,8 +287,8 @@ export default function AddSubjectModal({
         setLogisticalMode('');
         setLogisticalInstructor('');
         setConnectedCalendarTargets([]);
-        setSelectedMaterialId(null);
-        setShowMaterialDropdown(false);
+        setSyllabusMaterialId(null);
+        setLessonPlanMaterialId(null);
         if (defaultSubjectName) {
           setSubjectName(defaultSubjectName);
         }
@@ -309,8 +326,8 @@ export default function AddSubjectModal({
       setConnectedCalendarTargets([]);
       setError(null);
       setShowAdditionalNotesAccordion(false);
-      setShowMaterialDropdown(false);
-      setSelectedMaterialId(null);
+      setSyllabusMaterialId(null);
+      setLessonPlanMaterialId(null);
     }
   }, [visible, defaultChildId, defaultChildIds, defaultSubjectName, initialSchoolTerm, initialSchoolYear, subject, initScheduleDefaults, propChildren]);
 
@@ -408,54 +425,6 @@ export default function AddSubjectModal({
     setError(null);
     onClose?.();
   }, [onClose]);
-
-  const fetchMaterials = useCallback(async () => {
-    if (!familyId) {
-      setMaterials([]);
-      return;
-    }
-    try {
-      setLoadingMaterials(true);
-      const { data, error } = await supabase
-        .from('materials')
-        .select('id, title, provider_name, subject_id, created_at')
-        .eq('family_id', familyId)
-        .is('deleted_at', null)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      setMaterials(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.warn('Error loading materials for subject attachment:', e);
-      setMaterials([]);
-    } finally {
-      setLoadingMaterials(false);
-    }
-  }, [familyId]);
-
-  useEffect(() => {
-    if (!visible) return;
-    fetchMaterials();
-  }, [visible, fetchMaterials]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined' || !visible) return;
-    const onRefresh = () => fetchMaterials();
-    window.addEventListener('refreshMaterials', onRefresh);
-    return () => window.removeEventListener('refreshMaterials', onRefresh);
-  }, [visible, fetchMaterials]);
-
-  useEffect(() => {
-    if (!visible || !subject?.id || selectedMaterialId) return;
-    const existingLinked = materials.find((m) => String(m?.subject_id || '') === String(subject.id));
-    if (existingLinked?.id) {
-      setSelectedMaterialId(existingLinked.id);
-    }
-  }, [visible, subject?.id, materials, selectedMaterialId]);
-
-  const selectedMaterial = useMemo(
-    () => materials.find((m) => String(m?.id || '') === String(selectedMaterialId || '')) || null,
-    [materials, selectedMaterialId]
-  );
 
   // Delete subject permanently (Danger Zone)
   const performDeleteSubject = async () => {
@@ -672,18 +641,15 @@ export default function AddSubjectModal({
             applyScope: APPLY_SCOPE_FULL_YEAR,
           });
         }
-      }
-
-      if (savedSubjectId && selectedMaterialId) {
         try {
-          const { error: materialLinkError } = await supabase
-            .from('materials')
-            .update({ subject_id: savedSubjectId })
-            .eq('id', selectedMaterialId)
-            .eq('family_id', familyId);
-          if (materialLinkError) throw materialLinkError;
+          await saveSubjectAttachmentLinks({
+            familyId,
+            subjectId: savedSubjectId,
+            syllabusMaterialId,
+            lessonPlanMaterialId,
+          });
         } catch (linkErr) {
-          console.warn('Failed to link selected material to subject:', linkErr);
+          console.warn('Failed to link materials to subject:', linkErr);
         }
       }
 
@@ -776,9 +742,11 @@ export default function AddSubjectModal({
             title="New subject"
             onClose={handleClose}
             disableShellScroll
+            maxWidth={SUBJECT_SETTINGS_MODAL_MAX_WIDTH}
             shellStyle={[sharedStyles.compactShell, sharedStyles.subjectSettingsModalShell]}
             titleRowStyle={sharedStyles.subjectSettingsTitleRow}
             contentContainerStyle={localStyles.bodyContent}
+            scrollerStyle={sharedStyles.subjectSettingsScroller}
             bodyStyle={[sharedStyles.shellBody, sharedStyles.subjectSettingsModalBody]}
             footer={(
               <ModalFooter
@@ -800,9 +768,16 @@ export default function AddSubjectModal({
               </View>
             ) : null}
 
-            <View style={sharedStyles.assignmentFormRow}>
-              <View style={sharedStyles.assignmentFormColumnMain}>
-                <View style={sharedStyles.assignmentContentPanel}>
+            <View style={sharedStyles.subjectSettingsFormRow}>
+              <View style={sharedStyles.subjectSettingsFormColumnMain}>
+                <ScrollView
+                  style={sharedStyles.subjectSettingsMainColumnScroll}
+                  contentContainerStyle={sharedStyles.subjectSettingsMainColumnScrollInner}
+                  showsVerticalScrollIndicator
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                >
+                <View style={[sharedStyles.assignmentContentPanel, sharedStyles.subjectSettingsDetailsPanel, sharedStyles.subjectSettingsStackedPanel]}>
                   <SectionHeading>Details</SectionHeading>
 
                   <View style={sharedStyles.formGroup}>
@@ -897,57 +872,62 @@ export default function AddSubjectModal({
                   </View>
                 </View>
 
-                <View style={[sharedStyles.assignmentAttachPanel, localStyles.gradingPanel]}>
-                  <ScrollView
-                    style={localStyles.gradingPanelScroll}
-                    contentContainerStyle={localStyles.gradingPanelScrollInner}
-                    showsVerticalScrollIndicator
-                    keyboardShouldPersistTaps="handled"
-                    nestedScrollEnabled
-                  >
-                    <SubjectGradingFields
-                      draft={gradingDraft}
-                      onUpdateDraft={updateGradingDraft}
-                      onUpdateCategory={updateCategory}
-                      onRemoveCategory={removeCategory}
-                      onAddCategory={addCategory}
-                    />
-                  </ScrollView>
+                <View style={[sharedStyles.assignmentAttachPanel, sharedStyles.subjectSettingsStackedPanel, sharedStyles.subjectSettingsGradingPanelBox]}>
+                  <SubjectGradingFields
+                    draft={gradingDraft}
+                    onUpdateDraft={updateGradingDraft}
+                    onUpdateCategory={updateCategory}
+                    onRemoveCategory={removeCategory}
+                    onAddCategory={addCategory}
+                  />
                 </View>
+
+                {familyId ? (
+                  <View style={[sharedStyles.assignmentAttachPanel, sharedStyles.subjectSettingsStackedPanel]}>
+                    <SubjectAttachmentsFields
+                      familyId={familyId}
+                      syllabusMaterialId={syllabusMaterialId}
+                      lessonPlanMaterialId={lessonPlanMaterialId}
+                      onSyllabusChange={setSyllabusMaterialId}
+                      onLessonPlanChange={setLessonPlanMaterialId}
+                      onAddSyllabus={() => {
+                        setAddMaterialDefaultRole('syllabus');
+                        setShowAddMaterialModal(true);
+                      }}
+                      onAddLessonPlan={() => {
+                        setAddMaterialDefaultRole('lesson_plan');
+                        setShowAddMaterialModal(true);
+                      }}
+                    />
+                  </View>
+                ) : null}
+                </ScrollView>
               </View>
 
-              <View style={sharedStyles.assignmentFormColumnSide}>
+              <View style={sharedStyles.subjectSettingsFormColumnSide}>
                 <View style={sharedStyles.subjectSettingsSidePanel}>
                   <SectionHeading>Schedule</SectionHeading>
-                  <ScrollView
-                    style={sharedStyles.subjectSettingsSideFieldsScroll}
-                    contentContainerStyle={sharedStyles.subjectSettingsSideFieldsScrollInner}
-                    showsVerticalScrollIndicator
-                    keyboardShouldPersistTaps="handled"
-                    nestedScrollEnabled
-                  >
-                    <SubjectScheduleFields
-                      embeddedInForm
-                      schoolYear={schoolYear}
-                      schoolYearOptions={schoolYearOptions}
-                      onSchoolYearChange={handleSchoolYearChange}
-                      schoolTerm={schoolTerm}
-                      termOptions={TERM_OPTIONS}
-                      onSchoolTermChange={handleSchoolTermChange}
-                      weekdays={weekdays}
-                      onWeekdaysChange={setWeekdays}
-                      startTime={startTime}
-                      onStartTimeChange={setStartTime}
-                      durationMinutes={durationMinutes}
-                      onDurationMinutesChange={setDurationMinutes}
-                      startDate={startDate}
-                      onStartDateChange={setStartDate}
-                      endDate={endDate}
-                      onEndDateChange={setEndDate}
-                      onOpenStartDatePicker={() => setDatePickerTarget('start')}
-                      onOpenEndDatePicker={() => setDatePickerTarget('end')}
-                    />
-                  </ScrollView>
+                  <SubjectScheduleFields
+                    embeddedInForm
+                    schoolYear={schoolYear}
+                    schoolYearOptions={schoolYearOptions}
+                    onSchoolYearChange={handleSchoolYearChange}
+                    schoolTerm={schoolTerm}
+                    termOptions={TERM_OPTIONS}
+                    onSchoolTermChange={handleSchoolTermChange}
+                    weekdays={weekdays}
+                    onWeekdaysChange={setWeekdays}
+                    startTime={startTime}
+                    onStartTimeChange={setStartTime}
+                    durationMinutes={durationMinutes}
+                    onDurationMinutesChange={setDurationMinutes}
+                    startDate={startDate}
+                    onStartDateChange={setStartDate}
+                    endDate={endDate}
+                    onEndDateChange={setEndDate}
+                    onOpenStartDatePicker={() => setDatePickerTarget('start')}
+                    onOpenEndDatePicker={() => setDatePickerTarget('end')}
+                  />
                 </View>
               </View>
             </View>
@@ -985,52 +965,61 @@ export default function AddSubjectModal({
       }}
     />
 
+    {showAddMaterialModal ? (
+      <AddMaterialModal
+        visible
+        familyId={familyId}
+        defaultRole={addMaterialDefaultRole}
+        defaultSubjectId={subject?.id || null}
+        defaultSubjectName={subjectName.trim() || subject?.name || null}
+        defaultChildIds={selectedChildIds}
+        draftSubjectForMaterial={
+          !subject?.id && subjectName.trim()
+            ? { name: subjectName.trim(), childIds: selectedChildIds }
+            : null
+        }
+        onClose={() => {
+          setShowAddMaterialModal(false);
+          setAddMaterialDefaultRole(null);
+        }}
+        onSaved={(material) => {
+          if (material?.id) {
+            if (addMaterialDefaultRole === 'lesson_plan') {
+              setLessonPlanMaterialId(material.id);
+            } else {
+              setSyllabusMaterialId(material.id);
+            }
+          }
+          setShowAddMaterialModal(false);
+          setAddMaterialDefaultRole(null);
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
+          }
+        }}
+      />
+    ) : null}
+
     </>
   );
 }
 
 const localStyles = StyleSheet.create({
   overlay: sharedStyles.overlay,
-  modalWrap: {
-    ...sharedStyles.modalWrap,
-    maxWidth: SUBJECT_SETTINGS_MODAL_MAX_WIDTH,
-  },
+  modalWrap: sharedStyles.subjectSettingsModalWrap,
   bodyContent: {
-    flex: 1,
-    minHeight: 0,
-    paddingBottom: 4,
+    flexGrow: 0,
+    flexShrink: 0,
+    paddingBottom: 0,
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
+      flex: 'none',
     }),
   },
   loadingText: {
     fontSize: 14,
     color: '#6b7280',
     fontStyle: 'italic',
-  },
-  gradingPanel: {
-    flexGrow: 0,
-    flexShrink: 1,
-    alignSelf: 'stretch',
-    paddingBottom: 12,
-    overflow: 'hidden',
-    maxHeight: 220,
-    ...(Platform.OS === 'web' && {
-      display: 'flex',
-      flexDirection: 'column',
-    }),
-  },
-  gradingPanelScroll: {
-    flex: 1,
-    minHeight: 0,
-    ...(Platform.OS === 'web' && {
-      overflowY: 'auto',
-      overflowX: 'hidden',
-    }),
-  },
-  gradingPanelScrollInner: {
-    paddingBottom: 4,
   },
 });
 
