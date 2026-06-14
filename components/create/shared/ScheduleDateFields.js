@@ -96,6 +96,7 @@ export default function ScheduleDateFields({
                 placeholder="Optional"
                 placeholderTextColor={PLACEHOLDER}
                 wrapStyle={styles.scheduleTimeInputWrap}
+                hasError={!!timeError}
               />
             </View>
             <View style={styles.scheduleColumn}>
@@ -106,6 +107,7 @@ export default function ScheduleDateFields({
                 placeholder="Optional"
                 placeholderTextColor={PLACEHOLDER}
                 wrapStyle={styles.scheduleTimeInputWrap}
+                hasError={!!timeError}
               />
             </View>
           </>

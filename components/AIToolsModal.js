@@ -65,7 +65,7 @@ export default function AIToolsModal({
         {
           id: 'school-year-settings',
           title: 'School Year Settings',
-          description: 'Set learning days, hours, holidays, breaks, and year-wide targets.',
+          description: 'Set default learning days and hours, holidays, breaks, and year-wide targets.',
           tagline: 'Your school year foundation in one place',
           requires: () => onPlanYear !== undefined,
         },

@@ -25,8 +25,6 @@ import {
   X,
 } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
-import { getFamilyMembers } from '../../lib/apiClient';
-import { supabase } from '../../lib/supabase';
 import { buildFamilyDmParticipants, findChildLinkedUserId } from '../../lib/familyDmClient';
 import {
   addBulletinComment,
@@ -35,8 +33,6 @@ import {
   deleteBulletinPost,
   updateBulletinPost,
   displayNameForUser,
-  fetchAuthorProfiles,
-  fetchBulletinPosts,
   formatBulletinTimestamp,
   formatStreamTimestamp,
   resolveMaterialUrl,
@@ -60,6 +56,11 @@ import BulletinLearnadoodleBody from './BulletinLearnadoodleBody';
 import BulletinStreamCard from './BulletinStreamCard';
 import { mergeBulletinStreamItems } from '../../lib/bulletinStreamModel';
 import { openBulletinActivityItem } from '../../lib/bulletinFeedNavigation';
+import {
+  fetchAndCacheBulletinPosts,
+  hydrateBulletinPostsState,
+  writeBulletinPostsCache,
+} from '../../lib/bulletinBoardCache';
 
 const VISIBILITY_ALL = 'all';
 const VISIBILITY_SELF = 'self';
@@ -495,11 +496,15 @@ export default function BulletinBoardSection({
   feedTitle = null,
 }) {
   const session = useSession();
-  const [loading, setLoading] = useState(true);
-  const [posts, setPosts] = useState([]);
-  const [profileMap, setProfileMap] = useState(new Map());
-  const [currentUserId, setCurrentUserId] = useState(null);
-  const [familyMembers, setFamilyMembers] = useState([]);
+  const initialBulletinState = useMemo(
+    () => hydrateBulletinPostsState(familyId),
+    [familyId]
+  );
+  const [loading, setLoading] = useState(() => !initialBulletinState.fromCache);
+  const [posts, setPosts] = useState(() => initialBulletinState.posts);
+  const [profileMap, setProfileMap] = useState(() => initialBulletinState.profileMap);
+  const [currentUserId, setCurrentUserId] = useState(() => initialBulletinState.currentUserId);
+  const [familyMembers, setFamilyMembers] = useState(() => initialBulletinState.familyMembers);
   const [composerOpenInternal, setComposerOpenInternal] = useState(false);
   const isComposerOpen = onComposerOpenChange ? composerOpen : composerOpenInternal;
   const setComposerOpenState = useCallback((next) => {
@@ -551,42 +556,54 @@ export default function BulletinBoardSection({
   const showComposerAudienceFields = !filterSubjectId;
   const canCreatePost = canDeleteAny;
 
-  const loadPosts = useCallback(async () => {
+  const persistPostsCache = useCallback((nextPosts, nextProfileMap, nextUserId, nextMembers) => {
     if (!familyId) return;
-    setLoading(true);
+    writeBulletinPostsCache(familyId, {
+      posts: nextPosts,
+      profileMap: nextProfileMap,
+      currentUserId: nextUserId,
+      familyMembers: nextMembers,
+    });
+  }, [familyId]);
+
+  const loadPosts = useCallback(async (options = {}) => {
+    const silent = options?.silent === true;
+    if (!familyId) return;
+    if (!silent) setLoading(true);
     setError(null);
     try {
-      const [{ data: postRows, error: postError }, authRes, membersRes] = await Promise.all([
-        fetchBulletinPosts(familyId),
-        supabase.auth.getUser(),
-        getFamilyMembers(),
-      ]);
-      if (postError) throw postError;
-      setPosts(postRows || []);
-      setCurrentUserId(authRes?.data?.user?.id || null);
-      setFamilyMembers(membersRes?.data?.members || membersRes?.data || []);
-
-      const userIds = new Set();
-      (postRows || []).forEach((post) => {
-        if (post.authorUserId) userIds.add(String(post.authorUserId));
-        (post.comments || []).forEach((c) => {
-          if (c.authorUserId) userIds.add(String(c.authorUserId));
-        });
-      });
-      if (authRes?.data?.user?.id) userIds.add(String(authRes.data.user.id));
-      const profiles = await fetchAuthorProfiles([...userIds]);
-      setProfileMap(profiles);
+      const payload = await fetchAndCacheBulletinPosts(familyId);
+      if (!payload) return;
+      setPosts(payload.posts || []);
+      setCurrentUserId(payload.currentUserId || null);
+      setFamilyMembers(payload.familyMembers || []);
+      setProfileMap(payload.profileMap instanceof Map ? payload.profileMap : new Map());
     } catch (err) {
-      setError(err?.message || 'Could not load bulletin board');
-      setPosts([]);
+      if (!silent) {
+        setError(err?.message || 'Could not load bulletin board');
+        setPosts([]);
+      }
     } finally {
       setLoading(false);
     }
   }, [familyId]);
+  const loadPostsRef = useRef(loadPosts);
+  loadPostsRef.current = loadPosts;
 
   useEffect(() => {
-    loadPosts();
-  }, [loadPosts]);
+    if (!familyId) return;
+    const cached = hydrateBulletinPostsState(familyId);
+    if (cached.fromCache) {
+      setPosts(cached.posts);
+      setProfileMap(cached.profileMap);
+      setCurrentUserId(cached.currentUserId);
+      setFamilyMembers(cached.familyMembers);
+      setLoading(false);
+      loadPostsRef.current({ silent: true });
+      return;
+    }
+    loadPostsRef.current({ silent: false });
+  }, [familyId]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
@@ -596,7 +613,7 @@ export default function BulletinBoardSection({
       if (filterSubjectId && detail.subjectId && String(detail.subjectId) !== String(filterSubjectId)) {
         return;
       }
-      loadPosts();
+      loadPosts({ silent: true });
     };
     window.addEventListener('refreshBulletinBoard', handler);
     return () => window.removeEventListener('refreshBulletinBoard', handler);
@@ -634,6 +651,7 @@ export default function BulletinBoardSection({
     }),
     [streamPosts, activityItems, subjectById, profileMap, filterSubjectId]
   );
+  const showFeedLoading = (loading || activityLoading) && mergedStreamItems.length === 0;
 
   const handleStreamCardPress = useCallback((entry) => {
     if (entry.kind !== 'activity' || !entry.payload) return;
@@ -749,7 +767,11 @@ export default function BulletinBoardSection({
         });
         if (updateError) throw updateError;
         if (data) {
-          setPosts((prev) => prev.map((post) => (post.id === editingPost.id ? data : post)));
+          setPosts((prev) => {
+            const next = prev.map((post) => (post.id === editingPost.id ? data : post));
+            persistPostsCache(next, profileMap, currentUserId, familyMembers);
+            return next;
+          });
         }
       } else {
         const { data, error: createError } = await createBulletinPost({
@@ -763,7 +785,6 @@ export default function BulletinBoardSection({
         });
         if (createError) throw createError;
         if (data) {
-          setPosts((prev) => [data, ...prev]);
           const nextProfiles = new Map(profileMap);
           if (currentUserId && profile) {
             nextProfiles.set(String(currentUserId), {
@@ -773,6 +794,11 @@ export default function BulletinBoardSection({
             });
           }
           setProfileMap(nextProfiles);
+          setPosts((prev) => {
+            const next = [data, ...prev];
+            persistPostsCache(next, nextProfiles, currentUserId, familyMembers);
+            return next;
+          });
         }
         if (expandedLayout) {
           setTimeout(() => {
@@ -794,7 +820,11 @@ export default function BulletinBoardSection({
     try {
       const { error: deleteError } = await deleteBulletinPost(pendingDeletePost.id);
       if (deleteError) throw deleteError;
-      setPosts((prev) => prev.filter((p) => p.id !== pendingDeletePost.id));
+      setPosts((prev) => {
+        const next = prev.filter((p) => p.id !== pendingDeletePost.id);
+        persistPostsCache(next, profileMap, currentUserId, familyMembers);
+        return next;
+      });
       setPendingDeletePost(null);
     } catch (err) {
       setError(err?.message || 'Could not delete post');
@@ -1044,7 +1074,7 @@ export default function BulletinBoardSection({
         </Modal>
       ) : null}
 
-      {loading || activityLoading ? (
+      {showFeedLoading ? (
         <View style={[styles.loadingWrap, styles.loadingWrapExpanded]}>
           <ActivityIndicator size="small" color="#6366F1" />
         </View>

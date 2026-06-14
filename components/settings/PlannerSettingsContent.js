@@ -1,5 +1,5 @@
 /**
- * School Year Settings — global learning days, hours, attendance, holidays, and breaks.
+ * School Year Settings — global default learning days and hours, and attendance.
  * Not tied to any plan. These defaults are used when creating/editing a plan year.
  * Flat layout: static sections, no accordions, Profile-style rhythm.
  */
@@ -14,24 +14,19 @@ import {
   ActivityIndicator,
   Platform,
   Modal,
-  Switch,
 } from 'react-native';
-import { Plus, Trash2, Pencil, Check, X, ChevronLeft, ChevronRight, ArrowRight, ChevronDown, CheckCircle } from 'lucide-react';
+import { Check, X, ChevronLeft, ChevronRight, ChevronDown, CheckCircle } from 'lucide-react';
 import Dropdown from '../ui/Dropdown';
 import {
   getFamilyPlannerSettings,
   saveFamilyPlannerSettings,
   getPlanDefaultsFromSettings,
   syncFamilyHolidayBreakExclusions,
-  deleteExclusion,
-  saveExcludedPublicHolidayDates,
 } from '../../lib/services/plannerSettingsClient';
 import { SCHOOL_YEAR_SETTINGS_UI } from '../planner/planningPreferencesUiCopy';
-import { getPublicHolidaysForRange } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
 import { apiRequest } from '../../lib/apiClient';
 import { useToast } from '../Toast';
-import { PLANNING_PREFERENCES_UI } from '../planner/planningPreferencesUiCopy';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
 import MaskedTimeInput from '../ui/MaskedTimeInput';
 import { LEARNADOODLE_LIGHT_BLUE } from '../../theme/comingSoonModalTheme';
@@ -42,6 +37,8 @@ import {
   getAttendanceMode,
 } from '../../lib/attendanceMode';
 import { trackEvent } from '../../lib/analytics';
+import { createModalStyles as assignmentModalStyles } from '../create/shared/createModalStyles';
+import { SectionHeading } from '../create/shared/assignmentFormParts';
 
 const MUTED = 'rgba(15,23,42,0.6)';
 /** Body copy on this screen — solid black per design */
@@ -137,65 +134,7 @@ const parsePositiveFloatOrNull = (value) => {
   return Number.isFinite(n) && n >= 0 ? n : null;
 };
 
-const classifyDaysOffEntry = (start, end, name) => {
-  const normalizedStart = String(start || '').trim();
-  const normalizedEnd = String(end || '').trim();
-  const normalizedName = String(name || '').trim();
-  if (!normalizedEnd || normalizedEnd === normalizedStart) {
-    return { kind: 'holiday', date: normalizedStart, name: normalizedName };
-  }
-  return { kind: 'break', start: normalizedStart, end: normalizedEnd, name: normalizedName };
-};
-
-const formatYmdForDisplay = (ymd) => {
-  const raw = String(ymd || '').trim().slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  const [y, m, d] = raw.split('-').map((x) => parseInt(x, 10));
-  const dt = new Date(y, m - 1, d);
-  if (Number.isNaN(dt.getTime())) return raw;
-  return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-};
-
-const formatDaysOffDateRange = (start, end) => {
-  const startRaw = String(start || '').trim().slice(0, 10);
-  const endRaw = String(end || '').trim().slice(0, 10);
-  if (!endRaw || endRaw === startRaw) {
-    return formatYmdForDisplay(startRaw);
-  }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(startRaw) || !/^\d{4}-\d{2}-\d{2}$/.test(endRaw)) {
-    return `${startRaw} – ${endRaw}`;
-  }
-  const [sy, sm, sd] = startRaw.split('-').map((x) => parseInt(x, 10));
-  const [ey, em, ed] = endRaw.split('-').map((x) => parseInt(x, 10));
-  const startDate = new Date(sy, sm - 1, sd);
-  const endDate = new Date(ey, em - 1, ed);
-  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-    return `${startRaw} – ${endRaw}`;
-  }
-  if (sy === ey && sm === em) {
-    const month = startDate.toLocaleDateString(undefined, { month: 'short' });
-    return `${month} ${sd} – ${ed}, ${sy}`;
-  }
-  if (sy === ey) {
-    const startPart = startDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    const endPart = endDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    return `${startPart} – ${endPart}, ${sy}`;
-  }
-  return `${formatYmdForDisplay(startRaw)} – ${formatYmdForDisplay(endRaw)}`;
-};
-
-const formatDaysOffEntryLabel = (entry) => {
-  const name = String(entry?.name || '').trim();
-  const dateLabel =
-    entry?.kind === 'break' && entry?.end && entry.end !== entry.start
-      ? formatDaysOffDateRange(entry.start, entry.end)
-      : formatYmdForDisplay(entry?.start);
-  return name ? `${dateLabel} — ${name}` : dateLabel;
-};
-
-const isEditingSameDayOff = (a, b) => (
-  Boolean(a && b) && a.kind === b.kind && a.index === b.index
-);
+const normalizeTargetMode = (mode) => (typeof mode === 'string' ? mode.toLowerCase() : '');
 
 const DEFAULT_LEARNING_START_TIME = '08:00:00';
 const DEFAULT_LEARNING_END_TIME = '15:00:00';
@@ -243,7 +182,7 @@ const minutesToDisplayTime = (totalMinutes) => {
 };
 
 const parseTimeToMinutesOrNull = (value) => {
-  const raw = String(value || '').trim().toLowerCase().replace(/_/g, '');
+  const raw = String(value || '').trim().toLowerCase();
   if (!raw) return null;
   const normalized = raw.replace(/\s+/g, '');
   const ampmMatch = normalized.match(/^(\d{1,2})(?::(\d{1,2}))?(am|pm)$/);
@@ -284,8 +223,8 @@ const normalizeLearningTimeSql = (value, fallbackSqlTime) => {
   return minutesToSqlTime(effective);
 };
 
-const normalizeTargetMode = (mode) => (typeof mode === 'string' ? mode.toLowerCase() : '');
 const formatSchoolYearLabel = (startYear) => `${startYear}/${String(startYear + 1).slice(-2)}`;
+
 const normalizeSchoolYearLabel = (label) => {
   const raw = String(label || '').trim();
   if (!raw) return '';
@@ -341,6 +280,8 @@ const schoolYearRangeDefaults = (schoolYearLabel) => {
       fallEnd: '',
       springStart: '',
       springEnd: '',
+      summerStart: '',
+      summerEnd: '',
     };
   }
   return {
@@ -350,6 +291,8 @@ const schoolYearRangeDefaults = (schoolYearLabel) => {
     fallEnd: `${parsed.start}-12-31`,
     springStart: `${parsed.end}-01-01`,
     springEnd: `${parsed.end}-05-01`,
+    summerStart: `${parsed.end}-06-01`,
+    summerEnd: `${parsed.end}-08-31`,
   };
 };
 
@@ -364,6 +307,8 @@ const coerceRangeDatesToSchoolYear = (settings, schoolYearLabel) => {
       default_fall_term_end_date: defaults.fallEnd,
       default_spring_term_start_date: defaults.springStart,
       default_spring_term_end_date: defaults.springEnd,
+      default_summer_term_start_date: defaults.summerStart,
+      default_summer_term_end_date: defaults.summerEnd,
     };
   }
   const keepIfYearMatches = (value, expectedYear, fallback) => {
@@ -379,6 +324,8 @@ const coerceRangeDatesToSchoolYear = (settings, schoolYearLabel) => {
     default_fall_term_end_date: keepIfYearMatches(settings?.default_fall_term_end_date, parsed.start, defaults.fallEnd),
     default_spring_term_start_date: keepIfYearMatches(settings?.default_spring_term_start_date, parsed.end, defaults.springStart),
     default_spring_term_end_date: keepIfYearMatches(settings?.default_spring_term_end_date, parsed.end, defaults.springEnd),
+    default_summer_term_start_date: keepIfYearMatches(settings?.default_summer_term_start_date, parsed.end, defaults.summerStart),
+    default_summer_term_end_date: keepIfYearMatches(settings?.default_summer_term_end_date, parsed.end, defaults.summerEnd),
   };
 };
 
@@ -511,31 +458,24 @@ export default function PlannerSettingsContent({
   const [excludedPublicHolidayDates, setExcludedPublicHolidayDates] = useState(
     Array.isArray(initialSnapshot?.excludedPublicHolidayDates) ? initialSnapshot.excludedPublicHolidayDates : []
   );
-  const [showPublicHolidaysPicker, setShowPublicHolidaysPicker] = useState(false);
-  const [publicHolidaysList, setPublicHolidaysList] = useState([]);
-  const [publicHolidaysLoading, setPublicHolidaysLoading] = useState(false);
   const countryCode = 'US';
   const regionCode = null;
 
-  // Custom days & ranges (stored as holiday / break exclusions in API)
+  // Custom days & ranges (stored as holiday / break exclusions in API; managed via calendar events)
   const [customHolidays, setCustomHolidays] = useState(
     Array.isArray(initialSnapshot?.customHolidays) ? initialSnapshot.customHolidays : []
   );
   const [customBreaks, setCustomBreaks] = useState(
     Array.isArray(initialSnapshot?.customBreaks) ? initialSnapshot.customBreaks : []
   );
-  const [addingDayOff, setAddingDayOff] = useState(false);
-  const [newDayOffStart, setNewDayOffStart] = useState('');
-  const [newDayOffEnd, setNewDayOffEnd] = useState('');
-  const [newDayOffName, setNewDayOffName] = useState('');
-  const [editingDayOff, setEditingDayOff] = useState(null);
-  const [editingDayOffDraft, setEditingDayOffDraft] = useState({ start: '', end: '', name: '' });
   const [defaultYearStartDate, setDefaultYearStartDate] = useState(initialSnapshot?.defaultYearStartDate || '');
   const [defaultYearEndDate, setDefaultYearEndDate] = useState(initialSnapshot?.defaultYearEndDate || '');
   const [defaultFallStartDate, setDefaultFallStartDate] = useState(initialSnapshot?.defaultFallStartDate || '');
   const [defaultFallEndDate, setDefaultFallEndDate] = useState(initialSnapshot?.defaultFallEndDate || '');
   const [defaultSpringStartDate, setDefaultSpringStartDate] = useState(initialSnapshot?.defaultSpringStartDate || '');
   const [defaultSpringEndDate, setDefaultSpringEndDate] = useState(initialSnapshot?.defaultSpringEndDate || '');
+  const [defaultSummerStartDate, setDefaultSummerStartDate] = useState(initialSnapshot?.defaultSummerStartDate || '');
+  const [defaultSummerEndDate, setDefaultSummerEndDate] = useState(initialSnapshot?.defaultSummerEndDate || '');
 
   // Subject targets (per-subject defaults)
   const [subjects, setSubjects] = useState(Array.isArray(initialSnapshot?.subjects) ? initialSnapshot.subjects : []);
@@ -611,6 +551,8 @@ export default function PlannerSettingsContent({
     setDefaultFallEndDate(cached.defaultFallEndDate || '');
     setDefaultSpringStartDate(cached.defaultSpringStartDate || '');
     setDefaultSpringEndDate(cached.defaultSpringEndDate || '');
+    setDefaultSummerStartDate(cached.defaultSummerStartDate || '');
+    setDefaultSummerEndDate(cached.defaultSummerEndDate || '');
     setSubjects(Array.isArray(cached.subjects) ? cached.subjects : []);
     setSubjectTargets(cached.subjectTargets && typeof cached.subjectTargets === 'object' ? cached.subjectTargets : {});
     hasHydratedSnapshotRef.current = true;
@@ -656,6 +598,8 @@ export default function PlannerSettingsContent({
       defaultFallEndDate,
       defaultSpringStartDate,
       defaultSpringEndDate,
+      defaultSummerStartDate,
+      defaultSummerEndDate,
     };
   });
 
@@ -679,6 +623,8 @@ export default function PlannerSettingsContent({
       defaultFallEndDate,
       defaultSpringStartDate,
       defaultSpringEndDate,
+      defaultSummerStartDate,
+      defaultSummerEndDate,
       subjects: Array.isArray(subjects) ? [...subjects] : [],
       subjectTargets: subjectTargets && typeof subjectTargets === 'object' ? { ...subjectTargets } : {},
       selectedSchoolYearLabel,
@@ -705,6 +651,8 @@ export default function PlannerSettingsContent({
     defaultFallEndDate,
     defaultSpringStartDate,
     defaultSpringEndDate,
+    defaultSummerStartDate,
+    defaultSummerEndDate,
     subjects,
     subjectTargets,
     selectedSchoolYearLabel,
@@ -773,6 +721,8 @@ export default function PlannerSettingsContent({
     setDefaultFallEndDate(seeded.fallEnd);
     setDefaultSpringStartDate(seeded.springStart);
     setDefaultSpringEndDate(seeded.springEnd);
+    setDefaultSummerStartDate(seeded.summerStart);
+    setDefaultSummerEndDate(seeded.summerEnd);
   }, [selectedSchoolYearLabel]);
 
   const visibleSubjects = useMemo(
@@ -787,44 +737,6 @@ export default function PlannerSettingsContent({
     },
     [subjects, selectedSchoolYearLabel, currentSchoolYearLabel]
   );
-
-  const visibleCustomHolidays = useMemo(
-    () => (customHolidays || []).map((h, idx) => ({ ...h, _idx: idx })).filter((h) => withinYmdRange(h.date, yearRangeMinYmd, yearRangeMaxYmd)),
-    [customHolidays, yearRangeMinYmd, yearRangeMaxYmd]
-  );
-  const visibleCustomBreaks = useMemo(
-    () =>
-      (customBreaks || [])
-        .map((b, idx) => ({ ...b, _idx: idx }))
-        .filter((b) => {
-          const startIn = withinYmdRange(b.start, yearRangeMinYmd, yearRangeMaxYmd);
-          const endIn = withinYmdRange(b.end, yearRangeMinYmd, yearRangeMaxYmd);
-          const wrapsRange = String(b.start || '') <= yearRangeMinYmd && String(b.end || '') >= yearRangeMaxYmd;
-          return startIn || endIn || wrapsRange;
-        }),
-    [customBreaks, yearRangeMinYmd, yearRangeMaxYmd]
-  );
-  const visibleDaysOffEntries = useMemo(() => {
-    const holidays = visibleCustomHolidays.map((h) => ({
-      kind: 'holiday',
-      index: h._idx,
-      id: h.id,
-      start: h.date,
-      end: null,
-      name: h.name,
-      sortKey: h.date,
-    }));
-    const breaks = visibleCustomBreaks.map((b) => ({
-      kind: 'break',
-      index: b._idx,
-      id: b.id,
-      start: b.start,
-      end: b.end,
-      name: b.name,
-      sortKey: b.start,
-    }));
-    return [...holidays, ...breaks].sort((a, b) => String(a.sortKey).localeCompare(String(b.sortKey)));
-  }, [visibleCustomHolidays, visibleCustomBreaks]);
 
   useEffect(() => {
     if (!familyId || !selectedSchoolYearLabel || readOnly || isSchoolYearLocked || embeddedInModal) return;
@@ -925,6 +837,16 @@ export default function PlannerSettingsContent({
       matchesInitialDataYear
         ? (coercedRangeDates.default_spring_term_end_date || rangeDefaults.springEnd)
         : rangeDefaults.springEnd
+    );
+    setDefaultSummerStartDate(
+      matchesInitialDataYear
+        ? (coercedRangeDates.default_summer_term_start_date || rangeDefaults.summerStart)
+        : rangeDefaults.summerStart
+    );
+    setDefaultSummerEndDate(
+      matchesInitialDataYear
+        ? (coercedRangeDates.default_summer_term_end_date || rangeDefaults.summerEnd)
+        : rangeDefaults.summerEnd
     );
     const ex = matchesInitialDataYear ? (initialData.exclusions || []) : [];
     const holidays = ex.filter((e) => e.exclusion_type === 'holiday').map((e) => ({
@@ -1085,6 +1007,8 @@ export default function PlannerSettingsContent({
         setDefaultFallEndDate(coercedRangeDates.default_fall_term_end_date || rangeDefaults.fallEnd);
         setDefaultSpringStartDate(coercedRangeDates.default_spring_term_start_date || rangeDefaults.springStart);
         setDefaultSpringEndDate(coercedRangeDates.default_spring_term_end_date || rangeDefaults.springEnd);
+        setDefaultSummerStartDate(coercedRangeDates.default_summer_term_start_date || rangeDefaults.summerStart);
+        setDefaultSummerEndDate(coercedRangeDates.default_summer_term_end_date || rangeDefaults.summerEnd);
       }
       setExcludedPublicHolidayDates(Array.isArray(excludedDates) ? excludedDates : []);
       const holidays = (ex || []).filter((e) => e.exclusion_type === 'holiday').map((e) => ({
@@ -1230,6 +1154,8 @@ export default function PlannerSettingsContent({
         const fallEnd = normalizeYmd(s.defaultFallEndDate);
         const springStart = normalizeYmd(s.defaultSpringStartDate);
         const springEnd = normalizeYmd(s.defaultSpringEndDate);
+        const summerStart = normalizeYmd(s.defaultSummerStartDate);
+        const summerEnd = normalizeYmd(s.defaultSummerEndDate);
         if ((yearStart && !yearEnd) || (!yearStart && yearEnd)) {
           throw new Error('Set both year start and year end (or clear both).');
         }
@@ -1239,6 +1165,9 @@ export default function PlannerSettingsContent({
         if ((springStart && !springEnd) || (!springStart && springEnd)) {
           throw new Error('Set both spring term start and end (or clear both).');
         }
+        if ((summerStart && !summerEnd) || (!summerStart && summerEnd)) {
+          throw new Error('Set both summer range start and end (or clear both).');
+        }
         if (yearStart && yearEnd && yearStart > yearEnd) {
           throw new Error('Year end must be on or after year start.');
         }
@@ -1247,6 +1176,9 @@ export default function PlannerSettingsContent({
         }
         if (springStart && springEnd && springStart > springEnd) {
           throw new Error('Spring term end must be on or after spring term start.');
+        }
+        if (summerStart && summerEnd && summerStart > summerEnd) {
+          throw new Error('Summer range end must be on or after summer range start.');
         }
         const resolvedAttendanceMode = getAttendanceMode({ academicYearMode: s.attendanceTrackingMode });
         const resolvedTargetScope = resolveTargetScopeForAttendanceMode(resolvedAttendanceMode);
@@ -1271,6 +1203,8 @@ export default function PlannerSettingsContent({
           default_fall_term_end_date: fallEnd || null,
           default_spring_term_start_date: springStart || null,
           default_spring_term_end_date: springEnd || null,
+          default_summer_term_start_date: summerStart || null,
+          default_summer_term_end_date: summerEnd || null,
           ...updates,
         };
         const { error: settingsErr } = await saveFamilyPlannerSettings(familyId, settingsPayload, selectedSchoolYearLabel);
@@ -1577,11 +1511,6 @@ export default function PlannerSettingsContent({
     }
     return true;
   }, [persist, toast, embeddedInModal]);
-  const handleFollowChange = (v) => {
-    stateRef.current = { ...(stateRef.current || {}), followGlobalHolidays: v };
-    setFollowGlobalHolidays(v);
-    queuePersist(300);
-  };
   const handleRangeDefaultChange = (setter) => (value) => {
     const normalizedValue = normalizeYmd(value);
     setter(normalizedValue);
@@ -1598,6 +1527,10 @@ export default function PlannerSettingsContent({
       stateRef.current = { ...(stateRef.current || {}), defaultSpringStartDate: normalizedValue };
     } else if (setter === setDefaultSpringEndDate) {
       stateRef.current = { ...(stateRef.current || {}), defaultSpringEndDate: normalizedValue };
+    } else if (setter === setDefaultSummerStartDate) {
+      stateRef.current = { ...(stateRef.current || {}), defaultSummerStartDate: normalizedValue };
+    } else if (setter === setDefaultSummerEndDate) {
+      stateRef.current = { ...(stateRef.current || {}), defaultSummerEndDate: normalizedValue };
     }
     queuePersist(300);
   };
@@ -1632,116 +1565,6 @@ export default function PlannerSettingsContent({
     }
     toast.push('Open Subjects to add a new subject.', 'info');
   }, [selectedSchoolYearLabel, toast]);
-  const resetDayOffForm = () => {
-    setAddingDayOff(false);
-    setNewDayOffStart('');
-    setNewDayOffEnd('');
-    setNewDayOffName('');
-  };
-  const resetDayOffEdit = () => {
-    setEditingDayOff(null);
-    setEditingDayOffDraft({ start: '', end: '', name: '' });
-  };
-  const validateDayOffDates = (start, end, isRange) => {
-    if (!withinYmdRange(start, yearRangeMinYmd, yearRangeMaxYmd)) {
-      toast.push(`Start date must be between ${yearRangeMinYmd} and ${yearRangeMaxYmd}.`, 'error');
-      return false;
-    }
-    if (isRange) {
-      if (!withinYmdRange(end, yearRangeMinYmd, yearRangeMaxYmd)) {
-        toast.push(`End date must be between ${yearRangeMinYmd} and ${yearRangeMaxYmd}.`, 'error');
-        return false;
-      }
-      if (start > end) {
-        toast.push('End date must be on or after start.', 'error');
-        return false;
-      }
-    }
-    return true;
-  };
-  const addDayOff = () => {
-    if (!newDayOffStart || !newDayOffName.trim()) {
-      toast.push('Enter start date and name.', 'error');
-      return;
-    }
-    const classified = classifyDaysOffEntry(newDayOffStart, newDayOffEnd, newDayOffName);
-    const isRange = classified.kind === 'break';
-    if (!validateDayOffDates(classified.start || classified.date, classified.end, isRange)) return;
-    if (classified.kind === 'holiday') {
-      setCustomHolidays([
-        ...customHolidays,
-        { date: classified.date, name: classified.name, type: 'CUSTOM_HOLIDAY' },
-      ]);
-    } else {
-      setCustomBreaks([
-        ...customBreaks,
-        { start: classified.start, end: classified.end, name: classified.name },
-      ]);
-    }
-    resetDayOffForm();
-    queuePersist(300);
-  };
-  const removeDayOff = (kind, index) => {
-    if (kind === 'holiday') {
-      const item = customHolidays[index];
-      setCustomHolidays(customHolidays.filter((_, i) => i !== index));
-      if (item?.id) deleteExclusion(item.id).catch(() => {});
-    } else {
-      const item = customBreaks[index];
-      setCustomBreaks(customBreaks.filter((_, i) => i !== index));
-      if (item?.id) deleteExclusion(item.id).catch(() => {});
-    }
-    if (isEditingSameDayOff(editingDayOff, { kind, index })) resetDayOffEdit();
-    queuePersist(300);
-  };
-  const startEditDayOff = (entry) => {
-    setEditingDayOff({ kind: entry.kind, index: entry.index });
-    setEditingDayOffDraft({
-      start: entry.start,
-      end: entry.kind === 'break' && entry.end && entry.end !== entry.start ? entry.end : '',
-      name: entry.name,
-    });
-  };
-  const saveEditDayOff = (kind, index) => {
-    const { start, end, name } = editingDayOffDraft;
-    if (!start || !name.trim()) {
-      toast.push('Enter start date and name.', 'error');
-      return;
-    }
-    const classified = classifyDaysOffEntry(start, end, name);
-    const isRange = classified.kind === 'break';
-    if (!validateDayOffDates(classified.start || classified.date, classified.end, isRange)) return;
-    const oldItem = kind === 'holiday' ? customHolidays[index] : customBreaks[index];
-    if (classified.kind === kind) {
-      if (kind === 'holiday') {
-        const next = [...customHolidays];
-        next[index] = { ...next[index], date: classified.date, name: classified.name };
-        setCustomHolidays(next);
-      } else {
-        const next = [...customBreaks];
-        next[index] = { ...next[index], start: classified.start, end: classified.end, name: classified.name };
-        setCustomBreaks(next);
-      }
-    } else {
-      if (oldItem?.id) deleteExclusion(oldItem.id).catch(() => {});
-      if (kind === 'holiday') {
-        setCustomHolidays(customHolidays.filter((_, i) => i !== index));
-        setCustomBreaks([
-          ...customBreaks,
-          { start: classified.start, end: classified.end, name: classified.name },
-        ]);
-      } else {
-        setCustomBreaks(customBreaks.filter((_, i) => i !== index));
-        setCustomHolidays([
-          ...customHolidays,
-          { date: classified.date, name: classified.name, type: 'CUSTOM_HOLIDAY' },
-        ]);
-      }
-    }
-    resetDayOffEdit();
-    queuePersist(300);
-  };
-
   const handleSubjectTargetChange = useCallback((subjectId, merged) => {
     setSubjectTargets((prev) => {
       const next = { ...prev, [subjectId]: merged };
@@ -1852,6 +1675,8 @@ export default function PlannerSettingsContent({
     };
   }, [embeddedInModal, handleRequestClose]);
 
+  const useTwoColumnModalLayout = embeddedInModal && hideEmbeddedHeader;
+
   const sectionStyle = {
     paddingTop: 0,
     paddingBottom: 0,
@@ -1871,9 +1696,12 @@ export default function PlannerSettingsContent({
     paddingBottom: 18,
     marginBottom: 8,
     overflow: 'hidden',
-    ...(Platform.OS === 'web' && {
+    ...(Platform.OS === 'web' && !embeddedInModal && {
       maxWidth: 680,
       alignSelf: 'flex-start',
+    }),
+    ...(Platform.OS === 'web' && embeddedInModal && {
+      alignSelf: 'stretch',
     }),
   };
   const sectionBucketFirstStyle = {
@@ -1931,13 +1759,6 @@ export default function PlannerSettingsContent({
     minWidth: 120,
     alignSelf: 'flex-start',
   };
-  const inlineSwitchRowStyle = {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    minHeight: 36,
-  };
   const chipRowStyle = {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1949,10 +1770,6 @@ export default function PlannerSettingsContent({
     alignItems: 'stretch',
     gap: 0,
     flexWrap: 'nowrap',
-  };
-  const daysOffRowStyle = {
-    paddingTop: 0,
-    paddingBottom: 0,
   };
   const sectionTitleStyle = {
     ...SettingsTypography.sectionTitle,
@@ -1995,30 +1812,6 @@ export default function PlannerSettingsContent({
     marginBottom: SettingsLayout.labelSpacing,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  };
-  const settingRowStyle = {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    minHeight: 38,
-    marginBottom: 12,
-  };
-  const settingRowControlStyle = {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexWrap: 'wrap',
-    justifyContent: 'flex-end',
-  };
-  const settingRowLabelStyle = {
-    ...SettingsTypography.body,
-    color: '#111827',
-    flexShrink: 1,
-    paddingRight: 8,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   };
   const compactRangeControlStyle = {
@@ -2182,49 +1975,6 @@ export default function PlannerSettingsContent({
     fontWeight: active ? '700' : '500',
     color: active ? '#6BB3E8' : '#6b7280',
   });
-  const rowActionButtonsStyle = {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  };
-  const rowActionButtonStyle = {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 0,
-    backgroundColor: '#f9fafb',
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...(Platform.OS === 'web' && {
-      transition: 'all 0.2s ease',
-      cursor: 'pointer',
-    }),
-  };
-  const addOutlineButtonStyle = {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 30,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#ffffff',
-    alignSelf: 'flex-start',
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      transition: 'all 0.2s ease',
-    }),
-  };
-  const addOutlineButtonTextStyle = {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#374151',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  };
   const embeddedTitleRowStyle = {
     position: 'relative',
     minHeight: 34,
@@ -2291,40 +2041,495 @@ export default function PlannerSettingsContent({
     onSchoolYearChange?.(normalized);
   }, [readOnly, selectedSchoolYearLabel, onSchoolYearChange]);
 
-  const renderDateRangeField = (label, startValue, onStartChange, endValue, onEndChange) => (
-    <View style={formFieldStyle}>
-      <Text style={formFieldLabelStyle}>{label}</Text>
-      <View style={dateTimeInlineRow}>
-        <View style={scheduleColumn}>
-          <Text style={formFieldLabelStyle}>Start date</Text>
-          <PlannerPreferenceDateField
-            value={startValue}
-            onChange={onStartChange}
-            placeholder="Start"
-            borderColor="#e5e7eb"
-            textColor={TEXT_BLACK}
-            mutedColor="rgba(15,23,42,0.4)"
-            style={scheduleDateFieldStyle}
-            minDate={yearRangeMinYmd}
-            maxDate={yearRangeMaxYmd}
-          />
+  const fieldWrapStyle = useTwoColumnModalLayout ? assignmentModalStyles.formGroup : formFieldStyle;
+  const modalFieldLabelStyle = useTwoColumnModalLayout ? assignmentModalStyles.fieldLabel : formFieldLabelStyle;
+  const modalFormStackStyle = useTwoColumnModalLayout ? { width: '100%' } : formStackStyle;
+  const modalCompactDateWidth = Platform.OS === 'web' ? 148 : 140;
+  const modalCompactTimeWidth = Platform.OS === 'web' ? 120 : 116;
+  const modalDateColumnStyle = useTwoColumnModalLayout
+    ? {
+        flexGrow: 0,
+        flexShrink: 0,
+        flexBasis: 'auto',
+        width: modalCompactDateWidth,
+        maxWidth: modalCompactDateWidth,
+      }
+    : scheduleColumn;
+  const modalTimeColumnStyle = useTwoColumnModalLayout
+    ? {
+        flexGrow: 0,
+        flexShrink: 0,
+        flexBasis: 'auto',
+        width: modalCompactTimeWidth,
+        maxWidth: modalCompactTimeWidth,
+      }
+    : scheduleColumn;
+  const modalDateTimeRowStyle = useTwoColumnModalLayout
+    ? {
+        ...assignmentModalStyles.dateTimeInlineRow,
+        alignItems: 'flex-end',
+      }
+    : dateTimeInlineRow;
+  const modalScheduleDateFieldStyle = useTwoColumnModalLayout
+    ? {
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+        borderRadius: 12,
+        backgroundColor: '#ffffff',
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        minHeight: 40,
+        width: modalCompactDateWidth,
+        maxWidth: modalCompactDateWidth,
+        alignSelf: 'flex-start',
+        fontSize: 14,
+      }
+    : scheduleDateFieldStyle;
+  const modalInputStyle = useTwoColumnModalLayout
+    ? {
+        ...inputStyle,
+        minHeight: 40,
+        fontSize: 14,
+        borderRadius: 12,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        minWidth: 0,
+      }
+    : inputStyle;
+  const modalSelectTriggerStyle = useTwoColumnModalLayout
+    ? {
+        ...attendanceModeSelectTriggerStyle,
+        minHeight: 40,
+        width: modalCompactDateWidth,
+        maxWidth: modalCompactDateWidth,
+        alignSelf: 'flex-start',
+        backgroundColor: '#ffffff',
+      }
+    : attendanceModeSelectTriggerStyle;
+  const modalTimeInputWrap = useTwoColumnModalLayout
+    ? {
+        width: modalCompactTimeWidth,
+        maxWidth: modalCompactTimeWidth,
+        alignSelf: 'flex-start',
+      }
+    : undefined;
+  const modalModeToggleStyle = (active) => ({
+    ...modeToggleButtonStyle(active),
+    ...(useTwoColumnModalLayout ? { minHeight: 36, paddingVertical: 7, paddingHorizontal: 12 } : {}),
+  });
+  const modalModeToggleTextStyle = (active) => ({
+    ...modeToggleButtonTextStyle(active),
+    ...(useTwoColumnModalLayout ? { fontSize: 13 } : {}),
+  });
+  const modalWeekdayDotStyle = (active) => (
+    useTwoColumnModalLayout
+      ? {
+          ...modeToggleButtonStyle(active),
+          minHeight: 36,
+          paddingVertical: 7,
+          paddingHorizontal: 12,
+        }
+      : weekdayDotStyle(active)
+  );
+  const modalWeekdayDotLabelStyle = (active) => (
+    useTwoColumnModalLayout
+      ? { ...modeToggleButtonTextStyle(active), fontSize: 13 }
+      : weekdayDotLabelStyle(active)
+  );
+  const modalMutedMetaStyle = useTwoColumnModalLayout
+    ? assignmentModalStyles.fieldHint
+    : mutedMetaTextStyle;
+
+  const renderDateRangeField = (label, startValue, onStartChange, endValue, onEndChange) => {
+    if (useTwoColumnModalLayout) {
+      return (
+        <View style={fieldWrapStyle}>
+          <Text style={modalFieldLabelStyle}>{`${label} start/end`}</Text>
+          <View style={modalDateTimeRowStyle}>
+            <View style={modalDateColumnStyle}>
+              <PlannerPreferenceDateField
+                value={startValue}
+                onChange={onStartChange}
+                placeholder="Start"
+                borderColor="#e5e7eb"
+                textColor={TEXT_BLACK}
+                mutedColor="rgba(15,23,42,0.4)"
+                style={modalScheduleDateFieldStyle}
+                width={modalCompactDateWidth}
+                minDate={yearRangeMinYmd}
+                maxDate={yearRangeMaxYmd}
+              />
+            </View>
+            <View style={modalDateColumnStyle}>
+              <PlannerPreferenceDateField
+                value={endValue}
+                onChange={onEndChange}
+                placeholder="End"
+                borderColor="#e5e7eb"
+                textColor={TEXT_BLACK}
+                mutedColor="rgba(15,23,42,0.4)"
+                style={modalScheduleDateFieldStyle}
+                width={modalCompactDateWidth}
+                minDate={yearRangeMinYmd}
+                maxDate={yearRangeMaxYmd}
+              />
+            </View>
+          </View>
         </View>
-        <View style={scheduleColumn}>
-          <Text style={formFieldLabelStyle}>End date</Text>
-          <PlannerPreferenceDateField
-            value={endValue}
-            onChange={onEndChange}
-            placeholder="End"
-            borderColor="#e5e7eb"
-            textColor={TEXT_BLACK}
-            mutedColor="rgba(15,23,42,0.4)"
-            style={scheduleDateFieldStyle}
-            minDate={yearRangeMinYmd}
-            maxDate={yearRangeMaxYmd}
-          />
+      );
+    }
+
+    return (
+      <View style={fieldWrapStyle}>
+        <Text style={modalFieldLabelStyle}>{label}</Text>
+        <View style={modalDateTimeRowStyle}>
+          <View style={modalDateColumnStyle}>
+            <Text style={modalFieldLabelStyle}>Start date</Text>
+            <PlannerPreferenceDateField
+              value={startValue}
+              onChange={onStartChange}
+              placeholder="Start"
+              borderColor="#e5e7eb"
+              textColor={TEXT_BLACK}
+              mutedColor="rgba(15,23,42,0.4)"
+              style={modalScheduleDateFieldStyle}
+              minDate={yearRangeMinYmd}
+              maxDate={yearRangeMaxYmd}
+            />
+          </View>
+          <View style={modalDateColumnStyle}>
+            <Text style={modalFieldLabelStyle}>End date</Text>
+            <PlannerPreferenceDateField
+              value={endValue}
+              onChange={onEndChange}
+              placeholder="End"
+              borderColor="#e5e7eb"
+              textColor={TEXT_BLACK}
+              mutedColor="rgba(15,23,42,0.4)"
+              style={modalScheduleDateFieldStyle}
+              minDate={yearRangeMinYmd}
+              maxDate={yearRangeMaxYmd}
+            />
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  const learningDaysForm = (
+    <View style={modalFormStackStyle}>
+      {embeddedInModal && !readOnly ? (
+        <View style={fieldWrapStyle}>
+          <Text style={modalFieldLabelStyle}>School year</Text>
+          <TouchableOpacity
+            ref={embeddedSchoolYearTriggerRef}
+            style={modalSelectTriggerStyle}
+            onPress={() => setShowEmbeddedSchoolYearDropdown((open) => !open)}
+            activeOpacity={0.85}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={attendanceModeSelectTriggerTextStyle}>
+              {selectedSchoolYearLabel || 'Select…'}
+            </Text>
+            <ChevronDown size={16} color="#6b7280" />
+          </TouchableOpacity>
+          <Dropdown
+            visible={showEmbeddedSchoolYearDropdown}
+            triggerRef={embeddedSchoolYearTriggerRef}
+            onClose={() => setShowEmbeddedSchoolYearDropdown(false)}
+            placement="bottom-start"
+            matchTriggerWidth
+            maxHeight={220}
+          >
+            {schoolYearOptions.map((option) => {
+              const selected = option === selectedSchoolYearLabel;
+              return (
+                <TouchableOpacity
+                  key={option}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    paddingVertical: 10,
+                    paddingHorizontal: 14,
+                    backgroundColor: selected ? 'rgba(133,196,242,0.12)' : 'transparent',
+                    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+                  }}
+                  onPress={() => handleEmbeddedSchoolYearSelect(option)}
+                >
+                  <Text style={{
+                    fontSize: 14,
+                    color: selected ? '#6BB3E8' : TEXT_BLACK,
+                    fontWeight: selected ? '600' : '400',
+                  }}
+                  >
+                    {option}
+                  </Text>
+                  {selected ? <CheckCircle size={16} color="#6BB3E8" /> : null}
+                </TouchableOpacity>
+              );
+            })}
+          </Dropdown>
+        </View>
+      ) : null}
+      {renderDateRangeField(
+        'Fall term',
+        defaultFallStartDate,
+        handleRangeDefaultChange(setDefaultFallStartDate),
+        defaultFallEndDate,
+        handleRangeDefaultChange(setDefaultFallEndDate),
+      )}
+      {renderDateRangeField(
+        'Spring term',
+        defaultSpringStartDate,
+        handleRangeDefaultChange(setDefaultSpringStartDate),
+        defaultSpringEndDate,
+        handleRangeDefaultChange(setDefaultSpringEndDate),
+      )}
+      {renderDateRangeField(
+        'Summer range',
+        defaultSummerStartDate,
+        handleRangeDefaultChange(setDefaultSummerStartDate),
+        defaultSummerEndDate,
+        handleRangeDefaultChange(setDefaultSummerEndDate),
+      )}
+      <View style={fieldWrapStyle}>
+        <Text style={modalFieldLabelStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.defaultLearningDays}</Text>
+        <View style={chipRowStyle}>
+          {LEARNING_DAY_OPTIONS.map((option) => {
+            const active = preferredLearningDayNums.includes(option.id);
+            return (
+              <TouchableOpacity
+                key={`learning-day-${option.id}`}
+                style={modalWeekdayDotStyle(active)}
+                onPress={() => handlePreferredLearningDayToggle(option.id)}
+                activeOpacity={0.85}
+              >
+                <Text style={modalWeekdayDotLabelStyle(active)}>{option.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+      <View style={fieldWrapStyle}>
+        <Text style={modalFieldLabelStyle}>
+          {useTwoColumnModalLayout
+            ? `${SCHOOL_YEAR_SETTINGS_UI.sections.defaultLearningHours} start/end`
+            : SCHOOL_YEAR_SETTINGS_UI.sections.defaultLearningHours}
+        </Text>
+        <View style={modalDateTimeRowStyle}>
+          <View style={modalTimeColumnStyle}>
+            {!useTwoColumnModalLayout ? (
+              <Text style={modalFieldLabelStyle}>Start time</Text>
+            ) : null}
+            <MaskedTimeInput
+              wrapStyle={modalTimeInputWrap}
+              value={learningStartTime}
+              onChangeText={setLearningStartTime}
+              onBlur={(nextValue) => persistLearningTimes(nextValue, learningEndTime)}
+              placeholder="8:00 AM"
+            />
+          </View>
+          <View style={modalTimeColumnStyle}>
+            {!useTwoColumnModalLayout ? (
+              <Text style={modalFieldLabelStyle}>End time</Text>
+            ) : null}
+            <MaskedTimeInput
+              wrapStyle={modalTimeInputWrap}
+              value={learningEndTime}
+              onChangeText={setLearningEndTime}
+              onBlur={(nextValue) => persistLearningTimes(learningStartTime, nextValue)}
+              placeholder="4:00 PM"
+            />
+          </View>
         </View>
       </View>
     </View>
+  );
+
+  const attendanceTrackingModeField = (
+    <View style={fieldWrapStyle}>
+      <Text style={modalFieldLabelStyle}>Tracking mode</Text>
+      <View style={chipRowStyle}>
+          <TouchableOpacity
+            style={[modalModeToggleStyle(isClassDayAttendanceActive), { minWidth: 104 }]}
+            onPress={() => handleAttendanceTrackingModeChange('class_day')}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={modalModeToggleTextStyle(isClassDayAttendanceActive)}>Total class days</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[modalModeToggleStyle(isPerSubjectAttendanceActive), { minWidth: 96 }]}
+            onPress={() => handleAttendanceTrackingModeChange('subject')}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={modalModeToggleTextStyle(isPerSubjectAttendanceActive)}>Per subject</Text>
+          </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const attendanceGoalsContent = (
+    <>
+      {(attendanceTrackingMode === 'class_day' || targetScope === 'per_subject') ? (
+      <>
+      {attendanceTrackingMode === 'class_day' ? (
+        <View style={fieldWrapStyle}>
+          <Text style={modalFieldLabelStyle}>Total attendance goal</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              {goalMode === 'days' && (
+                <TextInput
+                  value={targetDays}
+                  onChangeText={handleTargetDaysChange}
+                  keyboardType="number-pad"
+                  style={[modalInputStyle, { width: 72, minHeight: 40, borderRadius: 14 }]}
+                  placeholder="180"
+                  placeholderTextColor="rgba(15,23,42,0.4)"
+                />
+              )}
+              {goalMode === 'hours' && (
+                <TextInput
+                  value={targetHours}
+                  onChangeText={handleTargetHoursChange}
+                  keyboardType="number-pad"
+                  style={[modalInputStyle, { width: 80, minHeight: 40, borderRadius: 14 }]}
+                  placeholder="1000"
+                  placeholderTextColor="rgba(15,23,42,0.4)"
+                />
+              )}
+              <View style={chipRowStyle}>
+                <TouchableOpacity style={modalModeToggleStyle(goalMode === 'days')} onPress={() => handleGoalChange('days')}>
+                  <Text style={modalModeToggleTextStyle(goalMode === 'days')}>days</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={modalModeToggleStyle(goalMode === 'hours')} onPress={() => handleGoalChange('hours')}>
+                  <Text style={modalModeToggleTextStyle(goalMode === 'hours')}>hours</Text>
+                </TouchableOpacity>
+              </View>
+          </View>
+        </View>
+      ) : visibleSubjects.length === 0 ? (
+        <Text style={modalMutedMetaStyle}>
+          Add a subject first to set per-subject targets.
+        </Text>
+      ) : (
+        visibleSubjects.map((subj) => {
+            const current = subjectTargets[subj.id] || {};
+            const mode = current.mode === 'hours' ? 'hours' : 'days';
+            const daysValue = mode === 'days' ? String(current.days ?? '') : '';
+            const hoursValue = mode === 'hours' ? String(current.hours ?? '') : '';
+            return (
+              <View key={subj.id} style={fieldWrapStyle}>
+                <Text style={modalFieldLabelStyle}>{subj.name || 'Subject'}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    {mode === 'days' ? (
+                      <TextInput
+                        value={daysValue}
+                        onChangeText={(v) =>
+                          handleSubjectTargetChange(subj.id, {
+                            ...current,
+                            mode: 'days',
+                            days: v,
+                          })
+                        }
+                        keyboardType="number-pad"
+                        style={[modalInputStyle, { width: 72, minHeight: 40, borderRadius: 14 }]}
+                        placeholder="180"
+                        placeholderTextColor="rgba(15,23,42,0.4)"
+                      />
+                    ) : (
+                      <TextInput
+                        value={hoursValue}
+                        onChangeText={(v) =>
+                          handleSubjectTargetChange(subj.id, {
+                            ...current,
+                            mode: 'hours',
+                            hours: v,
+                          })
+                        }
+                        keyboardType="number-pad"
+                        style={[modalInputStyle, { width: 80, minHeight: 40, borderRadius: 14 }]}
+                        placeholder="1000"
+                        placeholderTextColor="rgba(15,23,42,0.4)"
+                      />
+                    )}
+                    <View style={chipRowStyle}>
+                      <TouchableOpacity
+                        style={modalModeToggleStyle(mode === 'days')}
+                        onPress={() =>
+                          handleSubjectTargetChange(subj.id, {
+                            ...current,
+                            mode: 'days',
+                            days: String(current.days ?? targetDays ?? '0'),
+                          })
+                        }
+                      >
+                        <Text style={modalModeToggleTextStyle(mode === 'days')}>days</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={modalModeToggleStyle(mode === 'hours')}
+                        onPress={() =>
+                          handleSubjectTargetChange(subj.id, {
+                            ...current,
+                            mode: 'hours',
+                            hours: String(current.hours ?? targetHours ?? '0'),
+                          })
+                        }
+                      >
+                        <Text style={modalModeToggleTextStyle(mode === 'hours')}>hours</Text>
+                      </TouchableOpacity>
+                    </View>
+                </View>
+              </View>
+            );
+          })
+      )}
+      </>
+      ) : null}
+    </>
+  );
+
+  const attendanceForm = (
+    <View style={modalFormStackStyle}>
+      {attendanceTrackingModeField}
+      {attendanceGoalsContent}
+    </View>
+  );
+
+  const settingsSections = useTwoColumnModalLayout ? (
+    <View style={assignmentModalStyles.schoolYearSettingsFormRow}>
+      <View style={assignmentModalStyles.schoolYearSettingsFormColumnMain}>
+        <View style={assignmentModalStyles.schoolYearSettingsContentPanel}>
+          <SectionHeading>{SCHOOL_YEAR_SETTINGS_UI.sections.learningDays}</SectionHeading>
+          {learningDaysForm}
+        </View>
+      </View>
+      <View style={assignmentModalStyles.schoolYearSettingsFormColumnSide}>
+        <View style={assignmentModalStyles.schoolYearSettingsSidePanel}>
+          <SectionHeading>{SCHOOL_YEAR_SETTINGS_UI.sections.attendanceTracking}</SectionHeading>
+          {attendanceTrackingModeField}
+          <ScrollView
+            style={assignmentModalStyles.assignmentSideFields}
+            contentContainerStyle={{ gap: 0, paddingBottom: 8, paddingTop: 4 }}
+            showsVerticalScrollIndicator
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+          >
+            {attendanceGoalsContent}
+          </ScrollView>
+        </View>
+      </View>
+    </View>
+  ) : (
+    <>
+      <View style={[sectionBucketStyle, sectionBucketFirstStyle]}>
+        <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.learningDays}</Text>
+        {learningDaysForm}
+      </View>
+      <View style={sectionBucketStyle}>
+        <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.attendanceTracking}</Text>
+        {attendanceForm}
+      </View>
+    </>
   );
 
   if (loading && embeddedInModal) {
@@ -2336,21 +2541,12 @@ export default function PlannerSettingsContent({
     );
   }
 
-  return (
-    <ScrollView
-      style={[
-        { flex: 1, minHeight: 0 },
-        embeddedInModal && hideEmbeddedHeader && Platform.OS === 'web' && { height: '100%' },
-      ]}
-      contentContainerStyle={{
-        paddingBottom: embeddedInModal ? 32 : 32,
-        paddingHorizontal: embeddedInModal ? (hideEmbeddedHeader ? 0 : 26) : 0,
-        paddingTop: embeddedInModal ? (hideEmbeddedHeader ? 0 : 30) : 0,
-      }}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
-    >
-      <View style={{ paddingHorizontal: 0, paddingTop: 0 }}>
+  const settingsInner = (
+      <View style={{
+        paddingHorizontal: 0,
+        paddingTop: 0,
+        width: '100%',
+      }}>
         {embeddedInModal && !hideEmbeddedHeader ? (
           <View style={embeddedTitleRowStyle}>
             <Text style={embeddedTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.embeddedTitle}</Text>
@@ -2439,489 +2635,7 @@ export default function PlannerSettingsContent({
             ) : null}
           </View>
         ) : null}
-        {/* Learning days & hours */}
-        <View style={[sectionBucketStyle, sectionBucketFirstStyle]}>
-          <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.learningDays}</Text>
-          <View style={formStackStyle}>
-            {embeddedInModal && !readOnly ? (
-              <View style={formFieldStyle}>
-                <Text style={formFieldLabelStyle}>School year</Text>
-                <TouchableOpacity
-                  ref={embeddedSchoolYearTriggerRef}
-                  style={attendanceModeSelectTriggerStyle}
-                  onPress={() => setShowEmbeddedSchoolYearDropdown((open) => !open)}
-                  activeOpacity={0.85}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={attendanceModeSelectTriggerTextStyle}>
-                    {selectedSchoolYearLabel || 'Select…'}
-                  </Text>
-                  <ChevronDown size={16} color="#6b7280" />
-                </TouchableOpacity>
-                <Dropdown
-                  visible={showEmbeddedSchoolYearDropdown}
-                  triggerRef={embeddedSchoolYearTriggerRef}
-                  onClose={() => setShowEmbeddedSchoolYearDropdown(false)}
-                  placement="bottom-start"
-                  matchTriggerWidth
-                  maxHeight={220}
-                >
-                  {schoolYearOptions.map((option) => {
-                    const selected = option === selectedSchoolYearLabel;
-                    return (
-                      <TouchableOpacity
-                        key={option}
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          paddingVertical: 10,
-                          paddingHorizontal: 14,
-                          backgroundColor: selected ? 'rgba(133,196,242,0.12)' : 'transparent',
-                          ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-                        }}
-                        onPress={() => handleEmbeddedSchoolYearSelect(option)}
-                      >
-                        <Text style={{
-                          fontSize: 14,
-                          color: selected ? '#6BB3E8' : TEXT_BLACK,
-                          fontWeight: selected ? '600' : '400',
-                        }}
-                        >
-                          {option}
-                        </Text>
-                        {selected ? <CheckCircle size={16} color="#6BB3E8" /> : null}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </Dropdown>
-              </View>
-            ) : null}
-            {renderDateRangeField(
-              embeddedInModal ? 'Year range' : 'School year',
-              defaultYearStartDate,
-              handleRangeDefaultChange(setDefaultYearStartDate),
-              defaultYearEndDate,
-              handleRangeDefaultChange(setDefaultYearEndDate),
-            )}
-            {renderDateRangeField(
-              'Fall term',
-              defaultFallStartDate,
-              handleRangeDefaultChange(setDefaultFallStartDate),
-              defaultFallEndDate,
-              handleRangeDefaultChange(setDefaultFallEndDate),
-            )}
-            {renderDateRangeField(
-              'Spring term',
-              defaultSpringStartDate,
-              handleRangeDefaultChange(setDefaultSpringStartDate),
-              defaultSpringEndDate,
-              handleRangeDefaultChange(setDefaultSpringEndDate),
-            )}
-            <View style={formFieldStyle}>
-              <Text style={formFieldLabelStyle}>Usual learning days</Text>
-              <View style={chipRowStyle}>
-                {LEARNING_DAY_OPTIONS.map((option) => {
-                  const active = preferredLearningDayNums.includes(option.id);
-                  return (
-                    <TouchableOpacity
-                      key={`learning-day-${option.id}`}
-                      style={weekdayDotStyle(active)}
-                      onPress={() => handlePreferredLearningDayToggle(option.id)}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={weekdayDotLabelStyle(active)}>{option.label}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-            <View style={formFieldStyle}>
-              <Text style={formFieldLabelStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.learningHours}</Text>
-              <View style={dateTimeInlineRow}>
-                <View style={scheduleColumn}>
-                  <Text style={formFieldLabelStyle}>Start time</Text>
-                  <MaskedTimeInput
-                    value={learningStartTime}
-                    onChangeText={setLearningStartTime}
-                    onBlur={(nextValue) => persistLearningTimes(nextValue, learningEndTime)}
-                    placeholder="8:00 AM"
-                  />
-                </View>
-                <View style={scheduleColumn}>
-                  <Text style={formFieldLabelStyle}>End time</Text>
-                  <MaskedTimeInput
-                    value={learningEndTime}
-                    onChangeText={setLearningEndTime}
-                    onBlur={(nextValue) => persistLearningTimes(learningStartTime, nextValue)}
-                    placeholder="4:00 PM"
-                  />
-                </View>
-              </View>
-            </View>
-          </View>
-        </View>
-
-        <View style={sectionBucketStyle}>
-          <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.attendanceTracking}</Text>
-          <View style={formStackStyle}>
-            <View style={formFieldStyle}>
-              <Text style={formFieldLabelStyle}>Tracking mode</Text>
-              <View style={chipRowStyle}>
-                  <TouchableOpacity
-                    style={[modeToggleButtonStyle(isClassDayAttendanceActive), { minWidth: 104 }]}
-                    onPress={() => handleAttendanceTrackingModeChange('class_day')}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={modeToggleButtonTextStyle(isClassDayAttendanceActive)}>Total class days</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[modeToggleButtonStyle(isPerSubjectAttendanceActive), { minWidth: 96 }]}
-                    onPress={() => handleAttendanceTrackingModeChange('subject')}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={modeToggleButtonTextStyle(isPerSubjectAttendanceActive)}>Per subject</Text>
-                  </TouchableOpacity>
-              </View>
-            </View>
-            {(attendanceTrackingMode === 'class_day' || targetScope === 'per_subject') ? (
-            <>
-            {attendanceTrackingMode === 'class_day' ? (
-              <View style={formFieldStyle}>
-                <Text style={formFieldLabelStyle}>Total attendance goal</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    {goalMode === 'days' && (
-                      <TextInput
-                        value={targetDays}
-                        onChangeText={handleTargetDaysChange}
-                        keyboardType="number-pad"
-                        style={[inputStyle, { width: 72, minHeight: 40, borderRadius: 14 }]}
-                        placeholder="180"
-                        placeholderTextColor="rgba(15,23,42,0.4)"
-                      />
-                    )}
-                    {goalMode === 'hours' && (
-                      <TextInput
-                        value={targetHours}
-                        onChangeText={handleTargetHoursChange}
-                        keyboardType="number-pad"
-                        style={[inputStyle, { width: 80, minHeight: 40, borderRadius: 14 }]}
-                        placeholder="1000"
-                        placeholderTextColor="rgba(15,23,42,0.4)"
-                      />
-                    )}
-                    <View style={chipRowStyle}>
-                      <TouchableOpacity style={modeToggleButtonStyle(goalMode === 'days')} onPress={() => handleGoalChange('days')}>
-                        <Text style={modeToggleButtonTextStyle(goalMode === 'days')}>days</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={modeToggleButtonStyle(goalMode === 'hours')} onPress={() => handleGoalChange('hours')}>
-                        <Text style={modeToggleButtonTextStyle(goalMode === 'hours')}>hours</Text>
-                      </TouchableOpacity>
-                    </View>
-                </View>
-              </View>
-            ) : visibleSubjects.length === 0 ? (
-              <Text style={mutedMetaTextStyle}>
-                Add a subject first to set per-subject targets.
-              </Text>
-            ) : (
-              visibleSubjects.map((subj) => {
-                  const current = subjectTargets[subj.id] || {};
-                  const mode = current.mode === 'hours' ? 'hours' : 'days';
-                  const daysValue = mode === 'days' ? String(current.days ?? '') : '';
-                  const hoursValue = mode === 'hours' ? String(current.hours ?? '') : '';
-                  return (
-                    <View key={subj.id} style={formFieldStyle}>
-                      <Text style={formFieldLabelStyle}>{subj.name || 'Subject'}</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          {mode === 'days' ? (
-                            <TextInput
-                              value={daysValue}
-                              onChangeText={(v) =>
-                                handleSubjectTargetChange(subj.id, {
-                                  ...current,
-                                  mode: 'days',
-                                  days: v,
-                                })
-                              }
-                              keyboardType="number-pad"
-                              style={[inputStyle, { width: 72, minHeight: 40, borderRadius: 14 }]}
-                              placeholder="180"
-                              placeholderTextColor="rgba(15,23,42,0.4)"
-                            />
-                          ) : (
-                            <TextInput
-                              value={hoursValue}
-                              onChangeText={(v) =>
-                                handleSubjectTargetChange(subj.id, {
-                                  ...current,
-                                  mode: 'hours',
-                                  hours: v,
-                                })
-                              }
-                              keyboardType="number-pad"
-                              style={[inputStyle, { width: 80, minHeight: 40, borderRadius: 14 }]}
-                              placeholder="1000"
-                              placeholderTextColor="rgba(15,23,42,0.4)"
-                            />
-                          )}
-                          <View style={chipRowStyle}>
-                            <TouchableOpacity
-                              style={modeToggleButtonStyle(mode === 'days')}
-                              onPress={() =>
-                                handleSubjectTargetChange(subj.id, {
-                                  ...current,
-                                  mode: 'days',
-                                  days: String(current.days ?? targetDays ?? '0'),
-                                })
-                              }
-                            >
-                              <Text style={modeToggleButtonTextStyle(mode === 'days')}>days</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={modeToggleButtonStyle(mode === 'hours')}
-                              onPress={() =>
-                                handleSubjectTargetChange(subj.id, {
-                                  ...current,
-                                  mode: 'hours',
-                                  hours: String(current.hours ?? targetHours ?? '0'),
-                                })
-                              }
-                            >
-                              <Text style={modeToggleButtonTextStyle(mode === 'hours')}>hours</Text>
-                            </TouchableOpacity>
-                          </View>
-                      </View>
-                    </View>
-                  );
-                })
-            )}
-            </>
-            ) : null}
-          </View>
-        </View>
-
-        {/* Holidays & breaks */}
-        <View style={sectionBucketStyle}>
-          <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.daysOff}</Text>
-          <View style={formStackStyle}>
-            <View style={formFieldStyle}>
-              <View style={inlineSwitchRowStyle}>
-                <View style={{ flex: 1, paddingRight: 8 }}>
-                  <Text style={formFieldLabelStyle}>U.S. Public Holidays</Text>
-                  <Text style={mutedMetaTextStyle}>Include federal holidays</Text>
-                </View>
-                <Switch
-                  value={followGlobalHolidays}
-                  onValueChange={handleFollowChange}
-                  trackColor={{ false: BORDER, true: '#AECBFA' }}
-                  thumbColor={followGlobalHolidays ? '#45A29E' : '#f9fafb'}
-                />
-              </View>
-            </View>
-
-            <View style={formFieldStyle}>
-              <Text style={formFieldLabelStyle}>{PLANNING_PREFERENCES_UI.customDaysOffListTitle}</Text>
-              <View style={{ gap: 8 }}>
-              {visibleDaysOffEntries.length === 0 && !addingDayOff ? (
-                <Text style={mutedMetaTextStyle}>No custom days off yet</Text>
-              ) : null}
-              {visibleDaysOffEntries.map((entry) => (
-                <View key={`${entry.kind}-${entry.id || entry.index}`} style={{ marginBottom: 8 }}>
-                  {isEditingSameDayOff(editingDayOff, entry) ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <PlannerPreferenceDateField
-                        value={editingDayOffDraft.start}
-                        onChange={(v) => setEditingDayOffDraft((d) => ({ ...d, start: v }))}
-                        placeholder="Start"
-                        borderColor={BORDER}
-                        textColor={TEXT_BLACK}
-                        mutedColor="rgba(15,23,42,0.4)"
-                        style={inputStyle}
-                        width={100}
-                        minDate={yearRangeMinYmd}
-                        maxDate={yearRangeMaxYmd}
-                      />
-                      <PlannerPreferenceDateField
-                        value={editingDayOffDraft.end}
-                        onChange={(v) => setEditingDayOffDraft((d) => ({ ...d, end: v }))}
-                        placeholder="End (optional)"
-                        borderColor={BORDER}
-                        textColor={TEXT_BLACK}
-                        mutedColor="rgba(15,23,42,0.4)"
-                        style={inputStyle}
-                        width={120}
-                        minDate={yearRangeMinYmd}
-                        maxDate={yearRangeMaxYmd}
-                      />
-                      <TextInput
-                        value={editingDayOffDraft.name}
-                        onChangeText={(v) => setEditingDayOffDraft((d) => ({ ...d, name: v }))}
-                        placeholder={PLANNING_PREFERENCES_UI.dayNamePlaceholder}
-                        style={[inputStyle, { flex: 1, minWidth: 100 }]}
-                        placeholderTextColor="rgba(15,23,42,0.4)"
-                      />
-                      <TouchableOpacity
-                        onPress={() => saveEditDayOff(entry.kind, entry.index)}
-                        style={{ padding: 8 }}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Check size={18} color="#10b981" />
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={resetDayOffEdit} style={{ padding: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                        <X size={18} color={MUTED} />
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View style={settingRowStyle}>
-                      <Text style={[settingRowLabelStyle, { fontWeight: '400' }]}>
-                        {formatDaysOffEntryLabel(entry)}
-                      </Text>
-                      <View style={rowActionButtonsStyle}>
-                        <TouchableOpacity onPress={() => startEditDayOff(entry)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Pencil size={16} color="#475569" />
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => removeDayOff(entry.kind, entry.index)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Trash2 size={16} color="#B42318" />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  )}
-                </View>
-              ))}
-              {addingDayOff ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-                  <PlannerPreferenceDateField
-                    value={newDayOffStart}
-                    onChange={setNewDayOffStart}
-                    placeholder="Start"
-                    borderColor={BORDER}
-                    textColor={TEXT_BLACK}
-                    mutedColor="rgba(15,23,42,0.4)"
-                    style={inputStyle}
-                    width={100}
-                    minDate={yearRangeMinYmd}
-                    maxDate={yearRangeMaxYmd}
-                  />
-                  <PlannerPreferenceDateField
-                    value={newDayOffEnd}
-                    onChange={setNewDayOffEnd}
-                    placeholder="End (optional)"
-                    borderColor={BORDER}
-                    textColor={TEXT_BLACK}
-                    mutedColor="rgba(15,23,42,0.4)"
-                    style={inputStyle}
-                    width={120}
-                    minDate={yearRangeMinYmd}
-                    maxDate={yearRangeMaxYmd}
-                  />
-                  <TextInput
-                    value={newDayOffName}
-                    onChangeText={setNewDayOffName}
-                    placeholder={PLANNING_PREFERENCES_UI.dayNamePlaceholder}
-                    style={[inputStyle, { flex: 1, minWidth: 120 }]}
-                    placeholderTextColor="rgba(15,23,42,0.4)"
-                  />
-                  <TouchableOpacity onPress={addDayOff} style={{ paddingVertical: 8, paddingHorizontal: 14, backgroundColor: ACCENT, borderRadius: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                    <Check size={18} color="#FFFFFF" />
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={resetDayOffForm} style={{ padding: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                    <X size={18} color={MUTED} />
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  onPress={() => setAddingDayOff(true)}
-                  style={[addOutlineButtonStyle, { alignSelf: 'flex-start', marginTop: 4 }]}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={addOutlineButtonTextStyle}>+ {PLANNING_PREFERENCES_UI.addDayOff}</Text>
-                </TouchableOpacity>
-              )}
-              </View>
-            </View>
-          </View>
-        </View>
-
-        {/* U.S. public holidays picker modal */}
-        {showPublicHolidaysPicker && (
-          <Modal animationType="fade" transparent visible={showPublicHolidaysPicker} onRequestClose={() => setShowPublicHolidaysPicker(false)}>
-            <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 }} activeOpacity={1} onPress={() => setShowPublicHolidaysPicker(false)}>
-              <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, maxWidth: 420, width: '100%', maxHeight: '80%' }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                  <Text style={{ fontSize: 16, fontWeight: '700', color: TEXT_BLACK }}>U.S. PUBLIC HOLIDAYS</Text>
-                  <TouchableOpacity onPress={() => setShowPublicHolidaysPicker(false)} hitSlop={12} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                    <X size={22} color={MUTED} />
-                  </TouchableOpacity>
-                </View>
-                <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 12 }}>Uncheck any holiday you don't want to include (they will be treated as regular instructional days).</Text>
-                {publicHolidaysLoading ? (
-                  <View style={{ padding: 24, alignItems: 'center' }}>
-                    <ActivityIndicator size="small" color={ACCENT} />
-                  </View>
-                ) : (
-                  <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator>
-                    {publicHolidaysList.map((h) => {
-                      const dateStr = (h.date || '').slice(0, 10);
-                      const isIncluded = !excludedPublicHolidayDates.includes(dateStr);
-                      return (
-                        <TouchableOpacity
-                          key={`${dateStr}-${h.name}`}
-                          onPress={() => {
-                            if (isIncluded) {
-                              setExcludedPublicHolidayDates((prev) => [...prev, dateStr]);
-                            } else {
-                              setExcludedPublicHolidayDates((prev) => prev.filter((d) => d !== dateStr));
-                            }
-                          }}
-                          style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingRight: 8, borderBottomWidth: 1, borderBottomColor: BORDER }}
-                          activeOpacity={0.7}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <View style={{ width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: isIncluded ? ACCENT : BORDER, backgroundColor: isIncluded ? ACCENT : 'transparent', marginRight: 12, alignItems: 'center', justifyContent: 'center' }}>
-                            {isIncluded ? <Check size={14} color="#fff" strokeWidth={3} /> : null}
-                          </View>
-                          <Text style={{ flex: 1, fontSize: 14, color: TEXT_BLACK }}>{h.name}</Text>
-                          <Text style={{ fontSize: 13, color: TEXT_BLACK }}>{dateStr}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                    {publicHolidaysList.length === 0 && !publicHolidaysLoading && (
-                      <Text style={{ fontSize: 13, color: TEXT_BLACK, padding: 16 }}>No holidays in this date range. Extend range or add a custom day.</Text>
-                    )}
-                  </ScrollView>
-                )}
-                <TouchableOpacity
-                  onPress={async () => {
-                    const datesWithNames = excludedPublicHolidayDates.map((d) => {
-                      const h = publicHolidaysList.find((x) => (x.date || '').slice(0, 10) === d);
-                      return { date: d, name: h?.name || 'Holiday' };
-                    });
-                    const { error: saveErr } = await saveExcludedPublicHolidayDates(
-                      familyId,
-                      datesWithNames,
-                      selectedSchoolYearLabel
-                    );
-                    if (saveErr) toast?.push?.(saveErr?.message || 'Failed to save', 'error');
-                    else {
-                      if (typeof window !== 'undefined') {
-                        window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
-                        window.dispatchEvent(new CustomEvent('refreshSubjects'));
-                        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
-                      }
-                    }
-                    setShowPublicHolidaysPicker(false);
-                  }}
-                  style={{ marginTop: 16, backgroundColor: ACCENT, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 6, alignSelf: 'flex-end' }}
-                  activeOpacity={0.9}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>Done</Text>
-                </TouchableOpacity>
-              </TouchableOpacity>
-            </TouchableOpacity>
-          </Modal>
-        )}
+        {settingsSections}
 
         {showAttendanceModeDropdown && (
           <Modal
@@ -3007,7 +2721,25 @@ export default function PlannerSettingsContent({
 
         {error && <Text style={{ color: '#DC2626', fontSize: 14, marginTop: 12 }}>{error}</Text>}
       </View>
+  );
 
+  if (useTwoColumnModalLayout) {
+    return settingsInner;
+  }
+
+  return (
+    <ScrollView
+      scrollEnabled
+      style={{ flex: 1, minHeight: 0 }}
+      contentContainerStyle={{
+        paddingBottom: embeddedInModal ? 32 : 32,
+        paddingHorizontal: embeddedInModal ? 26 : 0,
+        paddingTop: embeddedInModal ? 30 : 0,
+      }}
+      showsVerticalScrollIndicator
+      keyboardShouldPersistTaps="handled"
+    >
+      {settingsInner}
     </ScrollView>
   );
 }

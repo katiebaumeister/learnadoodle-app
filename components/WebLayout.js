@@ -67,6 +67,7 @@ import SyllabusUpload from './SyllabusUpload';
 import { ToastProvider } from './Toast';
 import { supabase } from '../lib/supabase';
 import { prefetchPlanEditListForFamily } from '../lib/services/plannerPrefetch';
+import { preloadBulletinBoardForFamily } from '../lib/bulletinBoardCache';
 import { PlannerDiffProvider } from '../app/state/usePlannerDiffStore';
 import PlannerDiffModal from '../app/components/schedule/PlannerDiffModal';
 import { PlannerHealthProvider } from '../app/state/usePlannerHealthStore';
@@ -1886,6 +1887,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     };
     setPreloadedFamilyAssignments(null);
     setPreloadedAcademicYears(null);
+    preloadBulletinBoardForFamily(sessionFamilyId).catch(() => {});
     Promise.all([
       fetchFamilyMembers(),
       fetchFamilyData(),
@@ -1897,6 +1899,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       fetchFamilyAssignments().catch(() => {
         if (mounted) setPreloadedFamilyAssignments([]);
       });
+      preloadBulletinBoardForFamily(sessionFamilyId).catch(() => {});
       prefetchPlanEditListForFamily(sessionFamilyId).catch(() => {});
     };
     let idleHandle = null;
@@ -3111,11 +3114,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   );
 
   const openPlannerCreateModal = useCallback((kind) => {
-    if (kind === 'day_off') {
-      dispatchOpenSchoolYearSettingsModal();
-      setShowPlannerCreateMenu(false);
-      return;
-    }
     if (kind === 'learning_day') {
       if (sessionRestricted && !familyUserControls.allowed('subjects')) {
         Alert.alert('Not available', 'Your family admin has disabled adding or editing subjects.');

@@ -3577,11 +3577,11 @@ export default function SubjectDetailPage({
                 <TouchableOpacity
                   style={styles.headerTopActionBtn}
                   onPress={() => openSubjectSettings('details')}
-                  accessibilityLabel="Subject settings"
+                  accessibilityLabel="Edit subject"
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   <Edit2 size={18} color="#334155" strokeWidth={2.25} />
-                  <Text style={styles.headerTopActionText}>Subject settings</Text>
+                  <Text style={styles.headerTopActionText}>Edit subject</Text>
                 </TouchableOpacity>
               ) : null}
             </View>

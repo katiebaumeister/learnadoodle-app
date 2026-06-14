@@ -12,8 +12,12 @@ import { useToast } from '../Toast';
 import PlannerSettingsContent from './PlannerSettingsContent';
 import AppModalShell from '../ui/AppModalShell';
 import { ModalFooter } from '../ui/ModalFooter';
+import {
+  createModalStyles as assignmentModalStyles,
+  SCHOOL_YEAR_SETTINGS_MODAL_MAX_WIDTH,
+} from '../create/shared/createModalStyles';
 
-const MODAL_MAX_WIDTH = 740;
+const MODAL_MAX_WIDTH = SCHOOL_YEAR_SETTINGS_MODAL_MAX_WIDTH;
 
 export default function SchoolYearSettingsModal({
   visible = false,
@@ -150,9 +154,10 @@ export default function SchoolYearSettingsModal({
             title="School Year Settings"
             onClose={requestClose}
             disableShellScroll
+            maxWidth={MODAL_MAX_WIDTH}
             scrollerStyle={styles.scroller}
-            shellStyle={styles.shell}
-            bodyStyle={[styles.body, styles.scrollBody]}
+            shellStyle={[styles.shell, assignmentModalStyles.schoolYearSettingsModalShell]}
+            bodyStyle={[styles.body, styles.scrollBody, assignmentModalStyles.schoolYearSettingsModalBody]}
             contentContainerStyle={styles.bodyContent}
             footer={(
               <ModalFooter
@@ -220,36 +225,61 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   wrap: {
-    width: '100%',
+    width: 'auto',
     maxWidth: MODAL_MAX_WIDTH,
-  },
-  shell: {
-    maxWidth: MODAL_MAX_WIDTH,
-    height: Platform.OS === 'web' ? '86vh' : '86%',
-    maxHeight: Platform.OS === 'web' ? '90vh' : '86%',
-    borderRadius: 28,
+    alignSelf: 'center',
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
-      boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
+    }),
+  },
+  shell: {
+    maxWidth: MODAL_MAX_WIDTH,
+    width: 'auto',
+    alignSelf: 'stretch',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
     }),
   },
   scroller: {
-    flex: 1,
-    minHeight: 0,
+    flexGrow: 0,
+    flexShrink: 0,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      flex: 'none',
+      minHeight: 'auto',
+    }),
   },
   body: {
-    flex: 1,
-    minHeight: 0,
-    paddingHorizontal: 0,
+    flexGrow: 0,
+    flexShrink: 0,
+    width: '100%',
     paddingTop: 0,
+    ...(Platform.OS === 'web' && {
+      flex: 'none',
+      minHeight: 'auto',
+      overflow: 'visible',
+    }),
   },
   scrollBody: {
-    flex: 1,
-    minHeight: 0,
+    flexGrow: 0,
+    flexShrink: 0,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      flex: 'none',
+      overflow: 'visible',
+    }),
   },
   bodyContent: {
-    flexGrow: 1,
+    flexGrow: 0,
+    flexShrink: 0,
+    width: '100%',
     paddingBottom: 8,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      flex: 'none',
+    }),
   },
 });

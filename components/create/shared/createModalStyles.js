@@ -4,6 +4,8 @@ export const CREATE_MODAL_MAX_WIDTH = 740;
 export const CREATE_EVENT_MODAL_MAX_WIDTH = 880;
 export const CREATE_ASSIGNMENT_MODAL_MAX_WIDTH = 1320;
 export const CREATE_ASSIGNMENT_MODAL_HEIGHT = 820;
+export const SCHOOL_YEAR_SETTINGS_MODAL_MAX_WIDTH = 900;
+export const SCHOOL_YEAR_SETTINGS_MODAL_HEIGHT = 800;
 export const FG = '#111827';
 export const MUTED = '#6b7280';
 export const PLACEHOLDER = '#94A3B8';
@@ -97,10 +99,81 @@ export const createModalStyles = StyleSheet.create({
       flexDirection: 'column',
     }),
   },
+  schoolYearSettingsFormColumnMain: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    width: 528,
+    maxWidth: 528,
+    minWidth: 528,
+    minHeight: 0,
+    alignSelf: 'stretch',
+    gap: 16,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  schoolYearSettingsFormColumnSide: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 290,
+    width: 290,
+    maxWidth: '100%',
+    minHeight: 0,
+    alignSelf: 'stretch',
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  schoolYearSettingsFormRow: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    alignItems: 'stretch',
+    alignSelf: 'flex-start',
+    width: 'auto',
+    maxWidth: '100%',
+    gap: 24,
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  schoolYearSettingsContentPanel: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 16,
+    width: '100%',
+  },
+  schoolYearSettingsSidePanel: {
+    flex: 1,
+    minHeight: 0,
+    width: '100%',
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 16,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.04)',
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+      height: '100%',
+    }),
+  },
   assignmentSidePanel: {
     flex: 1,
+    minHeight: 0,
     width: '100%',
-    height: '100%',
     alignSelf: 'stretch',
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -151,7 +224,7 @@ export const createModalStyles = StyleSheet.create({
   assignmentContentPanelScrollInner: {
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 12,
+    paddingBottom: 16,
     gap: 0,
   },
   assignmentAttachPanel: {
@@ -186,11 +259,11 @@ export const createModalStyles = StyleSheet.create({
     overflow: 'hidden',
   },
   assignmentSideFields: {
-    gap: 16,
     flex: 1,
     minHeight: 0,
     ...(Platform.OS === 'web' && {
       overflowY: 'auto',
+      overflowX: 'hidden',
     }),
   },
   assignmentPanelFormGroup: {
@@ -210,6 +283,38 @@ export const createModalStyles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
+    }),
+  },
+  schoolYearSettingsModalShell: {
+    ...(Platform.OS === 'web'
+      ? {
+          width: 'auto',
+          height: 'auto',
+          minHeight: 0,
+          maxHeight: '90vh',
+          borderRadius: 28,
+          boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
+        }
+      : {
+          height: 'auto',
+          maxHeight: '88%',
+          minHeight: 0,
+        }),
+    overflow: 'hidden',
+  },
+  schoolYearSettingsModalBody: {
+    flexGrow: 0,
+    flexShrink: 0,
+    overflow: 'visible',
+    paddingHorizontal: 24,
+    paddingTop: 4,
+    paddingBottom: 8,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      flex: 'none',
+      minHeight: 'auto',
     }),
   },
   fieldLabel: {

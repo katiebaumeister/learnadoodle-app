@@ -29,6 +29,7 @@ export const PLANNER_SMART_ACTION_SECTIONS = [
 ];
 
 export const PLANNER_SMART_ACTION_TOOLS = [
+  { id: 'school-year-settings', title: 'School Year Settings' },
   { id: 'bulk-attendance', title: 'Bulk Attendance' },
   { id: 'export-attendance', title: 'Export Attendance' },
 ];

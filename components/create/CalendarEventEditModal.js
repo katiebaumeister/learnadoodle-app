@@ -12,6 +12,7 @@ import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import { createModalStyles as styles, PLACEHOLDER, CREATE_EVENT_MODAL_MAX_WIDTH } from './shared/createModalStyles';
 import { updateCalendarEvent, buildEventRecurrenceRule } from '../../lib/create/saveEventHelpers';
+import { validateOptionalEventTimes } from '../../lib/create/eventTimeUtils';
 import { hydrateCalendarEventForm } from '../../lib/create/calendarEventFormUtils';
 
 export default function CalendarEventEditModal({
@@ -100,6 +101,8 @@ export default function CalendarEventEditModal({
     if (!title.trim()) next.title = 'Title is required';
     if (!startDate) next.date = 'Date is required';
     if (assigneeIds.length === 0) next.assignee = 'Select at least one student';
+    const timeCheck = validateOptionalEventTimes({ startTime, endTime });
+    if (!timeCheck.ok) next.time = timeCheck.error;
     if (isRepeating) {
       if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
         next.recurrenceWeekdays = 'Select at least one weekday';
@@ -129,6 +132,8 @@ export default function CalendarEventEditModal({
     recurrenceEndType,
     recurrenceEndAfterText,
     recurrenceEndDate,
+    startTime,
+    endTime,
   ]);
 
   const handleSave = async () => {
@@ -163,7 +168,14 @@ export default function CalendarEventEditModal({
       onUpdated?.(updated);
       onClose?.();
     } catch (err) {
-      toast.push(err?.message || 'Failed to update event', 'error');
+      const message = err?.message || 'Failed to update event';
+      const timeCheck = validateOptionalEventTimes({ startTime, endTime });
+      if (!timeCheck.ok || /start time|end time|date or time/i.test(message)) {
+        setErrors((prev) => ({ ...prev, time: timeCheck.ok ? message : timeCheck.error }));
+        setValidationBanner('Please fix the highlighted fields before saving.');
+      } else {
+        toast.push(message, 'error');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -235,12 +247,33 @@ export default function CalendarEventEditModal({
                 onEndDateChange={setEndDate}
                 showEndDate
                 startTime={startTime}
-                onStartTimeChange={setStartTime}
+                onStartTimeChange={(value) => {
+                  setStartTime(value);
+                  if (errors.time) {
+                    setErrors((prev) => {
+                      const next = { ...prev };
+                      delete next.time;
+                      return next;
+                    });
+                    setValidationBanner('');
+                  }
+                }}
                 endTime={endTime}
-                onEndTimeChange={setEndTime}
+                onEndTimeChange={(value) => {
+                  setEndTime(value);
+                  if (errors.time) {
+                    setErrors((prev) => {
+                      const next = { ...prev };
+                      delete next.time;
+                      return next;
+                    });
+                    setValidationBanner('');
+                  }
+                }}
                 onOpenStartDatePicker={() => setDatePickerTarget('start')}
                 onOpenEndDatePicker={() => setDatePickerTarget('end')}
                 startDateError={errors.date}
+                timeError={errors.time}
               />
 
               <View style={styles.formGroup}>

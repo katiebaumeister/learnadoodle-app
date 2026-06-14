@@ -10,7 +10,10 @@ export const SCHOOL_YEAR_SETTINGS_UI = {
   openCta: 'Open School Year Settings',
   sections: {
     learningDays: 'Learning days',
-    learningHours: 'Learning hours',
+    defaultLearningDays: 'Default learning days',
+    defaultLearningHours: 'Default learning hours',
+    /** @deprecated Use defaultLearningHours */
+    learningHours: 'Default learning hours',
     attendanceTracking: 'Attendance tracking',
     holidays: 'Holidays',
     breaks: 'Breaks',

@@ -266,7 +266,7 @@ export default function OverviewTab({
             <Target size={20} color={colors.accent} />
             <View style={styles.planYearCTAContent}>
               <Text style={styles.planYearCTATitle}>School Year Settings</Text>
-              <Text style={styles.planYearCTADesc}>Set learning days, hours, holidays, and year-wide targets</Text>
+              <Text style={styles.planYearCTADesc}>Set default learning days and hours, holidays, and year-wide targets</Text>
             </View>
             <ChevronRight size={20} color={colors.muted} />
           </TouchableOpacity>
