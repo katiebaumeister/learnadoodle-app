@@ -1041,6 +1041,7 @@ export default function ManualCurriculumBuilderModal({
                                       ) : null}
                                     </View>
                                   </View>
+                                </View>
                                   {typeof renderAfterLesson === 'function'
                                     ? renderAfterLesson(unitIdx, lessonIdx, lesson)
                                     : null}
