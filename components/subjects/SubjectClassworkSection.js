@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Platform,
   Alert,
+  ScrollView,
 } from 'react-native';
 import {
   ChevronDown,
@@ -27,6 +28,10 @@ import {
 } from '../../lib/subjectLessonLinking';
 import { formatDueShort } from '../tutor/tutorHelpUtils';
 import { updateAssignmentPlacement } from '../../lib/services/assignmentPlacementClient';
+import {
+  deleteAssignmentAndEvent,
+  resolveLinkedEventIdFromAssignment,
+} from '../../lib/create/assignmentEditHelpers';
 import {
   deleteLessonFromSubjectCurriculum,
   moveLessonInSubjectCurriculum,
@@ -331,6 +336,7 @@ function LessonPeerRow({
             >
               <DropdownItem
                 label="Edit"
+                variant="context"
                 onPress={() => {
                   setMenuOpen(false);
                   onEditLesson?.({ lesson, unit });
@@ -338,6 +344,7 @@ function LessonPeerRow({
               />
               <DropdownItem
                 label="Delete"
+                variant="context"
                 danger
                 onPress={() => {
                   setMenuOpen(false);
@@ -357,8 +364,10 @@ function AssignmentPeerRow({
   attachedLessonTitle,
   learningDay = null,
   isParentViewer,
-  onPress,
-  onEdit,
+  onOpen,
+  onMoveToUnit,
+  onDeleteAssignment,
+  unitOptions = [],
   highlighted = false,
   rowRef,
   isFirst = true,
@@ -367,24 +376,38 @@ function AssignmentPeerRow({
   dragging = false,
   onDragStartAssignment,
 }) {
+  const menuBtnRef = useRef(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const dueLine = formatDueShort(assignment.due_date);
   const scheduleLine = dueLine
     || (learningDay?.dateLabel ? `Scheduled ${learningDay.dateLabel}` : null);
   const subtitleLine = scheduleLine
     || (isParentViewer ? 'Set due date in edit' : 'No date');
   const canDrag = isParentViewer && Platform.OS === 'web';
+  const showAssignmentMenu = isParentViewer && assignment?.id;
+
+  const moveTargets = useMemo(() => {
+    const targets = [];
+    if (fromUnitId != null && String(fromUnitId).trim()) {
+      targets.push({ id: null, title: 'No unit' });
+    }
+    (unitOptions || []).forEach((unit) => {
+      if (String(unit.id) !== String(fromUnitId || '')) {
+        targets.push(unit);
+      }
+    });
+    return targets;
+  }, [fromUnitId, unitOptions]);
 
   return (
-    <TouchableOpacity
+    <View
       ref={rowRef}
       style={[
         styles.lessonRow,
         !isFirst && styles.lessonRowBorder,
         highlighted && styles.lessonRowHighlight,
+        menuOpen && Platform.OS === 'web' && styles.lessonRowMenuOpen,
       ]}
-      onPress={() => onPress?.(assignment)}
-      activeOpacity={0.75}
-      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
     >
       <View style={[styles.lessonRowInner, dragging && styles.lessonRowDragging]}>
         {canDrag ? (
@@ -423,79 +446,154 @@ function AssignmentPeerRow({
             </Text>
           ) : null}
         </View>
-        {isParentViewer ? (
-          <TouchableOpacity
-            onPress={(e) => {
-              if (Platform.OS === 'web' && e?.stopPropagation) e.stopPropagation();
-              onEdit?.(assignment);
-            }}
-            hitSlop={8}
-            style={styles.iconBtn}
-            accessibilityLabel="Edit assignment"
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <MoreVertical size={16} color={CLASSWORK_MUTED} />
-          </TouchableOpacity>
-        ) : null}
+        <View style={styles.assignmentRowActions}>
+          {isParentViewer ? (
+            <TouchableOpacity
+              onPress={() => onOpen?.(assignment)}
+              hitSlop={6}
+              accessibilityRole="link"
+              accessibilityLabel={`Open assignment ${assignment.title || ''}`}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.peerAction}>Open assignment</Text>
+            </TouchableOpacity>
+          ) : null}
+          {showAssignmentMenu ? (
+            <View style={styles.menuAnchor}>
+              <TouchableOpacity
+                ref={menuBtnRef}
+                onPress={() => setMenuOpen((open) => !open)}
+                style={styles.iconBtn}
+                accessibilityLabel="Assignment actions"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <MoreVertical size={16} color={CLASSWORK_MUTED} />
+              </TouchableOpacity>
+              <Dropdown
+                visible={menuOpen}
+                triggerRef={menuBtnRef}
+                onClose={() => setMenuOpen(false)}
+                placement="bottom-end"
+                width={240}
+                offset={6}
+                variant="context"
+              >
+                {moveTargets.map((unit) => (
+                  <DropdownItem
+                    key={unit.id != null ? String(unit.id) : 'no-unit'}
+                    label={unit.id != null ? `Move to ${unit.title}` : 'Move to no unit'}
+                    variant="context"
+                    onPress={() => {
+                      setMenuOpen(false);
+                      onMoveToUnit?.({
+                        assignment,
+                        unitId: unit.id,
+                        unitTitle: unit.title,
+                      });
+                    }}
+                  />
+                ))}
+                <DropdownItem
+                  label="Delete assignment"
+                  variant="context"
+                  danger
+                  onPress={() => {
+                    setMenuOpen(false);
+                    onDeleteAssignment?.(assignment);
+                  }}
+                />
+              </Dropdown>
+            </View>
+          ) : null}
+        </View>
       </View>
-    </TouchableOpacity>
+    </View>
   );
 }
 
 function ScheduledClassDaysBucket({ days = [], onOpenDay }) {
+  const [expanded, setExpanded] = useState(false);
   if (!days.length) return null;
+
+  const sessionLabel = `${days.length} ${days.length === 1 ? 'session' : 'sessions'}`;
+
   return (
-    <View style={styles.scheduledDaysSection}>
-      <Text style={styles.scheduledDaysHeading}>Scheduled class days</Text>
-      <Text style={styles.scheduledDaysHint}>
-        Class sessions from your subject schedule without a lesson planned yet.
-      </Text>
-      <View style={styles.scheduledDaysList}>
-        {days.map((row, index) => (
+    <View style={styles.sectionBlock}>
+      <View style={styles.unitCard}>
+        <View style={styles.unitHeaderRow}>
           <TouchableOpacity
-            key={String(row.eventId || index)}
-            style={[styles.scheduledDayRow, index > 0 && styles.scheduledDayRowBorder]}
-            onPress={() => onOpenDay?.(row.event)}
-            accessibilityLabel={`Open learning day ${row.dateLabel || ''}`}
+            onPress={() => setExpanded((value) => !value)}
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            style={styles.chevronBtn}
+            accessibilityRole="button"
+            accessibilityState={{ expanded }}
+            accessibilityLabel={`Scheduled class days, ${sessionLabel}`}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.scheduledDayTitle}>{row.dateLabel || 'Upcoming session'}</Text>
-              <Text style={styles.scheduledDaySubtext}>No lesson planned</Text>
-            </View>
+            {expanded ? (
+              <ChevronUp size={18} color={CLASSWORK_MUTED} />
+            ) : (
+              <ChevronDown size={18} color={CLASSWORK_MUTED} />
+            )}
           </TouchableOpacity>
-        ))}
+          <View style={styles.unitHeaderBody}>
+            <Text style={styles.unitTitleText} numberOfLines={2}>
+              Scheduled class days
+            </Text>
+            <Text style={styles.unitSubtitle}>{sessionLabel}</Text>
+          </View>
+        </View>
+        {expanded ? (
+          <View style={styles.unitLessonsWrap}>
+            <View style={styles.timelineList}>
+              {days.map((row, index) => (
+                <TouchableOpacity
+                  key={String(row.eventId || index)}
+                  style={[styles.lessonRow, index > 0 && styles.lessonRowBorder]}
+                  onPress={() => onOpenDay?.(row.event)}
+                  accessibilityLabel={`Open learning day ${row.dateLabel || ''}`}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <View style={styles.lessonRowInner}>
+                    <Text style={styles.lessonBullet}>•</Text>
+                    <View style={styles.lessonTitleField}>
+                      <Text style={styles.lessonTitleText} numberOfLines={2}>
+                        {row.dateLabel || 'Upcoming session'}
+                      </Text>
+                      <Text style={styles.lessonMetaMuted} numberOfLines={1}>
+                        No lesson planned
+                      </Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        ) : null}
       </View>
     </View>
   );
 }
 
-function ClassworkActionSet({
-  onManageUnits,
-  unitsActionLabel = 'Add unit',
+function ClassworkPanelHeader({
+  actionLabel,
+  onAction,
+  showAction = false,
 }) {
-  if (!onManageUnits) return null;
-
   return (
-    <View style={styles.actionSet}>
-      <TouchableOpacity
-        style={styles.actionPillBtn}
-        onPress={onManageUnits}
-        accessibilityLabel={unitsActionLabel}
-        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-      >
-        <Plus size={18} color="#334155" strokeWidth={2.25} />
-        <Text style={styles.actionPillBtnText}>{unitsActionLabel}</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-function ClassworkToolbar({ children }) {
-  return (
-    <View style={styles.toolbar}>
-      <View style={styles.toolbarSpacer} />
-      {children}
+    <View style={styles.panelToolbar}>
+      <Text style={styles.panelTitle}>Learning Schedule</Text>
+      {showAction ? (
+        <TouchableOpacity
+          style={styles.panelActionBtn}
+          onPress={onAction}
+          accessibilityLabel={actionLabel}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Plus size={18} color="#334155" strokeWidth={2.25} />
+          <Text style={styles.panelActionBtnText}>{actionLabel}</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -845,6 +943,59 @@ export default function SubjectClassworkSection({
     );
   }, [familyId, subjectId, subjectName, units, toast, onPlacementChanged]);
 
+  const unitMoveOptions = useMemo(
+    () => (units || [])
+      .map((unit) => ({
+        id: unit?.unitId || unit?.id || null,
+        title: unit?.title || unit?.unitTitle || 'Unit',
+      }))
+      .filter((unit) => unit.id),
+    [units],
+  );
+
+  const handleMoveAssignmentToUnit = useCallback(({ assignment, unitId, unitTitle }) => {
+    if (!assignment?.id) return;
+    moveAssignmentPlacement({
+      assignmentId: assignment.id,
+      unitId,
+      unitTitle,
+      lessonId: null,
+      lessonTitle: null,
+    });
+  }, [moveAssignmentPlacement]);
+
+  const handleDeleteAssignment = useCallback((assignment) => {
+    if (!assignment?.id || !familyId) return;
+    const eventId = resolveLinkedEventIdFromAssignment(assignment);
+    if (!eventId) {
+      toast.push('Could not delete assignment', 'error');
+      return;
+    }
+    const assignmentTitle = assignment.title || 'this assignment';
+    const runDelete = async () => {
+      try {
+        await deleteAssignmentAndEvent({ eventId, familyId, subjectId });
+        toast.push('Assignment deleted', 'success');
+        onPlacementChanged?.();
+      } catch (err) {
+        toast.push(err?.message || 'Could not delete assignment', 'error');
+      }
+    };
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const confirmed = window.confirm(`Delete "${assignmentTitle}"? This cannot be undone.`);
+      if (confirmed) runDelete();
+      return;
+    }
+    Alert.alert(
+      'Delete assignment',
+      `Delete "${assignmentTitle}"? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: runDelete },
+      ],
+    );
+  }, [familyId, subjectId, toast, onPlacementChanged]);
+
   const findAssignmentById = useCallback((assignmentId) => {
     return (assignments || []).find((a) => String(a?.id) === String(assignmentId)) || null;
   }, [assignments]);
@@ -1067,8 +1218,10 @@ export default function SubjectClassworkSection({
             attachedLessonTitle={item.attachedLessonTitle}
             learningDay={item.learningDay}
             isParentViewer={isParentViewer}
-            onPress={onOpenAssignment}
-            onEdit={onOpenAssignment}
+            onOpen={onOpenAssignment}
+            onMoveToUnit={handleMoveAssignmentToUnit}
+            onDeleteAssignment={handleDeleteAssignment}
+            unitOptions={unitMoveOptions}
             highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
             isFirst={index === 0}
             fromUnitId={unit.unitId}
@@ -1089,6 +1242,9 @@ export default function SubjectClassworkSection({
     model.eventById,
     isParentViewer,
     onOpenAssignment,
+    handleMoveAssignmentToUnit,
+    handleDeleteAssignment,
+    unitMoveOptions,
     highlightAssignmentId,
     draggingAssignmentId,
     handleAssignmentDragStart,
@@ -1103,28 +1259,30 @@ export default function SubjectClassworkSection({
 
   if (!hasVisibleContent) {
     return (
-      <View style={styles.root}>
-        {isParentViewer ? (
-          <ClassworkToolbar>
-            <ClassworkActionSet
-              onManageUnits={onManageUnits}
-              unitsActionLabel={unitsActionLabel}
-            />
-          </ClassworkToolbar>
-        ) : null}
-        {hasScheduledEmptyDays ? (
-          <View style={styles.wrap}>
+      <View style={[styles.root, styles.rootExpanded]}>
+        <ClassworkPanelHeader
+          showAction={isParentViewer && !!onManageUnits}
+          actionLabel={unitsActionLabel}
+          onAction={onManageUnits}
+        />
+        <ScrollView
+          style={styles.panelScroll}
+          contentContainerStyle={styles.wrap}
+          showsVerticalScrollIndicator
+          keyboardShouldPersistTaps="handled"
+        >
+          {hasScheduledEmptyDays ? (
             <ScheduledClassDaysBucket
               days={model.unlinkedLearningDays}
               onOpenDay={handleOpenLearningDay}
             />
-          </View>
-        ) : null}
-        {isParentViewer ? (
-          <EmptyUnitsState onAddUnit={startInlineUnitsEditing} />
-        ) : (
-          <EmptyClassworkState isParentViewer={isParentViewer} />
-        )}
+          ) : null}
+          {isParentViewer ? (
+            <EmptyUnitsState onAddUnit={startInlineUnitsEditing} />
+          ) : (
+            <EmptyClassworkState isParentViewer={isParentViewer} />
+          )}
+        </ScrollView>
         <ClassworkPlanningModal
           visible={scheduleModal.visible}
           title={scheduleModal.title}
@@ -1157,16 +1315,18 @@ export default function SubjectClassworkSection({
   }
 
   return (
-    <View style={styles.root}>
-      {isParentViewer ? (
-        <ClassworkToolbar>
-          <ClassworkActionSet
-            onManageUnits={onManageUnits}
-            unitsActionLabel={unitsActionLabel}
-          />
-        </ClassworkToolbar>
-      ) : null}
-      <View style={styles.wrap}>
+    <View style={[styles.root, styles.rootExpanded]}>
+      <ClassworkPanelHeader
+        showAction={isParentViewer && !!onManageUnits}
+        actionLabel={unitsActionLabel}
+        onAction={onManageUnits}
+      />
+      <ScrollView
+        style={styles.panelScroll}
+        contentContainerStyle={styles.wrap}
+        showsVerticalScrollIndicator
+        keyboardShouldPersistTaps="handled"
+      >
       {model.unlinkedLearningDays?.length > 0 ? (
         <ScheduledClassDaysBucket
           days={model.unlinkedLearningDays}
@@ -1201,8 +1361,10 @@ export default function SubjectClassworkSection({
                 attachedLessonTitle={null}
                 learningDay={item.learningDay}
                 isParentViewer={isParentViewer}
-                onPress={onOpenAssignment}
-                onEdit={onOpenAssignment}
+                onOpen={onOpenAssignment}
+                onMoveToUnit={handleMoveAssignmentToUnit}
+                onDeleteAssignment={handleDeleteAssignment}
+                unitOptions={unitMoveOptions}
                 highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
                 isFirst={index === 0}
                 fromUnitId={null}
@@ -1313,8 +1475,10 @@ export default function SubjectClassworkSection({
                     attachedLessonTitle={item.attachedLessonTitle}
                     learningDay={item.learningDay}
                     isParentViewer={isParentViewer}
-                    onPress={onOpenAssignment}
-                    onEdit={onOpenAssignment}
+                    onOpen={onOpenAssignment}
+                    onMoveToUnit={handleMoveAssignmentToUnit}
+                    onDeleteAssignment={handleDeleteAssignment}
+                    unitOptions={unitMoveOptions}
                     highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
                     isFirst={isFirst}
                     fromUnitId={unit.unitId}
@@ -1353,7 +1517,7 @@ export default function SubjectClassworkSection({
         );
       })}
 
-      </View>
+      </ScrollView>
 
       <ClassworkPlanningModal
         visible={scheduleModal.visible}
@@ -1390,28 +1554,41 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
-  toolbar: {
+  rootExpanded: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      overflow: 'hidden',
+      maxHeight: '100%',
+    }),
+  },
+  panelToolbar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     paddingHorizontal: 14,
     paddingTop: 10,
-    paddingBottom: 20,
+    paddingBottom: 4,
     flexShrink: 0,
     gap: 12,
   },
-  toolbarSpacer: {
+  panelTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1e293b',
+    letterSpacing: -0.2,
     flex: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
-  actionSet: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 10,
-    flexShrink: 0,
-  },
-  actionPillBtn: {
+  panelActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -1426,8 +1603,21 @@ const styles = StyleSheet.create({
       cursor: 'pointer',
     }),
   },
-  actionPillBtnDisabled: {
-    opacity: 0.6,
+  panelActionBtnText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: 'rgba(15,23,42,0.85)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  panelScroll: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      overflowY: 'auto',
+      WebkitOverflowScrolling: 'touch',
+    }),
   },
   actionPillBtnText: {
     fontSize: 15,
@@ -1439,56 +1629,9 @@ const styles = StyleSheet.create({
   },
   wrap: {
     paddingHorizontal: 14,
-    paddingTop: 4,
+    paddingTop: 8,
     paddingBottom: 28,
     gap: 20,
-  },
-  scheduledDaysSection: {
-    borderWidth: 1,
-    borderColor: CLASSWORK_BORDER,
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    padding: 14,
-    gap: 8,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
-    }),
-  },
-  scheduledDaysHeading: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: CLASSWORK_FG,
-  },
-  scheduledDaysHint: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: CLASSWORK_MUTED,
-  },
-  scheduledDaysList: {
-    marginTop: 4,
-    borderWidth: 1,
-    borderColor: CLASSWORK_BORDER,
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
-  scheduledDayRow: {
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    backgroundColor: '#FAFBFC',
-  },
-  scheduledDayRowBorder: {
-    borderTopWidth: 1,
-    borderTopColor: CLASSWORK_BORDER,
-  },
-  scheduledDayTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: CLASSWORK_FG,
-  },
-  scheduledDaySubtext: {
-    marginTop: 2,
-    fontSize: 13,
-    color: CLASSWORK_MUTED,
   },
   sectionBlock: {
     gap: 8,
@@ -1662,10 +1805,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
   },
+  assignmentRowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0,
+  },
   peerAction: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#2563EB',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   iconBtn: {
     padding: 4,

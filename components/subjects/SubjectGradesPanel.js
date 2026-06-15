@@ -6,9 +6,11 @@ import {
   StyleSheet,
   Platform,
   Image,
+  ScrollView,
 } from 'react-native';
 import { ChevronRight } from 'lucide-react';
-import { getWorkStatusLabel } from '../../lib/workEventHelpers';
+import { getWorkStatusLabel, parseWorkSpec } from '../../lib/workEventHelpers';
+import { isPlannerLearningDayEvent } from '../../lib/planner/plannerLearningDayChip';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import {
@@ -23,24 +25,107 @@ const COOPER_FONT = Platform.OS === 'web'
   ? { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
   : {};
 
-function isMissingWork(assignment) {
+function parseLinkedEventIds(raw) {
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  return [];
+}
+
+function buildEventById(events = []) {
+  const map = new Map();
+  (events || []).forEach((event) => {
+    if (event?.id != null) map.set(String(event.id), event);
+  });
+  return map;
+}
+
+function resolvePrimaryAssignmentEvent(assignment, eventById) {
+  for (const eventId of parseLinkedEventIds(assignment?.linked_event_ids)) {
+    const event = eventById.get(String(eventId));
+    if (!event || isPlannerLearningDayEvent(event)) continue;
+    return event;
+  }
+  return null;
+}
+
+function resolveAssignmentMaxPoints(assignment, eventById) {
+  const event = resolvePrimaryAssignmentEvent(assignment, eventById);
+  if (!event) return 100;
+  const spec = parseWorkSpec(event.work_spec, event.event_type);
+  if (spec?.points_possible != null && Number.isFinite(Number(spec.points_possible))) {
+    return Math.max(1, Math.round(Number(spec.points_possible)));
+  }
+  if (event.percent_of_total_grade != null && Number.isFinite(Number(event.percent_of_total_grade))) {
+    return Math.max(1, Math.round(Number(event.percent_of_total_grade)));
+  }
+  const configuredGrade = String(event.grade || '').trim();
+  if (/^\d+$/.test(configuredGrade)) {
+    return Math.max(1, Number(configuredGrade));
+  }
+  return 100;
+}
+
+function assignmentHasReviewGrade(assignment) {
+  if (!assignment?.reviewed_at) return false;
+  if (assignment?.grade_display) return true;
+  return assignment?.grade_value != null && Number.isFinite(Number(assignment.grade_value));
+}
+
+function assignmentIsGradable(assignment, eventById) {
+  const event = resolvePrimaryAssignmentEvent(assignment, eventById);
+  if (!event) return true;
+  const spec = parseWorkSpec(event.work_spec, event.event_type);
+  return spec?.graded !== false;
+}
+
+function resolveAssignmentGradeRow(assignment, eventById) {
+  const maxPoints = resolveAssignmentMaxPoints(assignment, eventById);
+  if (assignmentHasReviewGrade(assignment)) {
+    if (assignment.grade_display) {
+      return {
+        grade: String(assignment.grade_display).trim(),
+        isGraded: true,
+      };
+    }
+    const score = Math.round(Number(assignment.grade_value));
+    return {
+      grade: `${score}/${maxPoints}`,
+      isGraded: true,
+    };
+  }
+  if (!assignmentIsGradable(assignment, eventById)) return null;
+  return {
+    grade: `__/${maxPoints}`,
+    isGraded: false,
+    pendingLabel: 'Not graded',
+  };
+}
+
+function isMissingWork(assignment, eventById) {
   const label = String(getWorkStatusLabel(assignment) || '').toLowerCase();
   if (label.includes('missing') || label.includes('overdue') || label.includes('past due')) {
     return true;
   }
-  if (assignment?.submitted_at || assignment?.grade_value != null) return false;
+  if (assignment?.submitted_at || assignmentHasReviewGrade(assignment)) return false;
   if (!assignment?.due_date) return false;
   const due = new Date(assignment.due_date);
   if (Number.isNaN(due.getTime())) return false;
   return due.getTime() < Date.now();
 }
 
-function gradeDisplayForAssignment(assignment) {
-  if (assignment?.grade_display) return assignment.grade_display;
-  if (assignment?.grade_value != null && Number.isFinite(Number(assignment.grade_value))) {
-    return `${Math.round(Number(assignment.grade_value))}%`;
-  }
-  return null;
+function GradesPanelHeader() {
+  return (
+    <View style={styles.panelToolbar}>
+      <Text style={styles.panelTitle}>Grades</Text>
+    </View>
+  );
 }
 
 function SectionHeader({ title }) {
@@ -64,11 +149,14 @@ function StudentAvatar({ child }) {
 
 export default function SubjectGradesPanel({
   assignments = [],
+  events = [],
   gradedItems = [],
   children = [],
   onOpenAssignment,
   onOpenGradedItem,
 }) {
+  const eventById = useMemo(() => buildEventById(events), [events]);
+
   const childById = useMemo(() => {
     const map = new Map();
     (children || []).forEach((child) => {
@@ -104,8 +192,7 @@ export default function SubjectGradesPanel({
     (assignments || []).forEach((a) => {
       const row = ensureChild(a.child_id ? String(a.child_id) : 'unknown');
       row.assignments.push(a);
-      const grade = gradeDisplayForAssignment(a);
-      if (grade) {
+      if (assignmentHasReviewGrade(a)) {
         row.sum += Number(a.grade_value);
         row.count += 1;
       }
@@ -121,28 +208,47 @@ export default function SubjectGradesPanel({
     return [...byChild.values()]
       .map((row) => {
         const missingWork = row.assignments
-          .filter((a) => isMissingWork(a))
+          .filter((a) => isMissingWork(a, eventById))
           .map((a) => ({
             id: a.id,
             title: a.title || 'Assignment',
             onPress: () => onOpenAssignment?.(a),
           }));
 
+        const assignmentEventIds = new Set();
+        row.assignments.forEach((assignment) => {
+          parseLinkedEventIds(assignment.linked_event_ids).forEach((eventId) => {
+            assignmentEventIds.add(String(eventId));
+          });
+        });
+
         const recentGrades = [
           ...row.assignments
-            .filter((a) => gradeDisplayForAssignment(a))
-            .map((a) => ({
-              id: a.id,
-              title: a.title || 'Assignment',
-              grade: gradeDisplayForAssignment(a),
-              onPress: () => onOpenAssignment?.(a),
-            })),
+            .map((a) => {
+              const gradeRow = resolveAssignmentGradeRow(a, eventById);
+              if (!gradeRow) return null;
+              return {
+                id: a.id,
+                title: a.title || 'Assignment',
+                grade: gradeRow.grade,
+                isGraded: gradeRow.isGraded,
+                pendingLabel: gradeRow.pendingLabel || null,
+                onPress: () => onOpenAssignment?.(a),
+              };
+            })
+            .filter(Boolean),
           ...row.assessments
-            .filter((item) => item.grade || item.percent != null)
+            .filter((item) => {
+              if (!item.grade && item.percent == null) return false;
+              if (item.eventId && assignmentEventIds.has(String(item.eventId))) return false;
+              return true;
+            })
             .map((item) => ({
               id: item.id,
               title: item.name || 'Assessment',
               grade: item.grade || `${item.percent}%`,
+              isGraded: true,
+              pendingLabel: null,
               onPress: () => onOpenGradedItem?.(item),
               disabled: !item.eventId,
             })),
@@ -156,20 +262,16 @@ export default function SubjectGradesPanel({
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [assignments, gradedItems, children, childById, onOpenAssignment, onOpenGradedItem]);
+  }, [assignments, gradedItems, children, childById, eventById, onOpenAssignment, onOpenGradedItem]);
 
-  if (studentSections.length === 0) {
-    return (
-      <View style={styles.emptyWrap}>
-        <Text style={styles.emptyHeading}>No grades yet</Text>
-        <Text style={styles.emptySubtext}>
-          Grades appear here when you score submitted work.
-        </Text>
-      </View>
-    );
-  }
-
-  return (
+  const panelBody = studentSections.length === 0 ? (
+    <View style={styles.emptyWrap}>
+      <Text style={styles.emptyHeading}>No grades yet</Text>
+      <Text style={styles.emptySubtext}>
+        Grades appear here when you score submitted work.
+      </Text>
+    </View>
+  ) : (
     <View style={styles.wrap}>
       {studentSections.map((section) => (
         <View key={section.childId} style={styles.studentCard}>
@@ -232,7 +334,17 @@ export default function SubjectGradesPanel({
                         </Text>
                       </View>
                       <View style={styles.gradeRowTrailing}>
-                        <Text style={styles.gradeRowValue}>{item.grade}</Text>
+                        {!item.isGraded && item.pendingLabel ? (
+                          <Text style={styles.pendingGradeLabel}>{item.pendingLabel}</Text>
+                        ) : null}
+                        <Text
+                          style={[
+                            styles.gradeRowValue,
+                            !item.isGraded && styles.gradeRowValuePending,
+                          ]}
+                        >
+                          {item.grade}
+                        </Text>
                         {!item.disabled ? (
                           <ChevronRight size={18} color="#94A3B8" strokeWidth={2.25} />
                         ) : null}
@@ -247,12 +359,73 @@ export default function SubjectGradesPanel({
       ))}
     </View>
   );
+
+  return (
+    <View style={[styles.root, styles.rootExpanded]}>
+      <GradesPanelHeader />
+      <ScrollView
+        style={styles.panelScroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator
+        keyboardShouldPersistTaps="handled"
+      >
+        {panelBody}
+      </ScrollView>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  rootExpanded: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      overflow: 'hidden',
+      maxHeight: '100%',
+    }),
+  },
+  panelToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 4,
+    flexShrink: 0,
+    gap: 12,
+  },
+  panelTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1e293b',
+    letterSpacing: -0.2,
+    flex: 1,
+    minWidth: 0,
+    ...LEAGUE_FONT,
+  },
+  panelScroll: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      overflowY: 'auto',
+      WebkitOverflowScrolling: 'touch',
+    }),
+  },
+  scrollContent: {
+    flexGrow: 1,
+  },
   wrap: {
     width: '100%',
-    paddingHorizontal: 0,
+    paddingHorizontal: 14,
+    paddingTop: 8,
     paddingBottom: 28,
     gap: 16,
   },
@@ -391,6 +564,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: CLASSWORK_FG,
     ...LEAGUE_FONT,
+  },
+  gradeRowValuePending: {
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  pendingGradeLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    letterSpacing: 0.2,
+    ...COOPER_FONT,
   },
   missingRow: {
     backgroundColor: '#FFFBEB',

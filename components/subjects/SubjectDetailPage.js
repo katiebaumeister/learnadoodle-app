@@ -62,7 +62,12 @@ import {
 } from './SubjectSectionDrilldownPanels';
 import { supabase } from '../../lib/supabase';
 import BulletinBoardSection from '../bulletin/BulletinBoardSection';
-import { getStudentSubmissionStatusLabel, getWorkStatusLabel } from '../../lib/workEventHelpers';
+import {
+  getStudentSubmissionStatusLabel,
+  getWorkStatusLabel,
+  isWorkProducingEventType,
+  normalizeWorkEventType,
+} from '../../lib/workEventHelpers';
 import { openAssignmentForParent } from '../../lib/openAssignmentWorkflow';
 import AssignmentMessageModal from './AssignmentMessageModal';
 import AssignmentSubmittalRequestModal from './AssignmentSubmittalRequestModal';
@@ -1760,7 +1765,12 @@ export default function SubjectDetailPage({
         };
       }),
       ...(subjectData?.events || [])
-        .filter((e) => e.grade && !outcomeEventIds.has(String(e.id)))
+        .filter((e) => {
+          if (!e.grade || outcomeEventIds.has(String(e.id))) return false;
+          const eventType = normalizeWorkEventType(e.event_type);
+          if (isWorkProducingEventType(eventType)) return false;
+          return true;
+        })
         .map(e => {
         const gradeMap = {
           'A+': 98, 'A': 95, 'A-': 92,
@@ -1816,8 +1826,8 @@ export default function SubjectDetailPage({
 
   const avgGradePercent = useMemo(() => {
     const vals = (subjectAssignments || [])
-      .map((a) => (a.grade_value != null ? Number(a.grade_value) : null))
-      .filter((v) => v != null && Number.isFinite(v));
+      .filter((a) => a?.reviewed_at && a?.grade_value != null && Number.isFinite(Number(a.grade_value)))
+      .map((a) => Number(a.grade_value));
     if (!vals.length) return null;
     return vals.reduce((sum, v) => sum + v, 0) / vals.length;
   }, [subjectAssignments]);
@@ -3531,8 +3541,10 @@ export default function SubjectDetailPage({
     );
   }
 
-  const isBulletinLayout = classroomTab === 'bulletin';
-  const PageScroll = isBulletinLayout ? View : ScrollView;
+  const isFixedTabLayout = classroomTab === 'bulletin'
+    || classroomTab === 'classwork'
+    || classroomTab === 'grades';
+  const PageScroll = isFixedTabLayout ? View : ScrollView;
 
   return (
     <View style={styles.container}>
@@ -3592,11 +3604,11 @@ export default function SubjectDetailPage({
       <PageScroll
         style={[
           styles.scrollView,
-          isBulletinLayout && styles.scrollViewBulletinFill,
-          isBulletinLayout && styles.scrollContent,
-          isBulletinLayout && styles.scrollContentBulletinFill,
+          isFixedTabLayout && styles.scrollViewBulletinFill,
+          isFixedTabLayout && styles.scrollContent,
+          isFixedTabLayout && styles.scrollContentBulletinFill,
         ]}
-        {...(!isBulletinLayout ? {
+        {...(!isFixedTabLayout ? {
           contentContainerStyle: styles.scrollContent,
           showsVerticalScrollIndicator: true,
         } : {})}
@@ -3672,35 +3684,40 @@ export default function SubjectDetailPage({
         ) : null}
 
         {classroomTab === 'classwork' ? (
-          <SubjectClassworkSection
-            units={effectiveLearningGoalsUnits}
-            assignments={subjectAssignments}
-            events={subjectEvents}
-            familyId={familyId}
-            subjectId={subject?.id}
-            subjectName={subject?.name}
-            isParentViewer={isParentViewer}
-            onOpenAssignment={openAssignedWorkItem}
-            onManageUnits={openUnitsEditor}
-            unitsActionLabel={unitsEditorLabel}
-            onPlacementChanged={handleClassworkPlacementChanged}
-            inlineUnitsEditing={isParentViewer}
-            highlightLessonId={highlightLessonId}
-            highlightAssignmentId={highlightAssignmentId}
-            onSchedulingAllChange={setClassworkSchedulingAll}
-          />
+          <View style={styles.bulletinBoardSection}>
+            <SubjectClassworkSection
+              units={effectiveLearningGoalsUnits}
+              assignments={subjectAssignments}
+              events={subjectEvents}
+              familyId={familyId}
+              subjectId={subject?.id}
+              subjectName={subject?.name}
+              isParentViewer={isParentViewer}
+              onOpenAssignment={openAssignedWorkItem}
+              onManageUnits={openUnitsEditor}
+              unitsActionLabel={unitsEditorLabel}
+              onPlacementChanged={handleClassworkPlacementChanged}
+              inlineUnitsEditing={isParentViewer}
+              highlightLessonId={highlightLessonId}
+              highlightAssignmentId={highlightAssignmentId}
+              onSchedulingAllChange={setClassworkSchedulingAll}
+            />
+          </View>
         ) : null}
 
         {classroomTab === 'grades' ? (
-          <SubjectGradesPanel
-            assignments={subjectAssignments}
-            gradedItems={gradedItems}
-            children={gradesPanelChildren}
-            onOpenAssignment={openAssignmentInClasswork}
-            onOpenGradedItem={(item) => {
-              if (item?.eventId) handleOpenEventDetails(item.eventId, item.event);
-            }}
-          />
+          <View style={styles.bulletinBoardSection}>
+            <SubjectGradesPanel
+              assignments={subjectAssignments}
+              events={subjectEvents}
+              gradedItems={gradedItems}
+              children={gradesPanelChildren}
+              onOpenAssignment={openAssignmentInClasswork}
+              onOpenGradedItem={(item) => {
+                if (item?.eventId) handleOpenEventDetails(item.eventId, item.event);
+              }}
+            />
+          </View>
         ) : null}
 
         {SHOW_SUBJECT_ASSIGNMENTS_SECTION ? (

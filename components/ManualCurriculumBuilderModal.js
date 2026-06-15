@@ -1409,12 +1409,19 @@ const styles = StyleSheet.create({
   },
   menuItemText: {
     fontSize: 14,
+    fontWeight: '500',
     color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   menuItemBackText: {
     fontSize: 13,
     fontWeight: '600',
     color: ACCENT,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   footer: {
     flexDirection: 'row',
