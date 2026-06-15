@@ -177,6 +177,7 @@ export default function ManualCurriculumBuilderModal({
   embedded = false,
   autoSave = false,
   renderAfterUnitLessons = null,
+  renderAfterLesson = null,
   getLessonScheduleLabel = null,
   getUnitDropWebProps = null,
 }) {
@@ -834,13 +835,17 @@ export default function ManualCurriculumBuilderModal({
             const isExpanded = expandedUnits.has(unitIdx);
             const lessons = unit.lessons || [];
             const lessonCount = lessons.length;
+            const unitDropProps = typeof getUnitDropWebProps === 'function'
+              ? getUnitDropWebProps(unitIdx)
+              : {};
+            const { style: unitDropStyle, ...restUnitDropProps } = unitDropProps;
 
             return (
-              <View
-                key={unit.temp_id || unitIdx}
-                style={styles.unitCard}
-                {...(typeof getUnitDropWebProps === 'function' ? getUnitDropWebProps(unitIdx) : {})}
-              >
+              <View key={unit.temp_id || unitIdx} style={styles.sectionBlock}>
+                <View
+                  style={[styles.unitCard, unitDropStyle]}
+                  {...restUnitDropProps}
+                >
                       <View style={styles.unitHeaderRow}>
                         <TouchableOpacity
                           onPress={() => {
@@ -920,8 +925,8 @@ export default function ManualCurriculumBuilderModal({
                               const lessonMenuOpen = draftBuilderLessonMenuKey === lessonMenuKey;
 
                               return (
+                                <View key={lesson.temp_id || lessonIdx} style={styles.lessonBlock}>
                                 <View
-                                  key={lesson.temp_id || lessonIdx}
                                   style={[
                                     styles.lessonRow,
                                     lessonIdx > 0 && styles.lessonRowBorder,
@@ -1036,6 +1041,9 @@ export default function ManualCurriculumBuilderModal({
                                       ) : null}
                                     </View>
                                   </View>
+                                  {typeof renderAfterLesson === 'function'
+                                    ? renderAfterLesson(unitIdx, lessonIdx, lesson)
+                                    : null}
                                 </View>
                               );
                             })}
@@ -1065,10 +1073,11 @@ export default function ManualCurriculumBuilderModal({
                           </View>
                         </View>
                       ) : null}
-                    </View>
-                  );
-                })}
+                </View>
               </View>
+            );
+          })}
+        </View>
 
         <TouchableOpacity
           style={styles.addUnitLink}
@@ -1249,6 +1258,10 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   errorText: { fontSize: 13, color: '#b91c1c' },
+  sectionBlock: {
+    gap: 8,
+    overflow: 'visible',
+  },
   unitCard: {
     borderWidth: 1,
     borderColor: BORDER,
@@ -1273,9 +1286,19 @@ const styles = StyleSheet.create({
     color: FG,
     backgroundColor: 'transparent',
     borderWidth: 0,
-    ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
+    ...(Platform.OS === 'web' && {
+      outlineStyle: 'none',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
-  unitSubtitle: { fontSize: 12, color: MUTED },
+  unitSubtitle: {
+    fontSize: 12,
+    color: MUTED,
+    marginTop: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   unitLessonsWrap: {
     borderTopWidth: 1,
     borderTopColor: BORDER,
@@ -1283,12 +1306,12 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   timelineList: {
-    marginLeft: 12,
-    marginRight: 10,
+    marginHorizontal: 10,
     marginTop: 8,
-    paddingLeft: 14,
-    borderLeftWidth: 2,
-    borderLeftColor: '#cbd5e1',
+    paddingHorizontal: 4,
+    gap: 4,
+  },
+  lessonBlock: {
     gap: 4,
   },
   lessonRow: {

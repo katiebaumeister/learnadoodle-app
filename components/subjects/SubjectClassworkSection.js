@@ -20,6 +20,7 @@ import {
   buildSubjectClassworkModel,
   buildUnitPeerItems,
   buildNoUnitPeerItems,
+  resolveAssignmentLearningDay,
 } from '../../lib/subjectClassworkModel';
 import {
   autoAssignLessonsToUnlinkedEvents,
@@ -179,6 +180,7 @@ function dropTargetWebProps({ onDrop, isActive = false }) {
 function ClassworkUnitCard({
   title,
   lessonCount = null,
+  subtitle = null,
   expanded = true,
   onToggleExpand = null,
   children,
@@ -186,15 +188,22 @@ function ClassworkUnitCard({
   dropWebProps = {},
 }) {
   const showChevron = !!onToggleExpand;
-  const lessonLabel = lessonCount == null
-    ? null
-    : `${lessonCount} ${lessonCount === 1 ? 'lesson' : 'lessons'}`;
+  const countLabel = subtitle ?? (
+    lessonCount == null
+      ? null
+      : `${lessonCount} ${lessonCount === 1 ? 'lesson' : 'lessons'}`
+  );
+  const { style: dropStyle, ...restDropWebProps } = dropWebProps;
 
   return (
     <View style={styles.sectionBlock}>
       <View
-        style={[styles.unitCard, dropActive && styles.unitCardDropActive]}
-        {...dropWebProps}
+        style={[
+          styles.unitCard,
+          dropActive && styles.unitCardDropActive,
+          dropStyle,
+        ]}
+        {...restDropWebProps}
       >
         <View style={styles.unitHeaderRow}>
           {showChevron ? (
@@ -217,8 +226,8 @@ function ClassworkUnitCard({
             <Text style={styles.unitTitleText} numberOfLines={2}>
               {title}
             </Text>
-            {lessonLabel ? (
-              <Text style={styles.unitSubtitle}>{lessonLabel}</Text>
+            {countLabel ? (
+              <Text style={styles.unitSubtitle}>{countLabel}</Text>
             ) : null}
           </View>
         </View>
@@ -731,9 +740,10 @@ export default function SubjectClassworkSection({
     setExpandedUnits((prev) => {
       const next = new Set(prev);
       model.units.forEach((unit) => next.add(String(unit.unitId)));
+      if (model.noUnitAssignments.length > 0) next.add('no-unit');
       return next;
     });
-  }, [unitIdsKey, model.units]);
+  }, [unitIdsKey, model.units, model.noUnitAssignments.length]);
 
   const closeScheduleModal = useCallback(() => {
     if (schedulingAll) return;
@@ -953,6 +963,41 @@ export default function SubjectClassworkSection({
     [units],
   );
 
+  const findAssignmentById = useCallback((assignmentId) => {
+    return (assignments || []).find((a) => String(a?.id) === String(assignmentId)) || null;
+  }, [assignments]);
+
+  const moveAssignmentPlacement = useCallback(async ({
+    assignmentId,
+    unitId = null,
+    lessonId = null,
+    lessonTitle = null,
+    unitTitle = null,
+  }) => {
+    const assignment = findAssignmentById(assignmentId);
+    if (!assignment?.id || movingPlacement) return;
+    setMovingPlacement(true);
+    try {
+      await updateAssignmentPlacement({
+        assignmentId: assignment.id,
+        familyId,
+        unitId,
+        lessonId,
+        lessonTitle,
+        unitTitle,
+        linkedEventIds: assignment.linked_event_ids,
+      });
+      toast.push('Assignment moved', 'success');
+      onPlacementChanged?.();
+    } catch (err) {
+      toast.push(err?.message || 'Could not move assignment', 'error');
+    } finally {
+      setMovingPlacement(false);
+      setDraggingAssignmentId(null);
+      setDragOverTarget(null);
+    }
+  }, [findAssignmentById, movingPlacement, familyId, toast, onPlacementChanged]);
+
   const handleMoveAssignmentToUnit = useCallback(({ assignment, unitId, unitTitle }) => {
     if (!assignment?.id) return;
     moveAssignmentPlacement({
@@ -995,41 +1040,6 @@ export default function SubjectClassworkSection({
       ],
     );
   }, [familyId, subjectId, toast, onPlacementChanged]);
-
-  const findAssignmentById = useCallback((assignmentId) => {
-    return (assignments || []).find((a) => String(a?.id) === String(assignmentId)) || null;
-  }, [assignments]);
-
-  const moveAssignmentPlacement = useCallback(async ({
-    assignmentId,
-    unitId = null,
-    lessonId = null,
-    lessonTitle = null,
-    unitTitle = null,
-  }) => {
-    const assignment = findAssignmentById(assignmentId);
-    if (!assignment?.id || movingPlacement) return;
-    setMovingPlacement(true);
-    try {
-      await updateAssignmentPlacement({
-        assignmentId: assignment.id,
-        familyId,
-        unitId,
-        lessonId,
-        lessonTitle,
-        unitTitle,
-        linkedEventIds: assignment.linked_event_ids,
-      });
-      toast.push('Assignment moved', 'success');
-      onPlacementChanged?.();
-    } catch (err) {
-      toast.push(err?.message || 'Could not move assignment', 'error');
-    } finally {
-      setMovingPlacement(false);
-      setDraggingAssignmentId(null);
-      setDragOverTarget(null);
-    }
-  }, [findAssignmentById, movingPlacement, familyId, toast, onPlacementChanged]);
 
   const handleUnitDrop = useCallback((unitId, unitTitle) => (payload) => {
     if (!payload?.assignmentId) return;
@@ -1198,48 +1208,38 @@ export default function SubjectClassworkSection({
             setDragOverTarget((prev) => (prev === dropKey ? null : prev));
           }
         },
-        style: dragOverTarget === dropKey ? styles.unitCardDropActive : undefined,
+        ...(dragOverTarget === dropKey ? { style: styles.unitCardDropActive } : {}),
       } : {}),
     };
   }, [model.units, dragOverTarget, handleUnitDrop]);
 
-  const renderUnitAssignments = useCallback((unitIdx) => {
-    const unit = model.units?.[unitIdx];
-    if (!unit) return null;
-    const assignmentItems = buildUnitPeerItems(unit, model.eventById)
-      .filter((item) => item.kind === 'assignment');
+  const renderAssignmentRows = useCallback((assignmentItems, unit, { fromLessonId = null } = {}) => {
     if (!assignmentItems.length) return null;
-    return (
-      <View style={styles.unitAssignmentsWrap}>
-        {assignmentItems.map((item, index) => (
-          <AssignmentPeerRow
-            key={item.assignment.id}
-            assignment={item.assignment}
-            attachedLessonTitle={item.attachedLessonTitle}
-            learningDay={item.learningDay}
-            isParentViewer={isParentViewer}
-            onOpen={onOpenAssignment}
-            onMoveToUnit={handleMoveAssignmentToUnit}
-            onDeleteAssignment={handleDeleteAssignment}
-            unitOptions={unitMoveOptions}
-            highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
-            isFirst={index === 0}
-            fromUnitId={unit.unitId}
-            fromLessonId={item.attachedLessonId}
-            dragging={String(draggingAssignmentId || '') === String(item.assignment.id)}
-            onDragStartAssignment={handleAssignmentDragStart}
-            rowRef={(node) => {
-              if (node && item.assignment?.id) {
-                assignmentRowRefs.current[String(item.assignment.id)] = node;
-              }
-            }}
-          />
-        ))}
-      </View>
-    );
+    return assignmentItems.map((item, index) => (
+      <AssignmentPeerRow
+        key={item.assignment.id}
+        assignment={item.assignment}
+        attachedLessonTitle={item.attachedLessonTitle}
+        learningDay={item.learningDay}
+        isParentViewer={isParentViewer}
+        onOpen={onOpenAssignment}
+        onMoveToUnit={handleMoveAssignmentToUnit}
+        onDeleteAssignment={handleDeleteAssignment}
+        unitOptions={unitMoveOptions}
+        highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
+        isFirst={index === 0}
+        fromUnitId={unit?.unitId}
+        fromLessonId={fromLessonId ?? item.attachedLessonId}
+        dragging={String(draggingAssignmentId || '') === String(item.assignment.id)}
+        onDragStartAssignment={handleAssignmentDragStart}
+        rowRef={(node) => {
+          if (node && item.assignment?.id) {
+            assignmentRowRefs.current[String(item.assignment.id)] = node;
+          }
+        }}
+      />
+    ));
   }, [
-    model.units,
-    model.eventById,
     isParentViewer,
     onOpenAssignment,
     handleMoveAssignmentToUnit,
@@ -1249,6 +1249,39 @@ export default function SubjectClassworkSection({
     draggingAssignmentId,
     handleAssignmentDragStart,
   ]);
+
+  const renderLessonAssignments = useCallback((unitIdx, lessonIdx) => {
+    const unit = model.units?.[unitIdx];
+    const lesson = unit?.lessons?.[lessonIdx];
+    if (!lesson?.assignments?.length) return null;
+    const items = lesson.assignments.map((assignment) => ({
+      assignment,
+      attachedLessonTitle: lesson.title,
+      attachedLessonId: lesson.lessonId,
+      learningDay: resolveAssignmentLearningDay(assignment, model.eventById),
+    }));
+    return (
+      <View style={styles.lessonAssignmentsWrap}>
+        {renderAssignmentRows(items, unit, { fromLessonId: lesson.lessonId })}
+      </View>
+    );
+  }, [model.units, model.eventById, renderAssignmentRows]);
+
+  const renderUnitLevelAssignments = useCallback((unitIdx) => {
+    const unit = model.units?.[unitIdx];
+    if (!unit?.unitAssignments?.length) return null;
+    const items = unit.unitAssignments.map((assignment) => ({
+      assignment,
+      attachedLessonTitle: null,
+      attachedLessonId: null,
+      learningDay: resolveAssignmentLearningDay(assignment, model.eventById),
+    }));
+    return (
+      <View style={styles.unitAssignmentsWrap}>
+        {renderAssignmentRows(items, unit)}
+      </View>
+    );
+  }, [model.units, model.eventById, renderAssignmentRows]);
 
   const hasNoUnitAssignments = model.noUnitAssignments.length > 0;
   const hasScheduledEmptyDays = (model.unlinkedLearningDays || []).length > 0;
@@ -1336,7 +1369,9 @@ export default function SubjectClassworkSection({
       {noUnitItems.length > 0 ? (
         <ClassworkUnitCard
           title="No unit"
-          expanded
+          subtitle={`${noUnitItems.length} ${noUnitItems.length === 1 ? 'assignment' : 'assignments'}`}
+          expanded={expandedUnits.has('no-unit')}
+          onToggleExpand={() => toggleUnitExpanded('no-unit')}
           dropActive={dragOverTarget === 'no-unit'}
           dropWebProps={{
             ...dropTargetWebProps({
@@ -1396,7 +1431,8 @@ export default function SubjectClassworkSection({
           createCalendarEvents={false}
           onSaved={onPlacementChanged}
           getLessonScheduleLabel={getLessonScheduleLabel}
-          renderAfterUnitLessons={renderUnitAssignments}
+          renderAfterLesson={renderLessonAssignments}
+          renderAfterUnitLessons={renderUnitLevelAssignments}
           getUnitDropWebProps={getUnitDropWebProps}
         />
       ) : !hasUnitsContent && isParentViewer ? (
@@ -1682,6 +1718,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: CLASSWORK_MUTED,
     marginTop: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   unitLessonsWrap: {
     borderTopWidth: 1,
@@ -1690,12 +1729,9 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   timelineList: {
-    marginLeft: 12,
-    marginRight: 10,
+    marginHorizontal: 10,
     marginTop: 8,
-    paddingLeft: 14,
-    borderLeftWidth: 2,
-    borderLeftColor: '#cbd5e1',
+    paddingHorizontal: 4,
     gap: 4,
   },
   lessonRow: {
@@ -1798,6 +1834,11 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(15,23,42,0.06)',
     gap: 4,
+  },
+  lessonAssignmentsWrap: {
+    marginHorizontal: 4,
+    gap: 4,
+    paddingBottom: 2,
   },
   assignmentIconWrap: {
     width: 20,

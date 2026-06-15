@@ -6,6 +6,7 @@ import { useSession } from '../../contexts/SessionContext';
 import { getMaterialFileTypeLabel } from '../materials/MaterialDocViewerModal';
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
 import SubjectCardHeader from './SubjectCardHeader';
+import { dispatchOpenScheduleWorkItemModal, resolveScheduleWorkItemEventId } from '../../lib/planner/learningDayModalNavigation';
 
 function formatNaturalList(items = []) {
   const list = (items || []).map((v) => String(v || '').trim()).filter(Boolean);
@@ -112,26 +113,7 @@ export default function SubjectOverviewCard({
       e.stopPropagation();
       e.preventDefault?.();
     }
-    const rawEventId = item?.eventId ?? item?.event_id ?? item?.id ?? null;
-    const shouldOpenEventModal = item?.type === 'event';
-    const eventId = shouldOpenEventModal && rawEventId
-      ? String(rawEventId).trim().replace(/^event-/, '')
-      : null;
-    if (shouldOpenEventModal && eventId && Platform.OS === 'web' && typeof window !== 'undefined') {
-      const initialEvent = item?.event || item?.initialEvent || {
-        id: eventId,
-        title: item?.title || 'Lesson',
-        start_ts: item?.startTs || item?.dueDate || null,
-        end_ts: item?.endTs || null,
-        child_id: item?.childId || null,
-        subject_id: item?.subjectId || subject?.id || null,
-        event_type: item?.eventType || 'Lesson',
-      };
-      window.dispatchEvent(
-        new CustomEvent('openEventModal', {
-          detail: { eventId, initialEvent },
-        }),
-      );
+    if (dispatchOpenScheduleWorkItemModal(item, { subjectId: subject?.id })) {
       return;
     }
     if (onNavigateToPlanner) {
@@ -139,7 +121,7 @@ export default function SubjectOverviewCard({
         subjectId: subject.id,
         childId: item?.childId,
         date: item?.dueDate,
-        eventId: item?.type === 'event' ? String(item.id || '').replace(/^event-/, '') : null,
+        eventId: resolveScheduleWorkItemEventId(item),
       });
       return;
     }
