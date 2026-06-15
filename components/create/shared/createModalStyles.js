@@ -2,7 +2,7 @@ import { Platform, StyleSheet } from 'react-native';
 
 export const CREATE_MODAL_MAX_WIDTH = 740;
 export const CREATE_EVENT_MODAL_MAX_WIDTH = 880;
-export const CREATE_ASSIGNMENT_MODAL_MAX_WIDTH = 1320;
+export const CREATE_ASSIGNMENT_MODAL_MAX_WIDTH = 1160;
 export const CREATE_ASSIGNMENT_MODAL_HEIGHT = 820;
 export const SCHOOL_YEAR_SETTINGS_MODAL_MAX_WIDTH = 900;
 export const SCHOOL_YEAR_SETTINGS_MODAL_HEIGHT = 800;

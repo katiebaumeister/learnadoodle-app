@@ -141,8 +141,9 @@ export default function AssignmentEditModal({
       try {
         let loadedEvent = linkedEvent;
         const resolvedEventId = loadedEvent?.id || resolveLinkedEventIdFromAssignment(assignment);
-        if (!loadedEvent && resolvedEventId) {
-          loadedEvent = await fetchEventForAssignmentEdit(resolvedEventId);
+        if (resolvedEventId) {
+          const fetched = await fetchEventForAssignmentEdit(resolvedEventId);
+          if (fetched) loadedEvent = fetched;
         }
         if (cancelled) return;
         setEventRow(loadedEvent);
@@ -188,6 +189,35 @@ export default function AssignmentEditModal({
       cancelled = true;
     };
   }, [visible, assignment, linkedEvent, initialView, familyMembers, toast]);
+
+  useEffect(() => {
+    setErrors((prev) => {
+      if (Object.keys(prev).length === 0) return prev;
+      const next = { ...prev };
+      let changed = false;
+      if (next.title && title.trim()) {
+        delete next.title;
+        changed = true;
+      }
+      if (next.subject && subjectId) {
+        delete next.subject;
+        changed = true;
+      }
+      if (next.studentResponse && parseStudentResponseType(workSpec?.student_response_type)) {
+        delete next.studentResponse;
+        changed = true;
+      }
+      if (next.assignee && assigneeIds.length > 0) {
+        delete next.assignee;
+        changed = true;
+      }
+      if (!changed) return prev;
+      if (Object.keys(next).length === 0) {
+        setValidationBanner('');
+      }
+      return next;
+    });
+  }, [title, subjectId, workSpec?.student_response_type, assigneeIds]);
 
   const validate = useCallback(() => {
     const next = {};

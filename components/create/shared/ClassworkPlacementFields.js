@@ -5,6 +5,27 @@ import Dropdown from '../../ui/Dropdown';
 import { createModalStyles as styles, MUTED, ACCENT_TEXT, FG } from './createModalStyles';
 import { fetchSubjectCurriculumEventsStructure } from '../../../lib/services/curriculumClient';
 
+function unitOptionValue(unit, index) {
+  const id = unit?.id != null ? String(unit.id).trim() : '';
+  const title = String(unit?.title || '').trim() || `Unit ${index + 1}`;
+  return id || `__title__:${title}`;
+}
+
+function resolveSelectedUnit(units, { unitId, unitTitle, selectedValue }) {
+  if (unitId) {
+    const byId = (units || []).find((unit) => String(unit?.id) === String(unitId));
+    if (byId) return byId;
+  }
+  const titleFromValue = String(selectedValue || '').startsWith('__title__:')
+    ? String(selectedValue).slice('__title__:'.length)
+    : '';
+  const titleNeedle = String(unitTitle || titleFromValue || '').trim();
+  if (titleNeedle) {
+    return (units || []).find((unit) => String(unit?.title || '').trim() === titleNeedle) || null;
+  }
+  return null;
+}
+
 function SelectField({
   label,
   value,
@@ -118,27 +139,27 @@ export default function ClassworkPlacementFields({
   const unitOptions = useMemo(() => {
     const rows = [{ key: 'none', value: '', label: 'No unit' }];
     (units || []).forEach((unit, index) => {
-      const id = unit?.id != null ? String(unit.id) : '';
       const title = String(unit?.title || '').trim() || `Unit ${index + 1}`;
+      const value = unitOptionValue(unit, index);
       rows.push({
-        key: id || `unit-${index}`,
-        value: id,
+        key: value,
+        value,
         label: title,
         title,
+        unitId: unit?.id != null ? String(unit.id) : null,
       });
     });
     return rows;
   }, [units]);
 
-  const selectedUnit = useMemo(() => {
-    if (unitId) {
-      return (units || []).find((unit) => String(unit?.id) === String(unitId)) || null;
-    }
-    if (unitTitle) {
-      return (units || []).find((unit) => String(unit?.title || '').trim() === String(unitTitle).trim()) || null;
-    }
-    return null;
-  }, [units, unitId, unitTitle]);
+  const selectedUnit = useMemo(
+    () => resolveSelectedUnit(units, { unitId, unitTitle }),
+    [units, unitId, unitTitle],
+  );
+
+  const selectedUnitValue = unitId
+    ? String(unitId)
+    : (selectedUnit ? unitOptionValue(selectedUnit, (units || []).indexOf(selectedUnit)) : (unitTitle ? `__title__:${unitTitle}` : ''));
 
   const lessonOptions = useMemo(() => {
     const rows = [{ key: 'none', value: '', label: 'No lesson' }];
@@ -171,7 +192,7 @@ export default function ClassworkPlacementFields({
     <>
       <SelectField
         label="Unit"
-        value={unitId || selectedUnit?.id || ''}
+        value={selectedUnitValue}
         displayValue={unitDisplay}
         placeholder={loading ? 'Loading units…' : 'No unit'}
         disabled={disabled}
@@ -183,7 +204,7 @@ export default function ClassworkPlacementFields({
             return;
           }
           onUnitChange?.({
-            unitId: option.value,
+            unitId: option.unitId || null,
             unitTitle: option.title || option.label,
           });
           onLessonChange?.({ curriculumLessonId: null, lessonLabel: '' });

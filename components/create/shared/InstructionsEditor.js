@@ -152,7 +152,29 @@ function prefixCurrentLine(text, selection, prefix = '• ') {
   return { next, selectionStart: cursor, selectionEnd: cursor };
 }
 
-function readWebFormatState() {
+function readWebFormatState(editableEl) {
+  if (editableEl && typeof document !== 'undefined') {
+    const sel = document.getSelection?.();
+    let node = sel?.anchorNode || null;
+    const formats = { bold: false, italic: false, underline: false };
+    while (node && node !== editableEl) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const tag = node.tagName?.toUpperCase?.() || '';
+        if (tag === 'STRONG' || tag === 'B') formats.bold = true;
+        if (tag === 'EM' || tag === 'I') formats.italic = true;
+        if (tag === 'U') formats.underline = true;
+        if (tag === 'SPAN' && node.style) {
+          const weight = node.style.fontWeight;
+          if (weight === 'bold' || weight === '700' || Number(weight) >= 600) formats.bold = true;
+          const decoration = node.style.textDecoration || node.style.textDecorationLine || '';
+          if (String(decoration).includes('underline')) formats.underline = true;
+          if (node.style.fontStyle === 'italic') formats.italic = true;
+        }
+      }
+      node = node.parentNode;
+    }
+    if (formats.bold || formats.italic || formats.underline) return formats;
+  }
   try {
     return {
       bold: document.queryCommandState('bold'),
@@ -245,14 +267,19 @@ function WebInstructionsEditor({
   }, [onChangeText, syncPlaceholder]);
 
   const refreshFormatState = useCallback(() => {
-    setActiveFormats(readWebFormatState());
+    setActiveFormats(readWebFormatState(editableRef.current));
   }, []);
 
   const applyMarkdownToEditor = useCallback((el, markdown) => {
     if (!el) return;
+    skipExternalSyncRef.current = true;
     el.innerHTML = markdownToHtml(markdown);
     syncPlaceholder(el);
-  }, [syncPlaceholder]);
+    requestAnimationFrame(() => {
+      skipExternalSyncRef.current = false;
+      refreshFormatState();
+    });
+  }, [syncPlaceholder, refreshFormatState]);
 
   useLayoutEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return undefined;
@@ -272,6 +299,7 @@ function WebInstructionsEditor({
     Object.assign(el.style, WEB_EDITOR_INNER_STYLE);
 
     const handleInput = () => {
+      if (skipExternalSyncRef.current) return;
       emitMarkdown(el);
       refreshFormatState();
     };
@@ -305,10 +333,7 @@ function WebInstructionsEditor({
 
   useLayoutEffect(() => {
     const el = editableRef.current;
-    if (!el || skipExternalSyncRef.current) {
-      skipExternalSyncRef.current = false;
-      return;
-    }
+    if (!el || skipExternalSyncRef.current) return;
     const current = htmlToMarkdown(el).replace(/\u200B/g, '');
     const next = String(value ?? '');
     if (current !== next) {

@@ -149,6 +149,35 @@ export default function AssignmentCreateModal({
     familyMembers,
   ]);
 
+  useEffect(() => {
+    setErrors((prev) => {
+      if (Object.keys(prev).length === 0) return prev;
+      const next = { ...prev };
+      let changed = false;
+      if (next.title && title.trim()) {
+        delete next.title;
+        changed = true;
+      }
+      if (next.subject && subjectId) {
+        delete next.subject;
+        changed = true;
+      }
+      if (next.studentResponse && parseStudentResponseType(workSpec?.student_response_type)) {
+        delete next.studentResponse;
+        changed = true;
+      }
+      if (next.assignee && assigneeIds.length > 0) {
+        delete next.assignee;
+        changed = true;
+      }
+      if (!changed) return prev;
+      if (Object.keys(next).length === 0) {
+        setValidationBanner('');
+      }
+      return next;
+    });
+  }, [title, subjectId, workSpec?.student_response_type, assigneeIds]);
+
   const validate = useCallback((mode = 'assign') => {
     const next = {};
     if (!title.trim()) next.title = 'Title is required';

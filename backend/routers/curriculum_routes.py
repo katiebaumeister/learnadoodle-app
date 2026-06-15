@@ -765,7 +765,7 @@ async def get_subject_curriculum_events_structure(
                             lessons_by_unit.get(uid, []),
                             key=lambda x: (x.get("sequence") or 0, x.get("title") or ""),
                         )
-                        units_out.append({"title": title, "lessons": unit_lessons})
+                        units_out.append({"id": uid, "title": title, "lessons": unit_lessons})
                     saved_content_source = None
                     for pref in ("manual", "plain_text_parsed", "ai_generated"):
                         if pref in source_candidates:
