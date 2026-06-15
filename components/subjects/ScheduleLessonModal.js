@@ -18,6 +18,7 @@ export default function ScheduleLessonModal({
   onClose,
   lesson,
   unitTitle,
+  subjectName = '',
   familyId,
   subjectId,
   events = [],

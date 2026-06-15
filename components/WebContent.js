@@ -35,7 +35,6 @@ import {
 import { isDayOffOrHolidayEvent } from '../lib/create/eventOpenRouting'
 import { dispatchOpenSchoolYearSettingsModal } from '../lib/planYearRetirement'
 import { getPlannerEventCategory } from '../lib/planner/plannerEventCategories'
-import { eventHasLinkedLesson } from '../lib/subjectLessonLinking'
 import {
   dispatchOpenSubjectClasswork,
   dispatchOpenSubjectSettings,
@@ -43,6 +42,14 @@ import {
   OPEN_SUBJECT_CLASSWORK_EVENT,
   resolveEventSubjectId,
 } from '../lib/subjectClassworkNavigation'
+import {
+  enrichLearningDayEvent,
+  OPEN_LEARNING_DAY_MODAL_EVENT,
+  OPEN_LEARNING_DAY_CHOICE_EVENT,
+  learningDayEventSelectFields,
+} from '../lib/planner/learningDayModalNavigation'
+import LearningDayChoiceModal from './planner/LearningDayChoiceModal'
+import LearningDayModal from './planner/LearningDayModal'
 
 /** Lucide paths — same as MaterialsLibrary context menu (visual parity). */
 const PLANNER_CTX_ICON_PATHS = {
@@ -5372,6 +5379,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     event: null,
     options: {},
   })
+  const [learningDayChoicePrompt, setLearningDayChoicePrompt] = useState({
+    visible: false,
+    event: null,
+    options: {},
+  })
+  const [learningDayModalState, setLearningDayModalState] = useState({
+    visible: false,
+    event: null,
+  })
   const dispatchOpenEventModal = useCallback((ev, options = {}) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !ev?.id) return;
     const detail = {
@@ -5382,64 +5398,92 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
     window.dispatchEvent(new CustomEvent('openEventModal', { detail }));
   }, []);
+  const closeLearningDayChoicePrompt = useCallback(() => {
+    setLearningDayChoicePrompt({ visible: false, event: null, options: {} });
+  }, []);
+  const closeLearningDayModal = useCallback(() => {
+    setLearningDayModalState({ visible: false, event: null });
+  }, []);
+  const openLearningDayModal = useCallback((event) => {
+    if (!event?.id) return;
+    setLearningDayModalState({ visible: true, event });
+  }, []);
+  const handleLearningDaySaved = useCallback(({ event: savedEvent } = {}) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
+    const subjectId = resolveEventSubjectId(savedEvent);
+    if (subjectId) {
+      window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId } }));
+    }
+  }, []);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+
+    const handleOpenLearningDayModal = async (event) => {
+      const detail = event.detail || {};
+      let row = detail.event || null;
+      const eventId = detail.eventId || row?.id || null;
+      if (!row && eventId && familyId) {
+        try {
+          let query = supabase
+            .from('events')
+            .select(learningDayEventSelectFields())
+            .eq('id', String(eventId));
+          query = query.eq('family_id', familyId);
+          const { data: fetched, error } = await query.maybeSingle();
+          if (!error && fetched) row = fetched;
+        } catch (_) {}
+      }
+      if (!row?.id) return;
+      const enriched = await enrichLearningDayEvent({ supabase, familyId, event: row });
+      setLearningDayModalState({ visible: true, event: enriched });
+    };
+
+    const handleOpenLearningDayChoice = async (event) => {
+      const detail = event.detail || {};
+      let row = detail.event || null;
+      const eventId = detail.eventId || row?.id || null;
+      if (!row && eventId && familyId) {
+        try {
+          let query = supabase
+            .from('events')
+            .select(learningDayEventSelectFields())
+            .eq('id', String(eventId));
+          query = query.eq('family_id', familyId);
+          const { data: fetched, error } = await query.maybeSingle();
+          if (!error && fetched) row = fetched;
+        } catch (_) {}
+      }
+      if (!row?.id) return;
+      const enriched = await enrichLearningDayEvent({ supabase, familyId, event: row });
+      setLearningDayChoicePrompt({
+        visible: true,
+        event: enriched,
+        options: {},
+      });
+    };
+
+    window.addEventListener(OPEN_LEARNING_DAY_MODAL_EVENT, handleOpenLearningDayModal);
+    window.addEventListener(OPEN_LEARNING_DAY_CHOICE_EVENT, handleOpenLearningDayChoice);
+    return () => {
+      window.removeEventListener(OPEN_LEARNING_DAY_MODAL_EVENT, handleOpenLearningDayModal);
+      window.removeEventListener(OPEN_LEARNING_DAY_CHOICE_EVENT, handleOpenLearningDayChoice);
+    };
+  }, [familyId]);
   const openEventEditorWithScopePrompt = useCallback(async (ev, options = {}) => {
     if (!ev?.id) return;
     if (isDayOffOrHolidayEvent(ev)) {
       dispatchOpenSchoolYearSettingsModal();
       return;
     }
-    if (
-      getPlannerEventCategory(ev) === 'Learning day'
-      && eventHasLinkedLesson(ev)
-      && resolveEventSubjectId(ev)
-    ) {
-      dispatchOpenSubjectClasswork({
-        subjectId: resolveEventSubjectId(ev),
-        lessonId: ev.curriculum_lesson_id != null ? String(ev.curriculum_lesson_id) : null,
+    if (getPlannerEventCategory(ev) === 'Learning day') {
+      const enriched = await enrichLearningDayEvent({ supabase, familyId, event: ev });
+      setLearningDayChoicePrompt({
+        visible: true,
+        event: enriched,
+        options: options || {},
       });
       return;
-    }
-    let planLearningDayEvent = ev;
-    if (
-      getPlannerEventCategory(ev) === 'Learning day'
-      && !eventHasLinkedLesson(ev)
-      && !isPlanYearBlockSeries(ev)
-    ) {
-      const cleanId = cleanPlannerEventId(String(ev.id || ''));
-      if (cleanId && isUuidLike(cleanId)) {
-        try {
-          let query = supabase
-            .from('events')
-            .select('id, subject_id, title, subject_name, generated_by, source_block_id, academic_year_id, curriculum_lesson_id, event_type')
-            .eq('id', cleanId);
-          if (familyId) query = query.eq('family_id', familyId);
-          const { data: fetched, error } = await query.maybeSingle();
-          if (!error && fetched) {
-            planLearningDayEvent = { ...ev, ...fetched };
-          }
-        } catch (_) {
-          // Fall through to default editor routing.
-        }
-      }
-    }
-    if (
-      getPlannerEventCategory(planLearningDayEvent) === 'Learning day'
-      && isPlanYearBlockSeries(planLearningDayEvent)
-      && !eventHasLinkedLesson(planLearningDayEvent)
-    ) {
-      const subjectId = resolveEventSubjectId(planLearningDayEvent);
-      if (subjectId) {
-        const subjectRow = (propFullSubjects || []).find((row) => String(row?.id) === String(subjectId))
-          || {
-            id: subjectId,
-            name: planLearningDayEvent.title
-              || planLearningDayEvent.subject_name
-              || planLearningDayEvent.subjectName
-              || 'Subject',
-          };
-        dispatchOpenSubjectSettings({ subject: subjectRow, initialTab: 'schedule' });
-        return;
-      }
     }
     const cleanId = cleanPlannerEventId(String(ev.id || ''));
     const eventHolidayType = normalizeHolidayType(ev?.holiday_type || ev?.holidayType);
@@ -5480,7 +5524,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       event: ev,
       options: options || {},
     });
-  }, [dispatchOpenEventModal, familyId, propFullSubjects]);
+  }, [dispatchOpenEventModal, familyId]);
   const [showNoteEditor, setShowNoteEditor] = useState(false)
   const [noteEditorProps, setNoteEditorProps] = useState({
     linkedEventId: null,
@@ -11189,6 +11233,65 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+      <LearningDayChoiceModal
+        visible={learningDayChoicePrompt.visible}
+        event={learningDayChoicePrompt.event}
+        subjects={propFullSubjects || []}
+        onClose={closeLearningDayChoicePrompt}
+        onEditSchedule={() => {
+          const event = learningDayChoicePrompt.event;
+          closeLearningDayChoicePrompt();
+          const subjectId = resolveEventSubjectId(event);
+          if (!subjectId) return;
+          const subjectRow = (propFullSubjects || []).find((row) => String(row?.id) === String(subjectId))
+            || {
+              id: subjectId,
+              name: event?.title || event?.subject_name || event?.subjectName || 'Subject',
+            };
+          dispatchOpenSubjectSettings({ subject: subjectRow, initialTab: 'schedule' });
+        }}
+        onEditLearningDay={() => {
+          const event = learningDayChoicePrompt.event;
+          closeLearningDayChoicePrompt();
+          openLearningDayModal(event);
+        }}
+        onViewClasswork={() => {
+          const event = learningDayChoicePrompt.event;
+          closeLearningDayChoicePrompt();
+          const subjectId = resolveEventSubjectId(event);
+          if (!subjectId) return;
+          dispatchOpenSubjectClasswork({
+            subjectId,
+            lessonId: event?.curriculum_lesson_id != null ? String(event.curriculum_lesson_id) : null,
+          });
+        }}
+      />
+      <LearningDayModal
+        visible={learningDayModalState.visible}
+        event={learningDayModalState.event}
+        familyId={familyId}
+        subjects={propFullSubjects || []}
+        children={children || []}
+        onClose={closeLearningDayModal}
+        onSaved={(detail) => {
+          handleLearningDaySaved(detail);
+          if (detail?.event) {
+            setLearningDayModalState((prev) => {
+              if (!prev.visible || String(prev.event?.id) !== String(detail.event?.id)) return prev;
+              const nextEvent = {
+                ...prev.event,
+                curriculum_lesson_id: detail.lessonId,
+              };
+              if (detail.lessonId == null) {
+                nextEvent.lesson = null;
+                nextEvent.unit = null;
+                nextEvent.curriculum_metadata = {};
+              }
+              return { ...prev, event: nextEvent };
+            });
+          }
+        }}
+      />
       <ConfirmDialog
         visible={confirmDialog.visible}
         title={confirmDialog.title}

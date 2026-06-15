@@ -74,14 +74,15 @@ import LearningSubjectDetailView from '../learning/LearningSubjectDetailView';
 import EditSubjectSettingsModal from './EditSubjectSettingsModal';
 import EditSubjectUnitsModal from './EditSubjectUnitsModal';
 import { draftFromCurriculumStructure } from '../../lib/subjectUnitsEditorDraft';
-import AttachLessonToEventModal from './AttachLessonToEventModal';
 import SubjectClassroomTabs from './SubjectClassroomTabs';
 import SubjectClassworkSection from './SubjectClassworkSection';
+import SubjectClassworkSmartActions from './SubjectClassworkSmartActions';
 import SubjectGradesPanel from './SubjectGradesPanel';
 import SubjectGapAnalysisModal from './SubjectGapAnalysisModal';
 import { parseSubjectGradingSettings, getGradingMethodLabel } from '../../lib/subjectGradingSettings';
 import { buildSubjectClassworkModel } from '../../lib/subjectClassworkModel';
 import { executeSubjectGapFix, previewSubjectGapFix } from '../../lib/subjectAddSessions';
+import { dispatchOpenSubjectClassworkScheduleAll } from '../../lib/subjectClassworkActions';
 import {
   appendLocalFixGapHistoryEntry,
   buildFixGapHistoryRunDetails,
@@ -507,6 +508,7 @@ export default function SubjectDetailPage({
   const [showAttendanceSuggestionConfirmModal, setShowAttendanceSuggestionConfirmModal] = useState(false);
   const [applyingAttendanceSuggestion, setApplyingAttendanceSuggestion] = useState(false);
   const [gapAnalysisWorking, setGapAnalysisWorking] = useState(false);
+  const [classworkSchedulingAll, setClassworkSchedulingAll] = useState(false);
   const [gapUndoing, setGapUndoing] = useState(false);
   const [gapHistoryRuns, setGapHistoryRuns] = useState([]);
   const [gapSlotLines, setGapSlotLines] = useState([]);
@@ -522,10 +524,9 @@ export default function SubjectDetailPage({
     mode: 'info',
   });
   const gapPreviewRef = useRef(null);
+  const pendingScheduleAllRef = useRef(false);
   const [showEditUnitsModal, setShowEditUnitsModal] = useState(false);
   const [editUnitsInitialDraft, setEditUnitsInitialDraft] = useState(null);
-  const [showAttachLessonModal, setShowAttachLessonModal] = useState(false);
-  const [attachLessonEvent, setAttachLessonEvent] = useState(null);
   const [learningGoalsUnits, setLearningGoalsUnits] = useState(
     Array.isArray(preloadedProgressCache?.curriculumUnits) ? preloadedProgressCache.curriculumUnits : []
   );
@@ -944,6 +945,22 @@ export default function SubjectDetailPage({
       })
     );
   }, [subject?.id, assignedChildren]);
+
+  const handleScheduleAllLessons = useCallback(() => {
+    if (!subject?.id) return;
+    if (classroomTab !== 'classwork') {
+      pendingScheduleAllRef.current = true;
+      setClassroomTab('classwork');
+      return;
+    }
+    dispatchOpenSubjectClassworkScheduleAll(subject.id);
+  }, [classroomTab, subject?.id]);
+
+  useEffect(() => {
+    if (classroomTab !== 'classwork' || !pendingScheduleAllRef.current || !subject?.id) return;
+    pendingScheduleAllRef.current = false;
+    dispatchOpenSubjectClassworkScheduleAll(subject.id);
+  }, [classroomTab, subject?.id]);
 
   useEffect(() => {
     const action = String(initialProgressAction || '').trim().toLowerCase();
@@ -2725,14 +2742,6 @@ export default function SubjectDetailPage({
     handleOpenEventDetails(event.id, event);
   }, [handleOpenEventDetails]);
 
-  const handleAttachLessonLinked = useCallback(async () => {
-    learningGoalsFetchCooldownUntilRef.current = 0;
-    await loadLearningGoalsStructure();
-    await loadSubjectDetail({ silent: true });
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: false } }));
-    }
-  }, [loadLearningGoalsStructure, loadSubjectDetail]);
   const handleEventContextMenu = useCallback((event, nativeEvent) => {
     if (!event?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
     nativeEvent?.preventDefault?.();
@@ -3605,6 +3614,16 @@ export default function SubjectDetailPage({
             )}
             <View style={styles.headerTopActions}>
               {isParentViewer ? (
+                <SubjectClassworkSmartActions
+                  onGapAnalysis={openGapAnalysisModal}
+                  gapAnalysisWorking={gapAnalysisWorking}
+                  onScheduleAllLessons={handleScheduleAllLessons}
+                  schedulingAll={classworkSchedulingAll}
+                  buttonStyle={styles.headerTopActionBtn}
+                  textStyle={styles.headerTopActionText}
+                />
+              ) : null}
+              {isParentViewer ? (
                 <TouchableOpacity
                   style={styles.headerTopActionBtn}
                   onPress={() => openSubjectSettings('details')}
@@ -3613,6 +3632,17 @@ export default function SubjectDetailPage({
                 >
                   <Edit2 size={18} color="#334155" strokeWidth={2.25} />
                   <Text style={styles.headerTopActionText}>Edit subject</Text>
+                </TouchableOpacity>
+              ) : null}
+              {isParentViewer ? (
+                <TouchableOpacity
+                  style={styles.headerTopActionBtn}
+                  onPress={handleCreateAssignment}
+                  accessibilityLabel="Add assignment"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={18} color="#334155" strokeWidth={2.25} />
+                  <Text style={styles.headerTopActionText}>Add assignment</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -3651,15 +3681,13 @@ export default function SubjectDetailPage({
             subjectName={subject?.name}
             isParentViewer={isParentViewer}
             onOpenAssignment={openAssignedWorkItem}
-            onCreateAssignment={handleCreateAssignment}
             onManageUnits={openUnitsEditor}
             unitsActionLabel={unitsEditorLabel}
             onPlacementChanged={handleClassworkPlacementChanged}
             inlineUnitsEditing={isParentViewer}
             highlightLessonId={highlightLessonId}
             highlightAssignmentId={highlightAssignmentId}
-            onGapAnalysis={isParentViewer ? openGapAnalysisModal : null}
-            gapAnalysisWorking={gapAnalysisWorking}
+            onSchedulingAllChange={setClassworkSchedulingAll}
           />
         ) : null}
 
@@ -4291,18 +4319,6 @@ export default function SubjectDetailPage({
         hasExistingContent={hasLearningGoalsContent}
         initialDraft={editUnitsInitialDraft}
         academicYearId={subjectPlanYearId || subjectPlanYearIdFromEvents || null}
-      />
-      <AttachLessonToEventModal
-        visible={showAttachLessonModal}
-        onClose={() => {
-          setShowAttachLessonModal(false);
-          setAttachLessonEvent(null);
-        }}
-        onLinked={handleAttachLessonLinked}
-        familyId={familyId}
-        subjectId={subject?.id}
-        subjectName={subject?.name}
-        event={attachLessonEvent}
       />
       <MarkAllAttendedModal
         visible={showMarkAllAttendedModal}

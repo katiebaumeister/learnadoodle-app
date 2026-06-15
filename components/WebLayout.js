@@ -106,6 +106,8 @@ import FamilyMessagesPane from './messages/FamilyMessagesPane';
 import FamilyCreatePane from './create/FamilyCreatePane';
 import PlannerCreateMenu from './create/PlannerCreateMenu';
 import SubjectPickerModal from './create/SubjectPickerModal';
+import LearningDaySetupChoiceModal from './planner/LearningDaySetupChoiceModal';
+import { dispatchOpenSubjectClasswork, dispatchOpenSubjectSettings } from '../lib/subjectClassworkNavigation';
 import { PLANNER_EVENT_CATEGORIES } from '../lib/planner/plannerEventCategories';
 import { defaultPlannerExportColumnSelection, PLANNER_EXPORT_OPTIONAL_COLUMN_DEFS } from '../lib/plannerExportOptionalColumns';
 import { useHoverDropdown } from './ui/useHoverDropdown';
@@ -291,6 +293,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [taskModalDefaultStartTime, setTaskModalDefaultStartTime] = useState(null);
   const [taskModalDefaultTitle, setTaskModalDefaultTitle] = useState(null);
   const [taskModalDefaultMaterialId, setTaskModalDefaultMaterialId] = useState(null);
+  const [taskModalLinkedLearningDayEventId, setTaskModalLinkedLearningDayEventId] = useState(null);
+  const [taskModalDefaultCurriculumLessonId, setTaskModalDefaultCurriculumLessonId] = useState(null);
   const [taskModalSubmittalAfterCreate, setTaskModalSubmittalAfterCreate] = useState(false);
   const taskModalSubmittalAfterCreateRef = useRef(false);
   const [submittalRequestContext, setSubmittalRequestContext] = useState(null);
@@ -354,6 +358,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     setTaskModalDefaultStartTime(null);
     setTaskModalDefaultTitle(null);
     setTaskModalDefaultMaterialId(null);
+    setTaskModalLinkedLearningDayEventId(null);
+    setTaskModalDefaultCurriculumLessonId(null);
     setTaskModalSubmittalAfterCreate(false);
     taskModalSubmittalAfterCreateRef.current = false;
   }, []);
@@ -504,6 +510,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [editSchoolYearInitialLabel, setEditSchoolYearInitialLabel] = useState(null);
   const [showPlannerCreateMenu, setShowPlannerCreateMenu] = useState(false);
   const [showLearningDaySubjectPicker, setShowLearningDaySubjectPicker] = useState(false);
+  const [learningDaySetupChoice, setLearningDaySetupChoice] = useState({ visible: false, subject: null });
   const plannerCreateButtonRef = useRef(null);
   const smartActionsHover = useHoverDropdown({
     open: showSmartActionsMenu,
@@ -595,6 +602,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setTaskModalDefaultStartTime(detail.startTime || null);
       setTaskModalDefaultTitle(detail.title ?? null);
       setTaskModalDefaultMaterialId(detail.materialId || null);
+      setTaskModalLinkedLearningDayEventId(detail.linkedLearningDayEventId || null);
+      setTaskModalDefaultCurriculumLessonId(detail.curriculumLessonId || null);
       setTaskModalSubmittalAfterCreate(false);
       taskModalSubmittalAfterCreateRef.current = false;
       setCreateModalKind('lesson');
@@ -615,6 +624,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     setTaskModalDefaultStartTime(detail.startTime || null);
     setTaskModalDefaultTitle(detail.title ?? null);
     setTaskModalDefaultMaterialId(detail.materialId || null);
+    setTaskModalLinkedLearningDayEventId(detail.linkedLearningDayEventId || null);
+    setTaskModalDefaultCurriculumLessonId(detail.curriculumLessonId || null);
     setTaskModalSubmittalAfterCreate(!!detail.submittalAfterCreate);
     taskModalSubmittalAfterCreateRef.current = !!detail.submittalAfterCreate;
     setCreateModalKind(kind);
@@ -3140,9 +3151,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const handleLearningDaySubjectSelect = useCallback((subject) => {
     setShowLearningDaySubjectPicker(false);
     if (!subject) return;
-    setEditingSubject(subject);
-    setEditSubjectSettingsInitialTab('schedule');
-    setShowEditSubjectSettingsModal(true);
+    setLearningDaySetupChoice({ visible: true, subject });
+  }, []);
+
+  const closeLearningDaySetupChoice = useCallback(() => {
+    setLearningDaySetupChoice({ visible: false, subject: null });
   }, []);
 
   const handleLearningDayCreateSubject = useCallback(() => {
@@ -4584,6 +4597,29 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }
       />
 
+      <LearningDaySetupChoiceModal
+        visible={learningDaySetupChoice.visible}
+        subjectName={learningDaySetupChoice.subject?.name || 'Subject'}
+        onClose={closeLearningDaySetupChoice}
+        onEditSchedule={() => {
+          const subject = learningDaySetupChoice.subject;
+          closeLearningDaySetupChoice();
+          if (!subject) return;
+          setEditingSubject(subject);
+          setEditSubjectSettingsInitialTab('schedule');
+          setShowEditSubjectSettingsModal(true);
+        }}
+        onOpenLearningSchedule={() => {
+          const subject = learningDaySetupChoice.subject;
+          closeLearningDaySetupChoice();
+          if (!subject?.id) return;
+          dispatchOpenSubjectClasswork({
+            subjectId: subject.id,
+            tab: 'classwork',
+          });
+        }}
+      />
+
       <SubjectUnitsEditorHost familyId={familyId} />
 
       <GlobalNewMenu
@@ -4653,6 +4689,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           defaultTitle={taskModalDefaultTitle}
           defaultMaterialId={taskModalDefaultMaterialId}
           defaultEventType={taskModalDefaultEventType}
+          defaultLinkedLearningDayEventId={taskModalLinkedLearningDayEventId}
+          defaultCurriculumLessonId={taskModalDefaultCurriculumLessonId}
           requireParentApprovalDefault={taskModalSubmittalAfterCreate}
           familyId={familyId}
           familyMembers={familyMembersForEventing}

@@ -39,6 +39,9 @@ import ManualCurriculumBuilderModal from '../ManualCurriculumBuilderModal';
 import { useToast } from '../Toast';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import ClassworkPlanningModal from './ClassworkPlanningModal';
+import ScheduleLessonModal from './ScheduleLessonModal';
+import { dispatchOpenLearningDayChoiceModal } from '../../lib/planner/learningDayModalNavigation';
+import { OPEN_SUBJECT_CLASSWORK_SCHEDULE_ALL } from '../../lib/subjectClassworkActions';
 import {
   CLASSWORK_FG,
   CLASSWORK_MUTED,
@@ -230,6 +233,7 @@ function LessonPeerRow({
   isParentViewer,
   onEditLesson,
   onDeleteLesson,
+  onScheduleLesson,
   highlighted = false,
   rowRef,
   isFirst = true,
@@ -284,12 +288,27 @@ function LessonPeerRow({
           <Text style={styles.lessonTitleText} numberOfLines={2}>
             {lesson.title || 'Lesson'}
           </Text>
-          <Text
-            style={lesson.schedule?.dateLabel ? styles.lessonMetaLine : styles.lessonMetaMuted}
-            numberOfLines={1}
-          >
-            {lesson.schedule?.dateLabel || 'Not scheduled'}
-          </Text>
+          {lesson.schedule?.dateLabel ? (
+            <Text style={styles.lessonMetaLine} numberOfLines={1}>
+              {lesson.schedule.dateLabel}
+            </Text>
+          ) : isParentViewer && onScheduleLesson ? (
+            <TouchableOpacity
+              onPress={() => onScheduleLesson?.({ lesson, unit })}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={`Schedule ${lesson.title || 'lesson'}`}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={[styles.lessonMetaMuted, styles.lessonScheduleLink]} numberOfLines={1}>
+                Not scheduled
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <Text style={styles.lessonMetaMuted} numberOfLines={1}>
+              Not scheduled
+            </Text>
+          )}
         </View>
         {showLessonMenu ? (
           <View style={styles.menuAnchor}>
@@ -423,71 +442,51 @@ function AssignmentPeerRow({
   );
 }
 
+function ScheduledClassDaysBucket({ days = [], onOpenDay }) {
+  if (!days.length) return null;
+  return (
+    <View style={styles.scheduledDaysSection}>
+      <Text style={styles.scheduledDaysHeading}>Scheduled class days</Text>
+      <Text style={styles.scheduledDaysHint}>
+        Class sessions from your subject schedule without a lesson planned yet.
+      </Text>
+      <View style={styles.scheduledDaysList}>
+        {days.map((row, index) => (
+          <TouchableOpacity
+            key={String(row.eventId || index)}
+            style={[styles.scheduledDayRow, index > 0 && styles.scheduledDayRowBorder]}
+            onPress={() => onOpenDay?.(row.event)}
+            accessibilityLabel={`Open learning day ${row.dateLabel || ''}`}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={styles.scheduledDayTitle}>{row.dateLabel || 'Upcoming session'}</Text>
+              <Text style={styles.scheduledDaySubtext}>No lesson planned</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function ClassworkActionSet({
   onManageUnits,
-  onCreateAssignment,
-  onGapAnalysis,
-  showGapAnalysis = false,
-  gapAnalysisWorking = false,
-  onScheduleAllLessons,
-  showScheduleAllLessons = false,
-  schedulingAll = false,
   unitsActionLabel = 'Add unit',
 }) {
-  const showUnits = !!onManageUnits;
-  const showAssignment = !!onCreateAssignment;
-  if (!showUnits && !showAssignment && !showScheduleAllLessons && !showGapAnalysis) return null;
+  if (!onManageUnits) return null;
 
   return (
     <View style={styles.actionSet}>
-      {showGapAnalysis ? (
-        <TouchableOpacity
-          style={[styles.actionPillBtn, gapAnalysisWorking && styles.actionPillBtnDisabled]}
-          onPress={onGapAnalysis}
-          disabled={gapAnalysisWorking}
-          accessibilityLabel="Gap analysis"
-          {...(Platform.OS === 'web' && { cursor: gapAnalysisWorking ? 'default' : 'pointer' })}
-        >
-          <Text style={styles.actionPillBtnText}>
-            {gapAnalysisWorking ? 'Working…' : 'Gap analysis'}
-          </Text>
-        </TouchableOpacity>
-      ) : null}
-      {showScheduleAllLessons ? (
-        <TouchableOpacity
-          style={[styles.actionPillBtn, schedulingAll && styles.actionPillBtnDisabled]}
-          onPress={onScheduleAllLessons}
-          disabled={schedulingAll}
-          accessibilityLabel="Schedule all lessons"
-          {...(Platform.OS === 'web' && { cursor: schedulingAll ? 'default' : 'pointer' })}
-        >
-          <Text style={styles.actionPillBtnText}>
-            {schedulingAll ? 'Scheduling…' : 'Schedule all lessons'}
-          </Text>
-        </TouchableOpacity>
-      ) : null}
-      {showUnits ? (
-        <TouchableOpacity
-          style={styles.actionPillBtn}
-          onPress={onManageUnits}
-          accessibilityLabel={unitsActionLabel}
-          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-        >
-          <Plus size={18} color="#334155" strokeWidth={2.25} />
-          <Text style={styles.actionPillBtnText}>{unitsActionLabel}</Text>
-        </TouchableOpacity>
-      ) : null}
-      {showAssignment ? (
-        <TouchableOpacity
-          style={styles.actionPillBtn}
-          onPress={onCreateAssignment}
-          accessibilityLabel="Add assignment"
-          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-        >
-          <Plus size={18} color="#334155" strokeWidth={2.25} />
-          <Text style={styles.actionPillBtnText}>Add assignment</Text>
-        </TouchableOpacity>
-      ) : null}
+      <TouchableOpacity
+        style={styles.actionPillBtn}
+        onPress={onManageUnits}
+        accessibilityLabel={unitsActionLabel}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <Plus size={18} color="#334155" strokeWidth={2.25} />
+        <Text style={styles.actionPillBtnText}>{unitsActionLabel}</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -544,14 +543,12 @@ export default function SubjectClassworkSection({
   subjectName,
   isParentViewer = true,
   onOpenAssignment,
-  onCreateAssignment,
   onManageUnits,
   unitsActionLabel = 'Add units',
   onPlacementChanged,
   highlightLessonId = null,
   highlightAssignmentId = null,
-  onGapAnalysis = null,
-  gapAnalysisWorking = false,
+  onSchedulingAllChange = null,
   inlineUnitsEditing = false,
 }) {
   const toast = useToast();
@@ -567,6 +564,10 @@ export default function SubjectClassworkSection({
     [units],
   );
   const [schedulingAll, setSchedulingAll] = useState(false);
+
+  useEffect(() => {
+    onSchedulingAllChange?.(schedulingAll);
+  }, [schedulingAll, onSchedulingAllChange]);
   const [draggingAssignmentId, setDraggingAssignmentId] = useState(null);
   const [draggingLessonId, setDraggingLessonId] = useState(null);
   const [dragOverTarget, setDragOverTarget] = useState(null);
@@ -585,6 +586,11 @@ export default function SubjectClassworkSection({
     working: false,
     mode: 'info',
   });
+  const [scheduleLessonModal, setScheduleLessonModal] = useState({
+    visible: false,
+    lesson: null,
+    unitTitle: '',
+  });
   const lessonRowRefs = useRef({});
   const assignmentRowRefs = useRef({});
   const hasUnitsContent = useMemo(
@@ -600,8 +606,22 @@ export default function SubjectClassworkSection({
   const useInlineUnitsEditor = inlineUnitsEditing && isParentViewer;
   const showEmbeddedUnitsEditor = useInlineUnitsEditor && inlineUnitsStarted;
 
-  const startInlineUnitsEditing = useCallback(() => {
-    setInlineUnitsStarted(true);
+  const handleOpenLearningDay = useCallback((event) => {
+    if (!event?.id) return;
+    dispatchOpenLearningDayChoiceModal({ event, eventId: event.id });
+  }, []);
+
+  const handleScheduleLesson = useCallback(({ lesson, unit }) => {
+    if (!lesson?.lessonId) return;
+    setScheduleLessonModal({
+      visible: true,
+      lesson,
+      unitTitle: unit?.title || unit?.unitTitle || '',
+    });
+  }, []);
+
+  const closeScheduleLessonModal = useCallback(() => {
+    setScheduleLessonModal({ visible: false, lesson: null, unitTitle: '' });
   }, []);
 
   const unitIdsKey = useMemo(
@@ -776,6 +796,17 @@ export default function SubjectClassworkSection({
     closeScheduleModal,
     onPlacementChanged,
   ]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !subjectId) return undefined;
+    const handler = (event) => {
+      const detail = event.detail || {};
+      if (String(detail.subjectId || '') !== String(subjectId)) return;
+      openScheduleAllModal();
+    };
+    window.addEventListener(OPEN_SUBJECT_CLASSWORK_SCHEDULE_ALL, handler);
+    return () => window.removeEventListener(OPEN_SUBJECT_CLASSWORK_SCHEDULE_ALL, handler);
+  }, [subjectId, openScheduleAllModal]);
 
   const handleEditLesson = useCallback(() => {
     onManageUnits?.();
@@ -1064,9 +1095,11 @@ export default function SubjectClassworkSection({
   ]);
 
   const hasNoUnitAssignments = model.noUnitAssignments.length > 0;
+  const hasScheduledEmptyDays = (model.unlinkedLearningDays || []).length > 0;
   const hasVisibleContent = hasNoUnitAssignments
     || hasUnitsContent
-    || showEmbeddedUnitsEditor;
+    || showEmbeddedUnitsEditor
+    || hasScheduledEmptyDays;
 
   if (!hasVisibleContent) {
     return (
@@ -1075,16 +1108,17 @@ export default function SubjectClassworkSection({
           <ClassworkToolbar>
             <ClassworkActionSet
               onManageUnits={onManageUnits}
-              onCreateAssignment={onCreateAssignment}
-              onGapAnalysis={onGapAnalysis}
-              showGapAnalysis={!!onGapAnalysis}
-              gapAnalysisWorking={gapAnalysisWorking}
-              onScheduleAllLessons={openScheduleAllModal}
-              showScheduleAllLessons={isParentViewer}
-              schedulingAll={schedulingAll}
               unitsActionLabel={unitsActionLabel}
             />
           </ClassworkToolbar>
+        ) : null}
+        {hasScheduledEmptyDays ? (
+          <View style={styles.wrap}>
+            <ScheduledClassDaysBucket
+              days={model.unlinkedLearningDays}
+              onOpenDay={handleOpenLearningDay}
+            />
+          </View>
         ) : null}
         {isParentViewer ? (
           <EmptyUnitsState onAddUnit={startInlineUnitsEditing} />
@@ -1104,6 +1138,20 @@ export default function SubjectClassworkSection({
           onConfirm={confirmScheduleAllModal}
           onCancel={closeScheduleModal}
         />
+        <ScheduleLessonModal
+          visible={scheduleLessonModal.visible}
+          onClose={closeScheduleLessonModal}
+          lesson={scheduleLessonModal.lesson}
+          unitTitle={scheduleLessonModal.unitTitle}
+          subjectName={subjectName}
+          familyId={familyId}
+          subjectId={subjectId}
+          events={events}
+          onScheduled={() => {
+            closeScheduleLessonModal();
+            onPlacementChanged?.();
+          }}
+        />
       </View>
     );
   }
@@ -1114,18 +1162,17 @@ export default function SubjectClassworkSection({
         <ClassworkToolbar>
           <ClassworkActionSet
             onManageUnits={onManageUnits}
-            onCreateAssignment={onCreateAssignment}
-            onGapAnalysis={onGapAnalysis}
-            showGapAnalysis={!!onGapAnalysis}
-            gapAnalysisWorking={gapAnalysisWorking}
-            onScheduleAllLessons={openScheduleAllModal}
-            showScheduleAllLessons={isParentViewer}
-            schedulingAll={schedulingAll}
             unitsActionLabel={unitsActionLabel}
           />
         </ClassworkToolbar>
       ) : null}
       <View style={styles.wrap}>
+      {model.unlinkedLearningDays?.length > 0 ? (
+        <ScheduledClassDaysBucket
+          days={model.unlinkedLearningDays}
+          onOpenDay={handleOpenLearningDay}
+        />
+      ) : null}
       {noUnitItems.length > 0 ? (
         <ClassworkUnitCard
           title="No unit"
@@ -1236,6 +1283,7 @@ export default function SubjectClassworkSection({
                       isParentViewer={isParentViewer}
                       onEditLesson={handleEditLesson}
                       onDeleteLesson={handleDeleteLesson}
+                      onScheduleLesson={handleScheduleLesson}
                       highlighted={String(highlightLessonId || '') === String(item.lesson.lessonId)}
                       isFirst={isFirst}
                       dragging={String(draggingLessonId || '') === String(item.lesson.lessonId)}
@@ -1320,6 +1368,20 @@ export default function SubjectClassworkSection({
         onConfirm={confirmScheduleAllModal}
         onCancel={closeScheduleModal}
       />
+      <ScheduleLessonModal
+        visible={scheduleLessonModal.visible}
+        onClose={closeScheduleLessonModal}
+        lesson={scheduleLessonModal.lesson}
+        unitTitle={scheduleLessonModal.unitTitle}
+        subjectName={subjectName}
+        familyId={familyId}
+        subjectId={subjectId}
+        events={events}
+        onScheduled={() => {
+          closeScheduleLessonModal();
+          onPlacementChanged?.();
+        }}
+      />
     </View>
   );
 }
@@ -1380,6 +1442,53 @@ const styles = StyleSheet.create({
     paddingTop: 4,
     paddingBottom: 28,
     gap: 20,
+  },
+  scheduledDaysSection: {
+    borderWidth: 1,
+    borderColor: CLASSWORK_BORDER,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    padding: 14,
+    gap: 8,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
+    }),
+  },
+  scheduledDaysHeading: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: CLASSWORK_FG,
+  },
+  scheduledDaysHint: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: CLASSWORK_MUTED,
+  },
+  scheduledDaysList: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: CLASSWORK_BORDER,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  scheduledDayRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    backgroundColor: '#FAFBFC',
+  },
+  scheduledDayRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: CLASSWORK_BORDER,
+  },
+  scheduledDayTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: CLASSWORK_FG,
+  },
+  scheduledDaySubtext: {
+    marginTop: 2,
+    fontSize: 13,
+    color: CLASSWORK_MUTED,
   },
   sectionBlock: {
     gap: 8,
@@ -1526,6 +1635,10 @@ const styles = StyleSheet.create({
   lessonMetaMuted: {
     fontSize: 12,
     color: CLASSWORK_MUTED,
+  },
+  lessonScheduleLink: {
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' ? { textDecorationStyle: 'dotted' } : {}),
   },
   dropZone: {
     minHeight: 14,

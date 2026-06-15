@@ -14,7 +14,6 @@ import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import {
   CLASSWORK_FG,
   CLASSWORK_MUTED,
-  CLASSWORK_BORDER,
 } from '../../lib/classworkPanelTheme';
 
 const LEAGUE_FONT = Platform.OS === 'web'
@@ -93,7 +92,6 @@ export default function SubjectGradesPanel({
           assessments: [],
           sum: 0,
           count: 0,
-          missingCount: 0,
         });
       }
       return byChild.get(key);
@@ -111,7 +109,6 @@ export default function SubjectGradesPanel({
         row.sum += Number(a.grade_value);
         row.count += 1;
       }
-      if (isMissingWork(a)) row.missingCount += 1;
     });
 
     (gradedItems || []).forEach((item) => {
@@ -178,35 +175,10 @@ export default function SubjectGradesPanel({
         <View key={section.childId} style={styles.studentCard}>
           <View style={styles.studentHeader}>
             {section.child ? <StudentAvatar child={section.child} /> : null}
-            <Text style={styles.studentName}>{section.name}</Text>
-          </View>
-
-          <View style={styles.statsRow}>
-            <View style={styles.statTile}>
-              <Text style={styles.statLabel}>Overall grade</Text>
-              <Text
-                style={[
-                  styles.statValueOverall,
-                  section.overall == null && styles.statValueEmpty,
-                ]}
-              >
-                {section.overall != null ? `${section.overall}%` : '—'}
-              </Text>
-            </View>
-            <View
-              style={[
-                styles.statTile,
-                section.missingCount > 0 && styles.statTileWarning,
-              ]}
-            >
-              <Text style={styles.statLabel}>Missing work</Text>
-              <Text
-                style={[
-                  styles.statValueMissing,
-                  section.missingCount > 0 && styles.statValueMissingActive,
-                ]}
-              >
-                {section.missingCount}
+            <View style={styles.studentHeaderText}>
+              <Text style={styles.studentName}>{section.name}</Text>
+              <Text style={styles.studentAverage}>
+                {section.overall != null ? `${section.overall}% average` : 'No average yet'}
               </Text>
             </View>
           </View>
@@ -327,6 +299,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  studentHeaderText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
   avatarRing: {
     width: 40,
     height: 40,
@@ -348,50 +325,11 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
     ...LEAGUE_FONT,
   },
-  statsRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  statTile: {
-    flex: 1,
-    minWidth: 0,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: CLASSWORK_BORDER,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 4,
-  },
-  statTileWarning: {
-    backgroundColor: '#FFFBEB',
-    borderColor: '#FDE68A',
-  },
-  statLabel: {
-    fontSize: 12,
-    fontWeight: '500',
+  studentAverage: {
+    fontSize: 14,
+    lineHeight: 20,
     color: CLASSWORK_MUTED,
     ...COOPER_FONT,
-  },
-  statValueOverall: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#6BB3E8',
-    letterSpacing: -0.5,
-    ...LEAGUE_FONT,
-  },
-  statValueEmpty: {
-    color: '#CBD5E1',
-  },
-  statValueMissing: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: CLASSWORK_FG,
-    letterSpacing: -0.5,
-    ...LEAGUE_FONT,
-  },
-  statValueMissingActive: {
-    color: '#D97706',
   },
   recentSection: {
     gap: 10,

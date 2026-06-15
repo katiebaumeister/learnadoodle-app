@@ -66,6 +66,8 @@ export default function AssignmentCreateModal({
   defaultTitle = null,
   defaultMaterialId = null,
   defaultEventType: _defaultEventType = null,
+  defaultLinkedLearningDayEventId = null,
+  defaultCurriculumLessonId = null,
   requireParentApprovalDefault = false,
 }) {
   const toast = useToast();
@@ -140,7 +142,7 @@ export default function AssignmentCreateModal({
     setSubjectId(defaultSubjectId || null);
     setUnitId(null);
     setUnitTitle('');
-    setCurriculumLessonId(null);
+    setCurriculumLessonId(defaultCurriculumLessonId || null);
     setLessonLabel('');
     const baseDate = defaultDate ? new Date(defaultDate) : null;
     setAvailableDate(baseDate);
@@ -159,6 +161,7 @@ export default function AssignmentCreateModal({
     defaultSubjectId,
     defaultTitle,
     defaultMaterialId,
+    defaultCurriculumLessonId,
     requireParentApprovalDefault,
     familyMembers,
   ]);
@@ -238,6 +241,7 @@ export default function AssignmentCreateModal({
     milestoneDueDate,
     saveMode,
     releaseDate,
+    linkedLearningDayEventId: defaultLinkedLearningDayEventId || null,
   }), [
     familyId,
     title,
@@ -256,6 +260,7 @@ export default function AssignmentCreateModal({
     lessonLabel,
     materialIds,
     milestoneDueDate,
+    defaultLinkedLearningDayEventId,
   ]);
 
   const persistAssignment = useCallback(async (saveMode, releaseDate = null) => {
