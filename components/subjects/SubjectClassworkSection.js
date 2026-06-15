@@ -44,6 +44,7 @@ import {
 import ManualCurriculumBuilderModal from '../ManualCurriculumBuilderModal';
 import { useToast } from '../Toast';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
+import { WebDragHandle, WebDropView, readWebDragPayload, writeWebDragPayload } from '../ui/webDragDrop';
 import ClassworkPlanningModal from './ClassworkPlanningModal';
 import ScheduleLessonModal from './ScheduleLessonModal';
 import { dispatchOpenLearningDayChoiceModal } from '../../lib/planner/learningDayModalNavigation';
@@ -59,121 +60,46 @@ const ASSIGNMENT_PLACEMENT_DRAG_MIME = 'application/x-learnadoodle-assignment-pl
 const CLASSWORK_LESSON_DRAG_MIME = 'application/x-learnadoodle-classwork-lesson-placement';
 
 function readAssignmentDragPayload(ev) {
-  try {
-    const dt = ev?.nativeEvent?.dataTransfer ?? ev?.dataTransfer;
-    const raw = dt?.getData?.(ASSIGNMENT_PLACEMENT_DRAG_MIME);
-    if (!raw) return null;
-    const payload = JSON.parse(raw);
-    if (!payload?.assignmentId) return null;
-    return payload;
-  } catch (_) {
-    return null;
-  }
+  return readWebDragPayload(
+    ev,
+    ASSIGNMENT_PLACEMENT_DRAG_MIME,
+    (payload) => !!payload?.assignmentId,
+  );
 }
 
 function readLessonDragPayload(ev) {
-  try {
-    const dt = ev?.nativeEvent?.dataTransfer ?? ev?.dataTransfer;
-    const raw = dt?.getData?.(CLASSWORK_LESSON_DRAG_MIME);
-    if (!raw) return null;
-    const payload = JSON.parse(raw);
-    if (!payload?.lessonId) return null;
-    return payload;
-  } catch (_) {
-    return null;
-  }
+  return readWebDragPayload(
+    ev,
+    CLASSWORK_LESSON_DRAG_MIME,
+    (payload) => !!payload?.lessonId,
+  );
 }
 
-function lessonDragWebProps({
-  lessonId,
-  fromUnitId = null,
-  enabled = true,
-  onDragStart,
-}) {
-  if (Platform.OS !== 'web' || !enabled || !lessonId) return {};
-  return {
-    draggable: true,
-    onDragStart: (ev) => {
-      onDragStart?.(lessonId);
-      try {
-        const dt = ev?.nativeEvent?.dataTransfer ?? ev?.dataTransfer;
-        if (dt?.setData) {
-          dt.setData(
-            CLASSWORK_LESSON_DRAG_MIME,
-            JSON.stringify({ lessonId: String(lessonId), fromUnitId }),
-          );
-          dt.effectAllowed = 'move';
-        }
-      } catch (_) {}
-    },
-  };
-}
-
-function lessonDropTargetWebProps({ onDrop, isActive = false, onDragEnter, onDragLeave }) {
-  if (Platform.OS !== 'web' || !onDrop) return {};
+function dropTargetWebProps({ onDrop }) {
+  if (!onDrop) return {};
   return {
     onDragOver: (ev) => {
-      ev?.preventDefault?.();
       if (ev?.dataTransfer) ev.dataTransfer.dropEffect = 'move';
     },
-    onDragEnter: (ev) => {
-      ev?.preventDefault?.();
-      onDragEnter?.();
-    },
-    onDragLeave: (ev) => {
-      onDragLeave?.(ev);
-    },
     onDrop: (ev) => {
-      ev?.preventDefault?.();
-      const payload = readLessonDragPayload(ev);
-      if (payload) onDrop(payload);
-    },
-    ...(isActive ? { 'data-lesson-drop-active': 'true' } : {}),
-  };
-}
-
-function assignmentDragWebProps({
-  assignmentId,
-  fromUnitId = null,
-  fromLessonId = null,
-  enabled = true,
-  onDragStart,
-}) {
-  if (Platform.OS !== 'web' || !enabled || !assignmentId) return {};
-  return {
-    draggable: true,
-    onDragStart: (ev) => {
-      onDragStart?.(assignmentId);
-      try {
-        const dt = ev?.nativeEvent?.dataTransfer ?? ev?.dataTransfer;
-        if (dt?.setData) {
-          dt.setData(
-            ASSIGNMENT_PLACEMENT_DRAG_MIME,
-            JSON.stringify({ assignmentId: String(assignmentId), fromUnitId, fromLessonId }),
-          );
-          dt.effectAllowed = 'move';
-        }
-      } catch (_) {}
-    },
-  };
-}
-
-function dropTargetWebProps({ onDrop, isActive = false }) {
-  if (Platform.OS !== 'web' || !onDrop) return {};
-  return {
-    onDragOver: (ev) => {
-      ev?.preventDefault?.();
-      if (ev?.dataTransfer) ev.dataTransfer.dropEffect = 'move';
-    },
-    onDragEnter: (ev) => {
-      ev?.preventDefault?.();
-    },
-    onDrop: (ev) => {
-      ev?.preventDefault?.();
       const payload = readAssignmentDragPayload(ev);
       if (payload) onDrop(payload);
     },
-    ...(isActive ? { 'data-drop-active': 'true' } : {}),
+  };
+}
+
+function lessonDropTargetWebProps({ onDrop, onDragEnter, onDragLeave }) {
+  if (!onDrop) return {};
+  return {
+    onDragOver: (ev) => {
+      if (ev?.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+    },
+    onDragEnter,
+    onDragLeave,
+    onDrop: (ev) => {
+      const payload = readLessonDragPayload(ev);
+      if (payload) onDrop(payload);
+    },
   };
 }
 
@@ -193,16 +119,20 @@ function ClassworkUnitCard({
       ? null
       : `${lessonCount} ${lessonCount === 1 ? 'lesson' : 'lessons'}`
   );
-  const { style: dropStyle, ...restDropWebProps } = dropWebProps;
+  const { style: dropStyle, onDragOver, onDragEnter, onDragLeave, onDrop, ...restDropWebProps } = dropWebProps;
 
   return (
     <View style={styles.sectionBlock}>
-      <View
+      <WebDropView
         style={[
           styles.unitCard,
           dropActive && styles.unitCardDropActive,
           dropStyle,
         ]}
+        onDragOver={onDragOver}
+        onDragEnter={onDragEnter}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
         {...restDropWebProps}
       >
         <View style={styles.unitHeaderRow}>
@@ -236,7 +166,7 @@ function ClassworkUnitCard({
             {children}
           </View>
         ) : null}
-      </View>
+      </WebDropView>
     </View>
   );
 }
@@ -262,9 +192,21 @@ function LessonPeerRow({
   const [menuOpen, setMenuOpen] = useState(false);
   const showLessonMenu = isParentViewer && lesson.lessonId;
   const canDrag = isParentViewer && Platform.OS === 'web' && lesson.lessonId;
+  const lessonDropHandlers = lessonDropTargetWebProps({
+    onDrop: onLessonDrop,
+    onDragEnter: onDragEnterLesson,
+    onDragLeave: onDragLeaveLesson,
+  });
+  const handleLessonDragStart = useCallback((ev) => {
+    onDragStartLesson?.(lesson.lessonId);
+    writeWebDragPayload(ev, CLASSWORK_LESSON_DRAG_MIME, {
+      lessonId: String(lesson.lessonId),
+      fromUnitId: unit?.unitId ?? null,
+    });
+  }, [lesson.lessonId, unit?.unitId, onDragStartLesson]);
 
   return (
-    <View
+    <WebDropView
       ref={rowRef}
       style={[
         styles.lessonRow,
@@ -273,27 +215,21 @@ function LessonPeerRow({
         dropActive && styles.lessonRowDropActive,
         menuOpen && Platform.OS === 'web' && styles.lessonRowMenuOpen,
       ]}
-      {...lessonDropTargetWebProps({
-        onDrop: onLessonDrop,
-        isActive: dropActive,
-        onDragEnter: onDragEnterLesson,
-        onDragLeave: onDragLeaveLesson,
-      })}
+      onDragOver={lessonDropHandlers.onDragOver}
+      onDragEnter={lessonDropHandlers.onDragEnter}
+      onDragLeave={lessonDropHandlers.onDragLeave}
+      onDrop={lessonDropHandlers.onDrop}
     >
       <View style={[styles.lessonRowInner, dragging && styles.lessonRowDragging]}>
         {canDrag ? (
-          <View
+          <WebDragHandle
+            enabled={canDrag}
+            onDragStart={handleLessonDragStart}
             style={styles.gripHandle}
-            {...lessonDragWebProps({
-              lessonId: lesson.lessonId,
-              fromUnitId: unit?.unitId,
-              enabled: canDrag,
-              onDragStart: onDragStartLesson,
-            })}
             accessibilityLabel="Drag lesson to another unit"
           >
             <GripVertical size={16} color={CLASSWORK_MUTED} />
-          </View>
+          </WebDragHandle>
         ) : (
           <View style={styles.gripSpacer} />
         )}
@@ -364,7 +300,7 @@ function LessonPeerRow({
           </View>
         ) : null}
       </View>
-    </View>
+    </WebDropView>
   );
 }
 
@@ -408,6 +344,16 @@ function AssignmentPeerRow({
     return targets;
   }, [fromUnitId, unitOptions]);
 
+  const handleAssignmentDragStart = useCallback((ev) => {
+    if (!assignment?.id) return;
+    onDragStartAssignment?.(assignment.id);
+    writeWebDragPayload(ev, ASSIGNMENT_PLACEMENT_DRAG_MIME, {
+      assignmentId: String(assignment.id),
+      fromUnitId,
+      fromLessonId,
+    });
+  }, [assignment?.id, fromUnitId, fromLessonId, onDragStartAssignment]);
+
   return (
     <View
       ref={rowRef}
@@ -418,21 +364,16 @@ function AssignmentPeerRow({
         menuOpen && Platform.OS === 'web' && styles.lessonRowMenuOpen,
       ]}
     >
-      <View style={[styles.lessonRowInner, dragging && styles.lessonRowDragging]}>
-        {canDrag ? (
-          <View
+      <View style={[styles.lessonRowInner, styles.lessonRowInnerTop, dragging && styles.lessonRowDragging]}>
+        {canDrag && assignment?.id ? (
+          <WebDragHandle
+            enabled={canDrag}
+            onDragStart={handleAssignmentDragStart}
             style={styles.gripHandle}
-            {...assignmentDragWebProps({
-              assignmentId: assignment.id,
-              fromUnitId,
-              fromLessonId,
-              enabled: canDrag,
-              onDragStart: onDragStartAssignment,
-            })}
             accessibilityLabel="Drag assignment to another unit"
           >
             <GripVertical size={16} color={CLASSWORK_MUTED} />
-          </View>
+          </WebDragHandle>
         ) : (
           <View style={styles.gripSpacer} />
         )}
@@ -449,13 +390,6 @@ function AssignmentPeerRow({
           >
             {subtitleLine}
           </Text>
-          {attachedLessonTitle ? (
-            <Text style={styles.lessonMetaMuted} numberOfLines={1}>
-              {attachedLessonTitle}
-            </Text>
-          ) : null}
-        </View>
-        <View style={styles.assignmentRowActions}>
           {isParentViewer ? (
             <TouchableOpacity
               onPress={() => onOpen?.(assignment)}
@@ -467,8 +401,14 @@ function AssignmentPeerRow({
               <Text style={styles.peerAction}>Open assignment</Text>
             </TouchableOpacity>
           ) : null}
-          {showAssignmentMenu ? (
-            <View style={styles.menuAnchor}>
+          {attachedLessonTitle ? (
+            <Text style={styles.lessonMetaMuted} numberOfLines={1}>
+              {attachedLessonTitle}
+            </Text>
+          ) : null}
+        </View>
+        {showAssignmentMenu ? (
+          <View style={styles.menuAnchor}>
               <TouchableOpacity
                 ref={menuBtnRef}
                 onPress={() => setMenuOpen((open) => !open)}
@@ -513,8 +453,7 @@ function AssignmentPeerRow({
                 />
               </Dropdown>
             </View>
-          ) : null}
-        </View>
+        ) : null}
       </View>
     </View>
   );
@@ -1531,22 +1470,21 @@ export default function SubjectClassworkSection({
               })}
             </View>
             {Platform.OS === 'web' && lessonCount > 0 ? (
-              <View
-                style={styles.dropZone}
-                {...lessonDropTargetWebProps({
-                  onDrop: handleLessonDropEnd(unit),
-                  isActive: dragOverLessonTarget === `lesson-end-${unit.unitId}`,
-                })}
-                {...(Platform.OS === 'web' ? {
-                  onDragEnter: () => setDragOverLessonTarget(`lesson-end-${unit.unitId}`),
-                  onDragLeave: (ev) => {
-                    if (!ev?.currentTarget?.contains?.(ev?.relatedTarget)) {
-                      setDragOverLessonTarget((prev) => (
-                        prev === `lesson-end-${unit.unitId}` ? null : prev
-                      ));
-                    }
-                  },
-                } : {})}
+              <WebDropView
+                style={[
+                  styles.dropZone,
+                  dragOverLessonTarget === `lesson-end-${unit.unitId}` && styles.lessonRowDropActive,
+                ]}
+                onDragOver={lessonDropTargetWebProps({ onDrop: handleLessonDropEnd(unit) }).onDragOver}
+                onDragEnter={() => setDragOverLessonTarget(`lesson-end-${unit.unitId}`)}
+                onDragLeave={(ev) => {
+                  if (!ev?.currentTarget?.contains?.(ev?.relatedTarget)) {
+                    setDragOverLessonTarget((prev) => (
+                      prev === `lesson-end-${unit.unitId}` ? null : prev
+                    ));
+                  }
+                }}
+                onDrop={lessonDropTargetWebProps({ onDrop: handleLessonDropEnd(unit) }).onDrop}
               />
             ) : null}
           </ClassworkUnitCard>
@@ -1748,6 +1686,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  lessonRowInnerTop: {
+    alignItems: 'flex-start',
+  },
   lessonRowHighlight: {
     backgroundColor: '#FEF9C3',
     borderRadius: 6,
@@ -1773,7 +1714,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
     justifyContent: 'center',
     flexShrink: 0,
-    ...(Platform.OS === 'web' && { cursor: 'grab' }),
+    ...(Platform.OS === 'web' && {
+      cursor: 'grab',
+      userSelect: 'none',
+      WebkitUserSelect: 'none',
+      touchAction: 'none',
+    }),
   },
   gripSpacer: {
     width: 20,
@@ -1844,12 +1790,6 @@ const styles = StyleSheet.create({
     width: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    flexShrink: 0,
-  },
-  assignmentRowActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
     flexShrink: 0,
   },
   peerAction: {

@@ -27,6 +27,7 @@ import {
   GripVertical,
 } from 'lucide-react';
 import { STRINGS } from '../lib/i18n/strings';
+import { WebDragHandle, WebDropView, writeWebDragPayload } from './ui/webDragDrop';
 import {
   commitManualDraft,
   fetchSubjectCurriculumEventsStructure,
@@ -121,7 +122,7 @@ function lessonIdFromDraftTempId(tempId) {
 function readDraftLessonDragPayload(ev) {
   try {
     const dt = ev?.nativeEvent?.dataTransfer ?? ev?.dataTransfer;
-    const raw = dt?.getData?.(DRAFT_LESSON_DRAG_MIME);
+    const raw = dt?.getData?.(DRAFT_LESSON_DRAG_MIME) || dt?.getData?.('text/plain');
     if (!raw) return null;
     const p = JSON.parse(raw);
     if (typeof p.fromUnit !== 'number' || typeof p.fromLesson !== 'number') return null;
@@ -838,12 +839,51 @@ export default function ManualCurriculumBuilderModal({
             const unitDropProps = typeof getUnitDropWebProps === 'function'
               ? getUnitDropWebProps(unitIdx)
               : {};
-            const { style: unitDropStyle, ...restUnitDropProps } = unitDropProps;
+            const {
+              style: unitDropStyle,
+              onDrop: onAssignmentUnitDrop,
+              onDragOver: onAssignmentDragOver,
+              onDragEnter: onAssignmentDragEnter,
+              onDragLeave: onAssignmentDragLeave,
+              ...restUnitDropProps
+            } = unitDropProps;
+
+            const handleAssignmentDropOnUnit = (ev) => {
+              onAssignmentUnitDrop?.(ev);
+            };
+
+            const handleLessonRowDrop = (ev, lessonIdx) => {
+              const p = readDraftLessonDragPayload(ev);
+              if (p) {
+                if (p.fromUnit === unitIdx && p.fromLesson === lessonIdx) return;
+                moveDraftLessonToUnit(p.fromUnit, p.fromLesson, unitIdx, lessonIdx);
+                return;
+              }
+              handleAssignmentDropOnUnit(ev);
+            };
+
+            const handleUnitEndDrop = (ev) => {
+              const p = readDraftLessonDragPayload(ev);
+              if (p) {
+                moveDraftLessonToUnit(p.fromUnit, p.fromLesson, unitIdx, null);
+                return;
+              }
+              handleAssignmentDropOnUnit(ev);
+            };
+
+            const handleUnitCardDragOver = (ev) => {
+              if (ev?.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+              onAssignmentDragOver?.(ev);
+            };
 
             return (
               <View key={unit.temp_id || unitIdx} style={styles.sectionBlock}>
-                <View
+                <WebDropView
                   style={[styles.unitCard, unitDropStyle]}
+                  onDragOver={Platform.OS === 'web' ? handleUnitCardDragOver : undefined}
+                  onDragEnter={onAssignmentDragEnter}
+                  onDragLeave={onAssignmentDragLeave}
+                  onDrop={Platform.OS === 'web' ? handleUnitEndDrop : undefined}
                   {...restUnitDropProps}
                 >
                       <View style={styles.unitHeaderRow}>
@@ -926,46 +966,32 @@ export default function ManualCurriculumBuilderModal({
 
                               return (
                                 <View key={lesson.temp_id || lessonIdx} style={styles.lessonBlock}>
-                                <View
+                                <WebDropView
                                   style={[
                                     styles.lessonRow,
                                     lessonIdx > 0 && styles.lessonRowBorder,
                                     Platform.OS !== 'web' && lessonMenuOpen && { zIndex: 60, elevation: 20 },
                                   ]}
-                                  {...(Platform.OS === 'web'
-                                    ? {
-                                        onDragOver: (ev) => ev?.preventDefault?.(),
-                                        onDrop: (ev) => {
-                                          ev?.preventDefault?.();
-                                          const p = readDraftLessonDragPayload(ev);
-                                          if (!p) return;
-                                          if (p.fromUnit === unitIdx && p.fromLesson === lessonIdx) return;
-                                          moveDraftLessonToUnit(p.fromUnit, p.fromLesson, unitIdx, lessonIdx);
-                                        },
-                                      }
-                                    : {})}
+                                  onDragOver={Platform.OS === 'web' ? (ev) => {
+                                    if (ev?.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+                                  } : undefined}
+                                  onDrop={Platform.OS === 'web' ? (ev) => handleLessonRowDrop(ev, lessonIdx) : undefined}
                                 >
                                   <View style={styles.lessonRowInner}>
                                     {Platform.OS === 'web' ? (
-                                      <View
-                                        draggable
+                                      <WebDragHandle
+                                        enabled
                                         onDragStart={(ev) => {
-                                          try {
-                                            const dt = ev?.nativeEvent?.dataTransfer ?? ev?.dataTransfer;
-                                            if (dt?.setData) {
-                                              dt.setData(
-                                                DRAFT_LESSON_DRAG_MIME,
-                                                JSON.stringify({ fromUnit: unitIdx, fromLesson: lessonIdx }),
-                                              );
-                                              dt.effectAllowed = 'move';
-                                            }
-                                          } catch (_) {}
+                                          writeWebDragPayload(ev, DRAFT_LESSON_DRAG_MIME, {
+                                            fromUnit: unitIdx,
+                                            fromLesson: lessonIdx,
+                                          });
                                         }}
                                         style={styles.gripHandle}
                                         accessibilityLabel={s('planMyYear.multiSubjectUnits.draftDragLessonA11y')}
                                       >
                                         <GripVertical size={16} color={MUTED} />
-                                      </View>
+                                      </WebDragHandle>
                                     ) : (
                                       <View style={styles.mobileReorder}>
                                         <TouchableOpacity
@@ -1041,7 +1067,7 @@ export default function ManualCurriculumBuilderModal({
                                       ) : null}
                                     </View>
                                   </View>
-                                </View>
+                                </WebDropView>
                                   {typeof renderAfterLesson === 'function'
                                     ? renderAfterLesson(unitIdx, lessonIdx, lesson)
                                     : null}
@@ -1049,15 +1075,12 @@ export default function ManualCurriculumBuilderModal({
                               );
                             })}
                             {Platform.OS === 'web' && lessonCount > 0 ? (
-                              <View
+                              <WebDropView
                                 style={styles.dropZone}
-                                onDragOver={(ev) => ev?.preventDefault?.()}
-                                onDrop={(ev) => {
-                                  ev?.preventDefault?.();
-                                  const p = readDraftLessonDragPayload(ev);
-                                  if (!p) return;
-                                  moveDraftLessonToUnit(p.fromUnit, p.fromLesson, unitIdx, null);
+                                onDragOver={(ev) => {
+                                  if (ev?.dataTransfer) ev.dataTransfer.dropEffect = 'move';
                                 }}
+                                onDrop={handleUnitEndDrop}
                               />
                             ) : null}
                             <TouchableOpacity
@@ -1074,7 +1097,7 @@ export default function ManualCurriculumBuilderModal({
                           </View>
                         </View>
                       ) : null}
-                </View>
+                </WebDropView>
               </View>
             );
           })}
@@ -1333,7 +1356,12 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 2,
     justifyContent: 'center',
-    ...(Platform.OS === 'web' ? { cursor: 'grab' } : {}),
+    ...(Platform.OS === 'web' ? {
+      cursor: 'grab',
+      userSelect: 'none',
+      WebkitUserSelect: 'none',
+      touchAction: 'none',
+    } : {}),
   },
   mobileReorder: {
     alignItems: 'center',

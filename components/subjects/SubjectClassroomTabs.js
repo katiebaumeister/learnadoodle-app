@@ -14,35 +14,21 @@ const LEAGUE_FONT = Platform.OS === 'web'
 export default function SubjectClassroomTabs({
   activeTab = 'bulletin',
   onChange,
-  bulletinCaption = null,
-  classworkCaption = null,
-  gradesCaption = null,
 }) {
-  const captions = {
-    bulletin: bulletinCaption,
-    classwork: classworkCaption,
-    grades: gradesCaption,
-  };
-
   return (
-    <View style={styles.row}>
+    <View style={styles.bar} accessibilityRole="tablist">
       {TABS.map((tab) => {
         const active = activeTab === tab.id;
         return (
           <TouchableOpacity
             key={tab.id}
-            style={[styles.tile, active && styles.tileActive]}
+            style={[styles.tab, active && styles.tabActive]}
             onPress={() => onChange?.(tab.id)}
-            accessibilityRole="button"
+            accessibilityRole="tab"
             accessibilityState={{ selected: active }}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <Text style={styles.label}>{tab.label}</Text>
-            {captions[tab.id] ? (
-              <Text style={styles.caption} numberOfLines={2}>
-                {captions[tab.id]}
-              </Text>
-            ) : null}
+            <Text style={[styles.label, active && styles.labelActive]}>{tab.label}</Text>
           </TouchableOpacity>
         );
       })}
@@ -51,52 +37,38 @@ export default function SubjectClassroomTabs({
 }
 
 const styles = StyleSheet.create({
-  row: {
+  bar: {
     flexDirection: 'row',
-    alignItems: 'stretch',
-    gap: 12,
-    marginBottom: 8,
+    alignItems: 'flex-end',
     width: '100%',
     flexShrink: 0,
     ...(Platform.OS === 'web' && {
       display: 'flex',
     }),
   },
-  tile: {
-    flex: 1,
-    flexBasis: 0,
-    minWidth: 0,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    paddingTop: 16,
-    paddingBottom: 16,
-    paddingHorizontal: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.16)',
-    gap: 4,
+  tab: {
+    paddingTop: 0,
+    paddingBottom: 10,
+    paddingHorizontal: 16,
+    marginBottom: -1,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+    maxWidth: '100%',
     ...(Platform.OS === 'web' && {
-      transition: 'all 0.2s ease',
+      transition: 'border-color 0.15s ease, color 0.15s ease',
     }),
   },
-  tileActive: {
-    backgroundColor: '#F1F5F9',
-    borderColor: 'rgba(148, 163, 184, 0.32)',
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
-    }),
+  tabActive: {
+    borderBottomColor: '#2563EB',
   },
   label: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#374151',
-    letterSpacing: -0.2,
+    color: '#64748B',
+    letterSpacing: -0.1,
     ...LEAGUE_FONT,
   },
-  caption: {
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '400',
-    color: '#64748B',
-    ...LEAGUE_FONT,
+  labelActive: {
+    color: '#0F172A',
   },
 });

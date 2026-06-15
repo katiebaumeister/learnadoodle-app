@@ -1854,12 +1854,6 @@ export default function SubjectDetailPage({
 
   const unitsEditorLabel = hasLearningGoalsContent ? 'Edit units' : 'Add units';
 
-  const bulletinTabCaption = 'Recent activity and communications';
-  const classworkTabCaption = classworkModel.unscheduledLessonCount > 0
-    ? `${classworkModel.unscheduledLessonCount} lesson${classworkModel.unscheduledLessonCount === 1 ? '' : 's'} not scheduled`
-    : 'Organize lessons and assignments';
-  const gradesTabCaption = 'Review grades and missing work';
-
   const openEventWorkflow = useCallback((event, {
     parentFocus = null,
     childFocus = null,
@@ -3613,19 +3607,23 @@ export default function SubjectDetailPage({
           showsVerticalScrollIndicator: true,
         } : {})}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerTopRow}>
-            {onBack ? (
-              <TouchableOpacity style={styles.backButton} onPress={onBack}>
-                <ArrowLeft size={20} color={colors.text || '#1F2937'} />
-                <Text style={styles.backButtonText}>Back to school year</Text>
-              </TouchableOpacity>
-            ) : (
-              <View />
-            )}
-            <View style={styles.headerTopActions}>
-              {isParentViewer ? (
+        <View style={styles.tabHeaderBlock}>
+          {onBack ? (
+            <TouchableOpacity style={styles.backButton} onPress={onBack}>
+              <ArrowLeft size={20} color={colors.text || '#1F2937'} />
+              <Text style={styles.backButtonText}>Back to school year</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          <View style={styles.tabBarRow}>
+            <View style={styles.tabBarMain}>
+              <SubjectClassroomTabs
+                activeTab={classroomTab}
+                onChange={setClassroomTab}
+              />
+            </View>
+            {isParentViewer ? (
+              <View style={styles.tabBarActions}>
                 <SubjectClassworkSmartActions
                   onGapAnalysis={openGapAnalysisModal}
                   gapAnalysisWorking={gapAnalysisWorking}
@@ -3634,8 +3632,6 @@ export default function SubjectDetailPage({
                   buttonStyle={styles.headerTopActionBtn}
                   textStyle={styles.headerTopActionText}
                 />
-              ) : null}
-              {isParentViewer ? (
                 <TouchableOpacity
                   style={styles.headerTopActionBtn}
                   onPress={() => openSubjectSettings('details')}
@@ -3645,8 +3641,6 @@ export default function SubjectDetailPage({
                   <Edit2 size={18} color="#334155" strokeWidth={2.25} />
                   <Text style={styles.headerTopActionText}>Edit subject</Text>
                 </TouchableOpacity>
-              ) : null}
-              {isParentViewer ? (
                 <TouchableOpacity
                   style={styles.headerTopActionBtn}
                   onPress={handleCreateAssignment}
@@ -3656,18 +3650,10 @@ export default function SubjectDetailPage({
                   <Plus size={18} color="#334155" strokeWidth={2.25} />
                   <Text style={styles.headerTopActionText}>Add assignment</Text>
                 </TouchableOpacity>
-              ) : null}
-            </View>
+              </View>
+            ) : null}
           </View>
         </View>
-
-        <SubjectClassroomTabs
-          activeTab={classroomTab}
-          onChange={setClassroomTab}
-          bulletinCaption={bulletinTabCaption}
-          classworkCaption={classworkTabCaption}
-          gradesCaption={gradesTabCaption}
-        />
 
         {classroomTab === 'bulletin' ? (
         <View id="bulletin-board-section" style={styles.bulletinBoardSection}>
@@ -4637,6 +4623,41 @@ const styles = StyleSheet.create({
     width: '100%',
     flexShrink: 0,
   },
+  tabHeaderBlock: {
+    width: '100%',
+    flexShrink: 0,
+    marginBottom: 0,
+  },
+  tabBarRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    width: '100%',
+    marginTop: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.22)',
+  },
+  tabBarMain: {
+    flex: 1,
+    minWidth: 0,
+  },
+  tabBarActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingLeft: 12,
+    paddingBottom: 6,
+    flexShrink: 0,
+  },
+  tabTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 2,
+    width: '100%',
+  },
   headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4651,15 +4672,14 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     flexWrap: 'wrap',
     gap: 10,
-    flex: 1,
-    minWidth: 0,
+    flexShrink: 0,
   },
   headerTopActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     backgroundColor: '#FFFFFF',
     borderRadius: 9999,
     borderWidth: 1,
@@ -4683,6 +4703,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     padding: 4,
     marginLeft: -4,
+    marginBottom: 0,
     gap: 4,
     flexShrink: 0,
     ...(Platform.OS === 'web' && {
@@ -4953,7 +4974,7 @@ const styles = StyleSheet.create({
     flexBasis: 0,
     minHeight: 0,
     marginBottom: 0,
-    marginTop: 2,
+    marginTop: 14,
     paddingTop: 4,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
