@@ -8,6 +8,7 @@ import { logAddEvent } from '../app/services/plannerInstrumentation';
 import { getMaterials } from '../lib/services/materialsClient';
 import { useSession } from '../contexts/SessionContext';
 import AddMaterialModal from './materials/AddMaterialModal';
+import { nestedAddMaterialModalProps } from './create/shared/nestedAddMaterialModalProps';
 import { apiRequest } from '../lib/apiClient';
 import { Search } from 'lucide-react';
 import {
@@ -6396,6 +6397,13 @@ export default function TaskCreateModal({
       {showAddMaterialModal ? (
         <AddMaterialModal
           visible
+          {...nestedAddMaterialModalProps({
+            familyId,
+            familyMembers,
+            subjectId: subjectId || subjectIds[0] || null,
+            assigneeIds,
+            subjects,
+          })}
           onClose={() => setShowAddMaterialModal(false)}
           onSaved={(saved) => {
             loadMaterials();
@@ -6405,8 +6413,6 @@ export default function TaskCreateModal({
               setAttachedMaterialIds([id]);
             }
           }}
-          familyId={familyId}
-          children={familyMembers}
         />
       ) : null}
 

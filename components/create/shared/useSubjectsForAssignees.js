@@ -1,9 +1,45 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { parseChildIds } from '../../../lib/services/subjectsClient';
 
-function parseSubjectChildIds(raw) {
-  return String(raw == null ? '' : raw)
-    .split(';')
+export { parseChildIds as parseSubjectChildIds };
+
+/** All family subjects (for assignment subject picker). */
+export function useFamilySubjects(familyId) {
+  const [subjects, setSubjects] = useState([]);
+
+  useEffect(() => {
+    if (!familyId) {
+      setSubjects([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('subject')
+        .select('id, name, child_id')
+        .eq('family_id', familyId);
+      if (cancelled) return;
+      if (error) {
+        setSubjects([]);
+        return;
+      }
+      setSubjects(
+        (data || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')),
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [familyId]);
+
+  return subjects;
+}
+
+function parseSubjectChildIdsFromRow(raw) {
+  return parseChildIds(raw == null ? '' : raw)
     .map((id) => id.trim())
     .filter(Boolean);
 }
@@ -35,7 +71,7 @@ export function useSubjectsForAssignees(familyId, assigneeIds, defaultSubjectId 
 
       const subjectMap = new Map();
       (allSubjects || []).forEach((subject) => {
-        const subjectChildIds = parseSubjectChildIds(subject.child_id);
+        const subjectChildIds = parseSubjectChildIdsFromRow(subject.child_id);
         const isFamilyWide = subjectChildIds.length === 0;
         const isForSelectedChild = subjectChildIds.some((id) =>
           assigneeIds.some((assigneeId) => String(assigneeId) === String(id))

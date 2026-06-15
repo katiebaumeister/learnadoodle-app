@@ -10,6 +10,8 @@ import EventAttachmentsField, { materialIdsFromSelection } from './shared/EventA
 import EventRecurrenceFields from './shared/EventRecurrenceFields';
 import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
+import { nestedAddMaterialModalProps } from './shared/nestedAddMaterialModalProps';
+import { useFamilySubjects } from './shared/useSubjectsForAssignees';
 import { createModalStyles as styles, PLACEHOLDER, CREATE_EVENT_MODAL_MAX_WIDTH } from './shared/createModalStyles';
 import { updateCalendarEvent, buildEventRecurrenceRule } from '../../lib/create/saveEventHelpers';
 import { validateOptionalEventTimes } from '../../lib/create/eventTimeUtils';
@@ -46,6 +48,7 @@ export default function CalendarEventEditModal({
   const [submitting, setSubmitting] = useState(false);
   const [validationBanner, setValidationBanner] = useState('');
   const [errors, setErrors] = useState({});
+  const subjects = useFamilySubjects(familyId);
 
   useEffect(() => {
     if (!visible || !event) return;
@@ -379,7 +382,13 @@ export default function CalendarEventEditModal({
       {showAddMaterial ? (
         <AddMaterialModal
           visible
-          familyId={familyId}
+          {...nestedAddMaterialModalProps({
+            familyId,
+            familyMembers,
+            subjectId: event?.subject_id || null,
+            assigneeIds,
+            subjects,
+          })}
           onClose={() => setShowAddMaterial(false)}
           onSaved={(material) => {
             if (material?.id) setMaterialId(material.id);

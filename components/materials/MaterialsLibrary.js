@@ -1341,7 +1341,7 @@ export default function MaterialsLibrary({
               Upload materials to connect artifacts to learning.
             </Text>
             <TouchableOpacity
-              style={styles.uploadMaterialButton}
+              style={[styles.uploadMaterialButton, styles.emptyUploadButton]}
               onPress={handleOpenAddMaterialModal}
               activeOpacity={0.85}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -3494,6 +3494,9 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  emptyUploadButton: {
+    marginTop: 28,
   },
   emptyButton: {
     flexDirection: 'row',

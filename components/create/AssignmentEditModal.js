@@ -16,7 +16,6 @@ import { useToast } from '../Toast';
 import CreateModalShell from './shared/CreateModalShell';
 import InstructionsEditor from './shared/InstructionsEditor';
 import AssignmentResourceFields from './shared/AssignmentResourceFields';
-import { materialIdsFromSelection } from './shared/EventAttachmentsField';
 import FamilyMemberPicker, { resolveDefaultAssigneeIds } from './shared/FamilyMemberPicker';
 import SubjectSelectField from './shared/SubjectSelectField';
 import ClassworkPlacementFields from './shared/ClassworkPlacementFields';
@@ -28,8 +27,15 @@ import AssignmentSubmissionsModal from './AssignmentSubmissionsModal';
 import StudentResponseSection from './assignment/StudentResponseSection';
 import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
+import { nestedAddMaterialModalProps } from './shared/nestedAddMaterialModalProps';
 import { createModalStyles as styles, PLACEHOLDER, CREATE_ASSIGNMENT_MODAL_MAX_WIDTH } from './shared/createModalStyles';
-import { useSubjectsForAssignees } from './shared/useSubjectsForAssignees';
+import { useFamilySubjects } from './shared/useSubjectsForAssignees';
+import {
+  filterMembersForSubject,
+  findSubjectById,
+  pruneAssigneesForSubject,
+  validateSubjectAssigneeCombo,
+} from '../../lib/create/assignmentAssigneeHelpers';
 import { defaultWorkSpec } from '../../lib/workEventHelpers';
 import { parseStudentResponseType } from '../../lib/studentResponseTypes';
 import {
@@ -81,7 +87,7 @@ export default function AssignmentEditModal({
   const [title, setTitle] = useState('');
   const [instructions, setInstructions] = useState('');
   const [workSpec, setWorkSpec] = useState(() => buildDefaultWorkSpec());
-  const [materialId, setMaterialId] = useState(null);
+  const [materialIds, setMaterialIds] = useState([]);
   const [assigneeIds, setAssigneeIds] = useState([]);
   const [subjectId, setSubjectId] = useState(null);
   const [unitId, setUnitId] = useState(null);
@@ -99,7 +105,15 @@ export default function AssignmentEditModal({
   const [validationBanner, setValidationBanner] = useState('');
   const [errors, setErrors] = useState({});
 
-  const subjects = useSubjectsForAssignees(familyId, assigneeIds, subjectId);
+  const subjects = useFamilySubjects(familyId);
+  const selectedSubject = useMemo(
+    () => findSubjectById(subjects, subjectId),
+    [subjects, subjectId],
+  );
+  const eligibleMembers = useMemo(
+    () => filterMembersForSubject(familyMembers, selectedSubject, { includeIds: assigneeIds }),
+    [familyMembers, selectedSubject, assigneeIds],
+  );
   const wasVisibleRef = useRef(false);
   const contentScrollRef = useRef(null);
   const eventId = eventRow?.id || resolveLinkedEventIdFromAssignment(assignment);
@@ -156,7 +170,7 @@ export default function AssignmentEditModal({
           ...form.workSpec,
           student_response_type: form.workSpec?.student_response_type || null,
         });
-        setMaterialId(form.materialId);
+        setMaterialIds(form.materialIds || []);
         setAssigneeIds(
           form.assigneeIds.length > 0
             ? form.assigneeIds
@@ -191,6 +205,13 @@ export default function AssignmentEditModal({
   }, [visible, assignment, linkedEvent, initialView, familyMembers, toast]);
 
   useEffect(() => {
+    if (!subjectId || subjects.length === 0) return;
+    const subject = findSubjectById(subjects, subjectId);
+    if (!subject) return;
+    setAssigneeIds((prev) => pruneAssigneesForSubject(prev, subject));
+  }, [subjectId, subjects]);
+
+  useEffect(() => {
     setErrors((prev) => {
       if (Object.keys(prev).length === 0) return prev;
       const next = { ...prev };
@@ -199,15 +220,12 @@ export default function AssignmentEditModal({
         delete next.title;
         changed = true;
       }
-      if (next.subject && subjectId) {
-        delete next.subject;
-        changed = true;
-      }
       if (next.studentResponse && parseStudentResponseType(workSpec?.student_response_type)) {
         delete next.studentResponse;
         changed = true;
       }
-      if (next.assignee && assigneeIds.length > 0) {
+      const combo = validateSubjectAssigneeCombo(subjectId, assigneeIds, subjects);
+      if (next.assignee && combo.ok) {
         delete next.assignee;
         changed = true;
       }
@@ -217,23 +235,21 @@ export default function AssignmentEditModal({
       }
       return next;
     });
-  }, [title, subjectId, workSpec?.student_response_type, assigneeIds]);
+  }, [title, subjectId, workSpec?.student_response_type, assigneeIds, subjects]);
 
   const validate = useCallback(() => {
     const next = {};
     if (!title.trim()) next.title = 'Title is required';
-    if (!subjectId) next.subject = 'Subject is required';
     if (!parseStudentResponseType(workSpec?.student_response_type)) {
       next.studentResponse = 'Select how students should respond';
     }
-    if (assigneeIds.length === 0) {
-      next.assignee = 'Select at least one student';
-    }
+    const combo = validateSubjectAssigneeCombo(subjectId, assigneeIds, subjects);
+    if (!combo.ok) next.assignee = combo.message;
     setErrors(next);
     const ok = Object.keys(next).length === 0;
     setValidationBanner(ok ? '' : 'Please complete required fields before saving.');
     return ok;
-  }, [title, subjectId, assigneeIds, workSpec?.student_response_type]);
+  }, [title, subjectId, assigneeIds, workSpec?.student_response_type, subjects]);
 
   const handleSave = useCallback(async () => {
     if (!validate()) return;
@@ -275,7 +291,7 @@ export default function AssignmentEditModal({
         instructions,
         workSpecInput: workSpec,
         dueDate,
-        materialIds: materialIdsFromSelection(materialId),
+        materialIds,
         points: Number(points) || null,
         rubricId,
         unitId,
@@ -303,7 +319,7 @@ export default function AssignmentEditModal({
     instructions,
     workSpec,
     dueDate,
-    materialId,
+    materialIds,
     points,
     rubricId,
     unitId,
@@ -361,7 +377,8 @@ export default function AssignmentEditModal({
     }
   }, []);
 
-  const canSave = !!title.trim() && !!subjectId && assigneeIds.length > 0;
+  const canSave = !!title.trim()
+    && !!parseStudentResponseType(workSpec?.student_response_type);
   const datePickerValue = useMemo(() => dueDate, [dueDate]);
 
   if (!visible) return null;
@@ -471,8 +488,8 @@ export default function AssignmentEditModal({
                     <SectionHeading>Attach</SectionHeading>
                     <AssignmentResourceFields
                       familyId={familyId}
-                      materialId={materialId}
-                      onMaterialChange={setMaterialId}
+                      materialIds={materialIds}
+                      onMaterialIdsChange={setMaterialIds}
                       onAddMaterial={() => setShowAddMaterial(true)}
                       hideLabel
                     />
@@ -489,22 +506,25 @@ export default function AssignmentEditModal({
                       subjects={subjects}
                       subjectId={subjectId}
                       onSubjectChange={(nextSubjectId) => {
+                        const nextSubject = findSubjectById(subjects, nextSubjectId);
                         setSubjectId(nextSubjectId);
+                        setAssigneeIds((prev) => pruneAssigneesForSubject(prev, nextSubject));
                         setUnitId(null);
                         setUnitTitle('');
                         setCurriculumLessonId(null);
                         setLessonLabel('');
                       }}
                       label="Subject"
-                      required
+                      allowEmpty
                       error={errors.subject}
                     />
 
                     <FamilyMemberPicker
-                      familyMembers={familyMembers}
+                      familyMembers={eligibleMembers}
                       selectedIds={assigneeIds}
                       onChange={setAssigneeIds}
                       label="Children"
+                      required={false}
                       error={errors.assignee}
                     />
 
@@ -583,10 +603,22 @@ export default function AssignmentEditModal({
       {showAddMaterial ? (
         <AddMaterialModal
           visible
-          familyId={familyId}
+          {...nestedAddMaterialModalProps({
+            familyId,
+            familyMembers,
+            subjectId,
+            assigneeIds,
+            subjects,
+          })}
           onClose={() => setShowAddMaterial(false)}
           onSaved={(material) => {
-            if (material?.id) setMaterialId(material.id);
+            if (material?.id) {
+              setMaterialIds((prev) => {
+                const nextId = String(material.id);
+                if (prev.some((id) => String(id) === nextId)) return prev;
+                return [...prev, nextId];
+              });
+            }
             setShowAddMaterial(false);
           }}
         />

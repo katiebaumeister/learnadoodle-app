@@ -14,6 +14,7 @@ import { supabase } from '../../lib/supabase';
 import { formatDate, apiRequest, getFamilyMembers } from '../../lib/apiClient';
 import { getMaterials } from '../../lib/services/materialsClient';
 import AddMaterialModal from '../materials/AddMaterialModal';
+import { nestedAddMaterialModalProps } from '../create/shared/nestedAddMaterialModalProps';
 import { logDeleteEvent } from '../../app/services/plannerInstrumentation';
 import StandardsSearchModal from '../standards/StandardsSearchModal';
 import MasteryPicker from '../standards/MasteryPicker';
@@ -7162,6 +7163,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           {showAddMaterialModal ? (
             <AddMaterialModal
               visible
+              {...nestedAddMaterialModalProps({
+                familyId,
+                familyMembers,
+                subjectId,
+                assigneeIds,
+                subjects,
+              })}
               onClose={() => setShowAddMaterialModal(false)}
               onSaved={(saved) => {
                 loadMaterials();
@@ -7171,8 +7179,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   setAttachedMaterialIds([id]);
                 }
               }}
-              familyId={familyId}
-              children={familyMembers}
             />
           ) : null}
 

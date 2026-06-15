@@ -1212,9 +1212,11 @@ const styles = StyleSheet.create({
   embeddedRoot: {
     width: '100%',
     overflow: 'visible',
+    minHeight: 120,
   },
   embeddedScroll: {
-    flexGrow: 0,
+    flexGrow: 1,
+    width: '100%',
   },
   embeddedScrollContent: {
     paddingHorizontal: 0,

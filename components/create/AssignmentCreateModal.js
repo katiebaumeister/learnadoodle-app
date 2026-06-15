@@ -7,7 +7,6 @@ import { useToast } from '../Toast';
 import CreateModalShell from './shared/CreateModalShell';
 import InstructionsEditor from './shared/InstructionsEditor';
 import AssignmentResourceFields from './shared/AssignmentResourceFields';
-import { materialIdsFromSelection } from './shared/EventAttachmentsField';
 import FamilyMemberPicker, { resolveDefaultAssigneeIds } from './shared/FamilyMemberPicker';
 import SubjectSelectField from './shared/SubjectSelectField';
 import ClassworkPlacementFields from './shared/ClassworkPlacementFields';
@@ -18,9 +17,16 @@ import AssignmentReleaseDateModal from './assignment/AssignmentReleaseDateModal'
 import StudentResponseSection from './assignment/StudentResponseSection';
 import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
+import { nestedAddMaterialModalProps } from './shared/nestedAddMaterialModalProps';
 import { createModalStyles as styles, PLACEHOLDER, CREATE_ASSIGNMENT_MODAL_MAX_WIDTH } from './shared/createModalStyles';
-import { useSubjectsForAssignees } from './shared/useSubjectsForAssignees';
+import { useFamilySubjects } from './shared/useSubjectsForAssignees';
 import { saveAssignment } from '../../lib/create/saveEventHelpers';
+import {
+  filterMembersForSubject,
+  findSubjectById,
+  pruneAssigneesForSubject,
+  validateSubjectAssigneeCombo,
+} from '../../lib/create/assignmentAssigneeHelpers';
 import { defaultWorkSpec } from '../../lib/workEventHelpers';
 import { buildWorkSpecForStudentResponseType, parseStudentResponseType } from '../../lib/studentResponseTypes';
 
@@ -66,7 +72,7 @@ export default function AssignmentCreateModal({
   const [title, setTitle] = useState('');
   const [instructions, setInstructions] = useState('');
   const [workSpec, setWorkSpec] = useState(() => buildDefaultWorkSpec());
-  const [materialId, setMaterialId] = useState(null);
+  const [materialIds, setMaterialIds] = useState([]);
   const [assigneeIds, setAssigneeIds] = useState([]);
   const [subjectId, setSubjectId] = useState(null);
   const [unitId, setUnitId] = useState(null);
@@ -85,7 +91,15 @@ export default function AssignmentCreateModal({
   const [validationBanner, setValidationBanner] = useState('');
   const [errors, setErrors] = useState({});
 
-  const subjects = useSubjectsForAssignees(familyId, assigneeIds, defaultSubjectId);
+  const subjects = useFamilySubjects(familyId);
+  const selectedSubject = useMemo(
+    () => findSubjectById(subjects, subjectId),
+    [subjects, subjectId],
+  );
+  const eligibleMembers = useMemo(
+    () => filterMembersForSubject(familyMembers, selectedSubject, { includeIds: assigneeIds }),
+    [familyMembers, selectedSubject, assigneeIds],
+  );
   const wasVisibleRef = useRef(false);
   const contentScrollRef = useRef(null);
 
@@ -121,7 +135,7 @@ export default function AssignmentCreateModal({
     setTitle(defaultTitle || '');
     setInstructions('');
     setWorkSpec(buildDefaultWorkSpec());
-    setMaterialId(defaultMaterialId || null);
+    setMaterialIds(defaultMaterialId ? [defaultMaterialId] : []);
     setAssigneeIds(resolveDefaultAssigneeIds({ defaultChildIds, defaultChildId, familyMembers }));
     setSubjectId(defaultSubjectId || null);
     setUnitId(null);
@@ -150,6 +164,13 @@ export default function AssignmentCreateModal({
   ]);
 
   useEffect(() => {
+    if (!subjectId || subjects.length === 0) return;
+    const subject = findSubjectById(subjects, subjectId);
+    if (!subject) return;
+    setAssigneeIds((prev) => pruneAssigneesForSubject(prev, subject));
+  }, [subjectId, subjects]);
+
+  useEffect(() => {
     setErrors((prev) => {
       if (Object.keys(prev).length === 0) return prev;
       const next = { ...prev };
@@ -158,15 +179,12 @@ export default function AssignmentCreateModal({
         delete next.title;
         changed = true;
       }
-      if (next.subject && subjectId) {
-        delete next.subject;
-        changed = true;
-      }
       if (next.studentResponse && parseStudentResponseType(workSpec?.student_response_type)) {
         delete next.studentResponse;
         changed = true;
       }
-      if (next.assignee && assigneeIds.length > 0) {
+      const combo = validateSubjectAssigneeCombo(subjectId, assigneeIds, subjects);
+      if (next.assignee && combo.ok) {
         delete next.assignee;
         changed = true;
       }
@@ -176,23 +194,21 @@ export default function AssignmentCreateModal({
       }
       return next;
     });
-  }, [title, subjectId, workSpec?.student_response_type, assigneeIds]);
+  }, [title, subjectId, workSpec?.student_response_type, assigneeIds, subjects]);
 
   const validate = useCallback((mode = 'assign') => {
     const next = {};
     if (!title.trim()) next.title = 'Title is required';
-    if (!subjectId) next.subject = 'Subject is required';
     if (!parseStudentResponseType(workSpec?.student_response_type)) {
       next.studentResponse = 'Select how students should respond';
     }
-    if (mode !== 'draft' && assigneeIds.length === 0) {
-      next.assignee = 'Select at least one student';
-    }
+    const combo = validateSubjectAssigneeCombo(subjectId, assigneeIds, subjects);
+    if (!combo.ok) next.assignee = combo.message;
     setErrors(next);
     const ok = Object.keys(next).length === 0;
     setValidationBanner(ok ? '' : 'Please complete required fields before saving.');
     return ok;
-  }, [title, subjectId, assigneeIds, workSpec?.student_response_type]);
+  }, [title, subjectId, assigneeIds, workSpec?.student_response_type, subjects]);
 
   const buildSavePayload = useCallback((saveMode, releaseDate = null) => ({
     familyId,
@@ -210,7 +226,7 @@ export default function AssignmentCreateModal({
     availableDate: saveMode === 'schedule' ? releaseDate : availableDate,
     dueDate,
     gradingMode: 'points',
-    materialIds: materialIdsFromSelection(materialId),
+    materialIds,
     allowResubmission: false,
     requireParentApproval: !!requireParentApprovalDefault,
     unitId,
@@ -238,7 +254,7 @@ export default function AssignmentCreateModal({
     unitTitle,
     curriculumLessonId,
     lessonLabel,
-    materialId,
+    materialIds,
     milestoneDueDate,
   ]);
 
@@ -277,8 +293,9 @@ export default function AssignmentCreateModal({
     await persistAssignment('schedule', releaseDate);
   }, [persistAssignment]);
 
-  const canSaveDraft = !!title.trim() && !!subjectId;
-  const canAssign = canSaveDraft && assigneeIds.length > 0;
+  const canSaveDraft = !!title.trim()
+    && !!parseStudentResponseType(workSpec?.student_response_type);
+  const canAssign = canSaveDraft;
 
   const datePickerValue = useMemo(() => dueDate, [dueDate]);
 
@@ -356,12 +373,12 @@ export default function AssignmentCreateModal({
                 <View style={styles.assignmentAttachPanel}>
                   <SectionHeading>Attach</SectionHeading>
                   <AssignmentResourceFields
-                    familyId={familyId}
-                    materialId={materialId}
-                    onMaterialChange={setMaterialId}
-                    onAddMaterial={() => setShowAddMaterial(true)}
-                    hideLabel
-                  />
+                      familyId={familyId}
+                      materialIds={materialIds}
+                      onMaterialIdsChange={setMaterialIds}
+                      onAddMaterial={() => setShowAddMaterial(true)}
+                      hideLabel
+                    />
                 </View>
               ) : null}
             </View>
@@ -375,22 +392,25 @@ export default function AssignmentCreateModal({
                     subjects={subjects}
                     subjectId={subjectId}
                     onSubjectChange={(nextSubjectId) => {
+                      const nextSubject = findSubjectById(subjects, nextSubjectId);
                       setSubjectId(nextSubjectId);
+                      setAssigneeIds((prev) => pruneAssigneesForSubject(prev, nextSubject));
                       setUnitId(null);
                       setUnitTitle('');
                       setCurriculumLessonId(null);
                       setLessonLabel('');
                     }}
                     label="Subject"
-                    required
+                    allowEmpty
                     error={errors.subject}
                   />
 
                   <FamilyMemberPicker
-                    familyMembers={familyMembers}
+                    familyMembers={eligibleMembers}
                     selectedIds={assigneeIds}
                     onChange={setAssigneeIds}
                     label="Children"
+                    required={false}
                     error={errors.assignee}
                   />
 
@@ -459,10 +479,22 @@ export default function AssignmentCreateModal({
       {showAddMaterial ? (
         <AddMaterialModal
           visible
-          familyId={familyId}
+          {...nestedAddMaterialModalProps({
+            familyId,
+            familyMembers,
+            subjectId,
+            assigneeIds,
+            subjects,
+          })}
           onClose={() => setShowAddMaterial(false)}
           onSaved={(material) => {
-            if (material?.id) setMaterialId(material.id);
+            if (material?.id) {
+              setMaterialIds((prev) => {
+                const nextId = String(material.id);
+                if (prev.some((id) => String(id) === nextId)) return prev;
+                return [...prev, nextId];
+              });
+            }
             setShowAddMaterial(false);
           }}
         />

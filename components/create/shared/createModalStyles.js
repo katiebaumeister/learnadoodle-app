@@ -930,6 +930,26 @@ export const createModalStyles = StyleSheet.create({
     color: ACCENT_TEXT,
     fontWeight: '500',
   },
+  attachmentChipList: {
+    gap: 8,
+    marginTop: 8,
+  },
+  attachmentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.18)',
+  },
+  attachmentChipText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#334155',
+  },
   dropdownListItemActive: {
     backgroundColor: ACCENT_LIST_ACTIVE_BG,
   },

@@ -20,7 +20,11 @@ import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { createMaterial, linkMaterialToChild, updateMaterial, updateMaterialChildStatus } from '../../lib/services/materialsClient';
 import { parseChildIds } from '../../lib/services/subjectsClient';
-import { useModalStackElevation, NESTED_MODAL_STACK_Z } from '../hooks/useModalStackElevation';
+import {
+  useModalStackElevation,
+  NESTED_MODAL_STACK_Z,
+  NESTED_OVER_PARENT_MODAL_Z,
+} from '../hooks/useModalStackElevation';
 import AppModalShell from '../ui/AppModalShell';
 import { ModalFooter } from '../ui/ModalFooter';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
@@ -117,6 +121,7 @@ export default function AddMaterialModal({
   /** Pre-fill link URL when opening add mode (e.g. from chat / deep link) */
   defaultProviderUrl = null,
   connectedProviderIds = [],
+  stackZIndex = NESTED_MODAL_STACK_Z,
 }) {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -145,7 +150,7 @@ export default function AddMaterialModal({
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const loadingSubjectsRef = useRef(false);
   const overlayRef = useRef(null);
-  useModalStackElevation(overlayRef, visible, NESTED_MODAL_STACK_Z);
+  useModalStackElevation(overlayRef, visible, stackZIndex);
 
   useEffect(() => {
     postUploadMaterialRef.current = postUploadMaterial;
@@ -1042,7 +1047,13 @@ export default function AddMaterialModal({
       animationType="fade"
       onRequestClose={handleDismiss}
     >
-      <View ref={overlayRef} style={styles.overlay}>
+      <View
+        ref={overlayRef}
+        style={[
+          styles.overlay,
+          stackZIndex >= NESTED_OVER_PARENT_MODAL_Z && styles.overlayAboveParentModal,
+        ]}
+      >
         <TouchableOpacity
           style={StyleSheet.absoluteFill}
           activeOpacity={1}
@@ -1584,6 +1595,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+  },
+  overlayAboveParentModal: {
+    ...(Platform.OS === 'web'
+      ? {
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          width: '100vw',
+          height: '100vh',
+        }
+      : {}),
   },
   modalWrap: {
     width: '100%',

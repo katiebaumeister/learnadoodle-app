@@ -5,6 +5,8 @@ const DEFAULT_MODAL_Z = 9999;
 const ELEVATED_MODAL_Z = 10001;
 /** Open above modals that use ELEVATED_MODAL_Z (e.g. Add Material from Add Subject). */
 export const NESTED_MODAL_STACK_Z = 10050;
+/** Open above create/edit modals that also use NESTED_MODAL_STACK_Z (e.g. Add Material from Assignment). */
+export const NESTED_OVER_PARENT_MODAL_Z = 10100;
 
 /**
  * On web, elevates this modal's portal so it appears above other modals (e.g. Plan Year).

@@ -45,7 +45,7 @@ export default function EventAttachmentsField({
 
   useEffect(() => {
     setOpen(false);
-  }, [selectedMaterialId]);
+  }, [selectedMaterialId, selectedMaterialIds?.length]);
 
   const selected = materials.find((m) => String(m.id) === String(selectedMaterialId));
   const attachedIdSet = new Set((selectedMaterialIds || []).map(String));
@@ -154,5 +154,8 @@ export default function EventAttachmentsField({
 }
 
 export function materialIdsFromSelection(selectedMaterialId) {
-  return selectedMaterialId ? [selectedMaterialId] : [];
+  if (Array.isArray(selectedMaterialId)) {
+    return selectedMaterialId.filter(Boolean).map(String);
+  }
+  return selectedMaterialId ? [String(selectedMaterialId)] : [];
 }

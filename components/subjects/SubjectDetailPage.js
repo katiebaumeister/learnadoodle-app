@@ -14,7 +14,6 @@ import {
   ArrowLeft,
   Edit2,
   Calendar,
-  CalendarDays,
   Clock,
   Plus,
   Sparkles,
@@ -1775,6 +1774,17 @@ export default function SubjectDetailPage({
   const assignmentsAssignedToStudent = subjectData?.assignmentsAssignedToStudent || [];
   const assignmentsByEventId = subjectData?.assignmentsByEventId || {};
   const subjectAssignments = subjectData?.subjectAssignments || [];
+  const gradesPanelChildren = useMemo(() => {
+    const idSet = new Set(assignedChildren.map(String));
+    (subjectAssignments || []).forEach((assignment) => {
+      if (assignment?.child_id) idSet.add(String(assignment.child_id));
+    });
+    (gradedItems || []).forEach((item) => {
+      const childId = item.event?.child_id || item.event?.childId;
+      if (childId) idSet.add(String(childId));
+    });
+    return (children || []).filter((child) => child?.id && idSet.has(String(child.id)));
+  }, [children, assignedChildren, subjectAssignments, gradedItems]);
   const isParentViewer =
     session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true;
 
@@ -3594,17 +3604,6 @@ export default function SubjectDetailPage({
               <View />
             )}
             <View style={styles.headerTopActions}>
-              {isParentViewer && typeof onOpenPlannerSettings === 'function' ? (
-                <TouchableOpacity
-                  style={styles.headerTopActionBtn}
-                  onPress={openAttendanceTargetPreferences}
-                  accessibilityLabel="Edit school year"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <CalendarDays size={18} color="#334155" strokeWidth={2.25} />
-                  <Text style={styles.headerTopActionText}>Edit school year</Text>
-                </TouchableOpacity>
-              ) : null}
               {isParentViewer ? (
                 <TouchableOpacity
                   style={styles.headerTopActionBtn}
@@ -3668,9 +3667,7 @@ export default function SubjectDetailPage({
           <SubjectGradesPanel
             assignments={subjectAssignments}
             gradedItems={gradedItems}
-            children={children.filter((c) =>
-              assignedChildren.some((id) => String(id) === String(c.id)),
-            )}
+            children={gradesPanelChildren}
             onOpenAssignment={openAssignmentInClasswork}
             onOpenGradedItem={(item) => {
               if (item?.eventId) handleOpenEventDetails(item.eventId, item.event);

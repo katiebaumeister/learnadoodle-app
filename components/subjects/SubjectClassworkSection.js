@@ -31,7 +31,10 @@ import {
   deleteLessonFromSubjectCurriculum,
   moveLessonInSubjectCurriculum,
 } from '../../lib/subjectClassworkLessonActions';
-import { draftFromCurriculumStructure } from '../../lib/subjectUnitsEditorDraft';
+import {
+  curriculumStructureHasContent,
+  draftFromCurriculumStructure,
+} from '../../lib/subjectUnitsEditorDraft';
 import ManualCurriculumBuilderModal from '../ManualCurriculumBuilderModal';
 import { useToast } from '../Toast';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
@@ -511,6 +514,27 @@ function EmptyClassworkState({ isParentViewer }) {
   );
 }
 
+function EmptyUnitsState({ onAddUnit }) {
+  return (
+    <View style={styles.emptyUnitsWrap}>
+      <Text style={styles.emptyHeading}>No units yet</Text>
+      <Text style={styles.emptySubtext}>
+        Add units to organize lessons and assignments for this subject.
+      </Text>
+      <TouchableOpacity
+        style={styles.emptyUnitsButton}
+        onPress={onAddUnit}
+        accessibilityLabel="Add unit"
+        activeOpacity={0.85}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <Plus size={18} color="#334155" strokeWidth={2.25} />
+        <Text style={styles.actionPillBtnText}>Add unit</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 export default function SubjectClassworkSection({
   units = [],
   assignments = [],
@@ -563,6 +587,22 @@ export default function SubjectClassworkSection({
   });
   const lessonRowRefs = useRef({});
   const assignmentRowRefs = useRef({});
+  const hasUnitsContent = useMemo(
+    () => curriculumStructureHasContent({ units }),
+    [units],
+  );
+  const [inlineUnitsStarted, setInlineUnitsStarted] = useState(hasUnitsContent);
+
+  useEffect(() => {
+    if (hasUnitsContent) setInlineUnitsStarted(true);
+  }, [hasUnitsContent]);
+
+  const useInlineUnitsEditor = inlineUnitsEditing && isParentViewer;
+  const showEmbeddedUnitsEditor = useInlineUnitsEditor && inlineUnitsStarted;
+
+  const startInlineUnitsEditing = useCallback(() => {
+    setInlineUnitsStarted(true);
+  }, []);
 
   const unitIdsKey = useMemo(
     () => model.units.map((unit) => String(unit.unitId)).join('|'),
@@ -1023,19 +1063,18 @@ export default function SubjectClassworkSection({
     handleAssignmentDragStart,
   ]);
 
-  const useInlineUnitsEditor = inlineUnitsEditing && isParentViewer;
+  const hasNoUnitAssignments = model.noUnitAssignments.length > 0;
+  const hasVisibleContent = hasNoUnitAssignments
+    || hasUnitsContent
+    || showEmbeddedUnitsEditor;
 
-  const hasContent = useInlineUnitsEditor
-    || model.units.length > 0
-    || model.noUnitAssignments.length > 0;
-
-  if (!hasContent) {
+  if (!hasVisibleContent) {
     return (
       <View style={styles.root}>
         {isParentViewer ? (
           <ClassworkToolbar>
             <ClassworkActionSet
-              onManageUnits={useInlineUnitsEditor ? null : onManageUnits}
+              onManageUnits={onManageUnits}
               onCreateAssignment={onCreateAssignment}
               onGapAnalysis={onGapAnalysis}
               showGapAnalysis={!!onGapAnalysis}
@@ -1047,7 +1086,11 @@ export default function SubjectClassworkSection({
             />
           </ClassworkToolbar>
         ) : null}
-        <EmptyClassworkState isParentViewer={isParentViewer} />
+        {isParentViewer ? (
+          <EmptyUnitsState onAddUnit={startInlineUnitsEditing} />
+        ) : (
+          <EmptyClassworkState isParentViewer={isParentViewer} />
+        )}
         <ClassworkPlanningModal
           visible={scheduleModal.visible}
           title={scheduleModal.title}
@@ -1070,7 +1113,7 @@ export default function SubjectClassworkSection({
       {isParentViewer ? (
         <ClassworkToolbar>
           <ClassworkActionSet
-            onManageUnits={useInlineUnitsEditor ? null : onManageUnits}
+            onManageUnits={onManageUnits}
             onCreateAssignment={onCreateAssignment}
             onGapAnalysis={onGapAnalysis}
             showGapAnalysis={!!onGapAnalysis}
@@ -1130,7 +1173,7 @@ export default function SubjectClassworkSection({
         </ClassworkUnitCard>
       ) : null}
 
-      {useInlineUnitsEditor ? (
+      {showEmbeddedUnitsEditor ? (
         <ManualCurriculumBuilderModal
           embedded
           visible
@@ -1140,15 +1183,15 @@ export default function SubjectClassworkSection({
           subjectName={subjectName || 'Subject'}
           initialDraft={unitsDraft}
           loadExisting={false}
-          replaceExisting={(units || []).some((unit) => (
-            (unit?.lessons || []).length > 0 || String(unit?.title || '').trim()
-          ))}
+          replaceExisting={hasUnitsContent}
           createCalendarEvents={false}
           onSaved={onPlacementChanged}
           getLessonScheduleLabel={getLessonScheduleLabel}
           renderAfterUnitLessons={renderUnitAssignments}
           getUnitDropWebProps={getUnitDropWebProps}
         />
+      ) : !hasUnitsContent && isParentViewer ? (
+        <EmptyUnitsState onAddUnit={startInlineUnitsEditing} />
       ) : model.units.map((unit) => {
         const peerItems = buildUnitPeerItems(unit, model.eventById);
         if (peerItems.length === 0) return null;
@@ -1546,6 +1589,33 @@ const styles = StyleSheet.create({
     maxWidth: 360,
     textAlign: 'center',
     marginBottom: 8,
+  },
+  emptyUnitsWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 48,
+    gap: 10,
+    minHeight: 220,
+    borderWidth: 1,
+    borderColor: CLASSWORK_BORDER,
+    borderRadius: 12,
+    backgroundColor: CLASSWORK_BG,
+  },
+  emptyUnitsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 9999,
+    borderWidth: 1,
+    borderColor: '#E6EBF2',
+    marginTop: 8,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
   },
   attachOverlay: {
     flex: 1,
