@@ -2,8 +2,8 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 
 const TABS = [
-  { id: 'bulletin', label: 'Bulletin Board' },
   { id: 'classwork', label: 'Learning Schedule' },
+  { id: 'bulletin', label: 'Bulletin Board' },
   { id: 'grades', label: 'Grades' },
 ];
 
@@ -12,7 +12,7 @@ const LEAGUE_FONT = Platform.OS === 'web'
   : {};
 
 export default function SubjectClassroomTabs({
-  activeTab = 'bulletin',
+  activeTab = 'classwork',
   onChange,
 }) {
   return (

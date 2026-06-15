@@ -355,27 +355,29 @@ export default function ChildHomeScreen({
     </View>
   );
 
-  const mainContent = (
+  const scheduleContent = (
     <View style={styles.mainSurface}>
-      <View style={styles.bulletinBoardSection}>
-        <BulletinBoardSection
-          familyId={safeFamilyId}
-          children={children}
-          subjects={subjects}
-          feedTitle="Bulletin Board"
-          onSubjectPress={(subjectId) => {
-            if (subjectId) onNavigate?.(`subject-${subjectId}`);
-          }}
-        />
-      </View>
+      {renderSchedulePanel(styles.scheduleSection)}
     </View>
   );
 
-  const railContent = showRightRail ? renderSchedulePanel(styles.railScheduleSection) : null;
+  const bulletinRailContent = showRightRail ? (
+    <View style={[styles.bulletinBoardSection, styles.railBulletinSection]}>
+      <BulletinBoardSection
+        familyId={safeFamilyId}
+        children={children}
+        subjects={subjects}
+        feedTitle="Bulletin Board"
+        onSubjectPress={(subjectId) => {
+          if (subjectId) onNavigate?.(`subject-${subjectId}`);
+        }}
+      />
+    </View>
+  ) : null;
 
   return (
     <View style={styles.homeRoot}>
-      <RoleHomeShell hero={heroContent} main={mainContent} rail={railContent} />
+      <RoleHomeShell hero={heroContent} main={scheduleContent} rail={bulletinRailContent} />
     </View>
   );
 }
@@ -601,6 +603,20 @@ const styles = StyleSheet.create({
     }),
   },
   railScheduleSection: {
+    flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
+    marginTop: 0,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      height: '100%',
+      maxHeight: '100%',
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      WebkitOverflowScrolling: 'touch',
+    }),
+  },
+  railBulletinSection: {
     flex: 1,
     flexBasis: 0,
     minHeight: 0,

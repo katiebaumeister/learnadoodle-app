@@ -3,8 +3,8 @@
  * 
  * Full parent dashboard with:
  * - Today Forecast hero
- * - Main column: Bulletin Board
- * - Right rail: Today's schedule
+ * - Main column: Today's schedule
+ * - Right rail: Bulletin Board
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
@@ -816,23 +816,25 @@ export default function ParentHomeScreen({
     onNavigate?.(`subject-${subjectId}`);
   }, [onNavigate]);
 
-  const mainContent = (
+  const scheduleContent = (
     <View style={styles.mainSurface}>
-      <View style={styles.bulletinBoardSection}>
-        <BulletinBoardSection
-          familyId={familyId}
-          children={children}
-          subjects={effectiveHomeData.subjects?.length ? effectiveHomeData.subjects : stableSubjects}
-          profile={profile}
-          feedTitle="Bulletin Board"
-          onAssignmentActivityPress={handleBulletinActivityPress}
-          onSubjectPress={handleBulletinSubjectPress}
-        />
-      </View>
+      {renderSchedulePanel(styles.scheduleSection)}
     </View>
   );
 
-  const railContent = renderSchedulePanel(styles.railScheduleSection);
+  const bulletinRailContent = (
+    <View style={[styles.bulletinBoardSection, styles.railBulletinSection]}>
+      <BulletinBoardSection
+        familyId={familyId}
+        children={children}
+        subjects={effectiveHomeData.subjects?.length ? effectiveHomeData.subjects : stableSubjects}
+        profile={profile}
+        feedTitle="Bulletin Board"
+        onAssignmentActivityPress={handleBulletinActivityPress}
+        onSubjectPress={handleBulletinSubjectPress}
+      />
+    </View>
+  );
   const subjectCounts = {};
   (effectiveHomeData.learning || []).forEach(event => {
     if (event.subject_id) {
@@ -850,8 +852,8 @@ export default function ParentHomeScreen({
     <>
       <RoleHomeShell
         hero={heroContent}
-        main={mainContent}
-        rail={railContent}
+        main={scheduleContent}
+        rail={bulletinRailContent}
       />
       <ParentDigestModal
         visible={showParentDigest}
@@ -1094,6 +1096,20 @@ const styles = StyleSheet.create({
     }),
   },
   railScheduleSection: {
+    flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
+    marginTop: 0,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      height: '100%',
+      maxHeight: '100%',
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      WebkitOverflowScrolling: 'touch',
+    }),
+  },
+  railBulletinSection: {
     flex: 1,
     flexBasis: 0,
     minHeight: 0,

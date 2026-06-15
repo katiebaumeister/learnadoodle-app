@@ -507,7 +507,7 @@ export default function SubjectDetailPage({
   const [attendanceViewMode, setAttendanceViewMode] = useState('list');
   const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
   const [showAttendanceGapSuggestion, setShowAttendanceGapSuggestion] = useState(false);
-  const [classroomTab, setClassroomTab] = useState('bulletin');
+  const [classroomTab, setClassroomTab] = useState('classwork');
   const [highlightLessonId, setHighlightLessonId] = useState(null);
   const [highlightAssignmentId, setHighlightAssignmentId] = useState(null);
   const [showAttendanceSuggestionConfirmModal, setShowAttendanceSuggestionConfirmModal] = useState(false);
