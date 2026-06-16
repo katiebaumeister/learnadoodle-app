@@ -163,18 +163,19 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     fontSize: 11,
     color: '#94A3B8',
-    marginVertical: 10,
+    marginTop: 6,
+    marginBottom: 4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   card: {
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 11,
     ...(Platform.OS === 'web' && {
       boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
       transition: 'border-color 0.12s ease, box-shadow 0.12s ease',
@@ -203,7 +204,7 @@ const styles = StyleSheet.create({
   cardMain: {
     flex: 1,
     minWidth: 0,
-    gap: 4,
+    gap: 3,
   },
   cardPressArea: {
     alignSelf: 'stretch',

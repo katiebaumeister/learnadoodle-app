@@ -7,7 +7,6 @@ import {
   StyleSheet,
   Platform,
 } from 'react-native';
-import { Calendar, CalendarDays, BookOpen, X } from 'lucide-react';
 import { eventHasLinkedLesson } from '../../lib/subjectLessonLinking';
 import {
   formatLearningDayDateLabel,
@@ -16,29 +15,27 @@ import {
   resolveLearningDaySubjectName,
 } from '../../lib/planner/learningDayModalNavigation';
 
-function ActionRow({
-  icon: Icon,
-  label,
-  subtitle,
-  onPress,
-  primary = false,
-}) {
+const LEAGUE_FONT = Platform.OS === 'web'
+  ? { fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
+  : {};
+
+function ChoiceButton({ label, onPress, variant = 'single' }) {
+  const isSeries = variant === 'series';
   return (
     <TouchableOpacity
       onPress={onPress}
-      style={[styles.actionRow, primary ? styles.actionRowPrimary : styles.actionRowSecondary]}
+      style={[
+        styles.choiceBtn,
+        isSeries ? styles.choiceBtnSeries : styles.choiceBtnSingle,
+      ]}
       activeOpacity={0.85}
       accessibilityRole="button"
       accessibilityLabel={label}
       {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
     >
-      <View style={[styles.actionIconWrap, primary ? styles.actionIconPrimary : styles.actionIconSecondary]}>
-        <Icon size={18} color={primary ? '#1D4ED8' : '#475569'} />
-      </View>
-      <View style={styles.actionTextWrap}>
-        <Text style={[styles.actionLabel, primary && styles.actionLabelPrimary]}>{label}</Text>
-        {subtitle ? <Text style={styles.actionSubtitle}>{subtitle}</Text> : null}
-      </View>
+      <Text style={[styles.choiceBtnText, isSeries ? styles.choiceBtnTextSeries : styles.choiceBtnTextSingle]}>
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 }
@@ -69,67 +66,50 @@ export default function LearningDayChoiceModal({
           onPress={(e) => e?.stopPropagation?.()}
           style={styles.card}
         >
-          <View style={styles.headerRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.title}>{subjectName}</Text>
-              <Text style={styles.subtitle}>{sessionLine || 'Learning day'}</Text>
-            </View>
-            <TouchableOpacity
-              onPress={onClose}
-              style={styles.closeBtn}
-              accessibilityLabel="Close"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <X size={20} color="#64748B" />
-            </TouchableOpacity>
-          </View>
+          <Text style={styles.title}>{subjectName}</Text>
+          {sessionLine ? <Text style={styles.subtitle}>{sessionLine}</Text> : null}
 
           <Text style={styles.prompt}>
             {linked
-              ? 'This session has a lesson linked. What would you like to do?'
-              : 'This is a scheduled class session. Edit the recurring pattern or plan this day.'}
+              ? 'This session has a lesson linked. Choose how you want to edit it.'
+              : 'This is a scheduled class session. Choose whether to edit only this day or the recurring schedule.'}
           </Text>
 
           <View style={styles.actions}>
             {linked ? (
-              <ActionRow
-                icon={BookOpen}
+              <ChoiceButton
                 label="View in Learning Schedule"
-                subtitle="Open the lesson in your curriculum tree"
                 onPress={onViewClasswork}
-                primary
+                variant="single"
               />
+            ) : null}
+
+            {showSchedule ? (
+              <View style={styles.choiceRow}>
+                <ChoiceButton
+                  label="Edit this learning day"
+                  onPress={onEditLearningDay}
+                  variant="single"
+                />
+                <ChoiceButton
+                  label="Edit subject schedule"
+                  onPress={onEditSchedule}
+                  variant="series"
+                />
+              </View>
             ) : (
-              <ActionRow
-                icon={CalendarDays}
+              <ChoiceButton
                 label="Edit this learning day"
-                subtitle="Choose a lesson or plan work for this session only"
                 onPress={onEditLearningDay}
-                primary
+                variant="single"
               />
             )}
-            {linked ? (
-              <ActionRow
-                icon={CalendarDays}
-                label="Edit this learning day"
-                subtitle="Change lesson or session details"
-                onPress={onEditLearningDay}
-              />
-            ) : null}
-            {showSchedule ? (
-              <ActionRow
-                icon={Calendar}
-                label="Edit subject schedule"
-                subtitle="Changes apply to all future sessions from this pattern"
-                onPress={onEditSchedule}
-              />
-            ) : null}
           </View>
 
           <TouchableOpacity
             onPress={onClose}
             style={styles.cancelBtn}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
           >
             <Text style={styles.cancelText}>Cancel</Text>
           </TouchableOpacity>
@@ -142,41 +122,35 @@ export default function LearningDayChoiceModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
   card: {
     width: '100%',
-    maxWidth: 420,
+    maxWidth: 380,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.08)',
+    borderColor: '#E5E7EB',
     padding: 18,
     ...(Platform.OS === 'web' ? { boxShadow: '0 14px 32px rgba(15, 23, 42, 0.14)' } : {}),
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
   },
   title: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#0F172A',
+    color: '#111827',
+    ...LEAGUE_FONT,
   },
   subtitle: {
     marginTop: 4,
     fontSize: 14,
     color: '#64748B',
-  },
-  closeBtn: {
-    padding: 4,
+    lineHeight: 20,
   },
   prompt: {
-    marginTop: 14,
+    marginTop: 8,
     fontSize: 14,
     color: '#64748B',
     lineHeight: 20,
@@ -185,61 +159,49 @@ const styles = StyleSheet.create({
     marginTop: 16,
     gap: 10,
   },
-  actionRow: {
+  choiceRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: 12,
+    gap: 10,
   },
-  actionRowPrimary: {
-    borderColor: '#BFDBFE',
+  choiceBtn: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+  },
+  choiceBtnSingle: {
+    borderColor: '#DBEAFE',
     backgroundColor: '#EFF6FF',
   },
-  actionRowSecondary: {
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-  },
-  actionIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionIconPrimary: {
+  choiceBtnSeries: {
+    borderColor: '#BFDBFE',
     backgroundColor: '#DBEAFE',
   },
-  actionIconSecondary: {
-    backgroundColor: '#E2E8F0',
-  },
-  actionTextWrap: {
-    flex: 1,
-  },
-  actionLabel: {
-    fontSize: 15,
+  choiceBtnText: {
+    fontSize: 14,
     fontWeight: '700',
-    color: '#0F172A',
+    textAlign: 'center',
+    ...LEAGUE_FONT,
   },
-  actionLabelPrimary: {
+  choiceBtnTextSingle: {
     color: '#1D4ED8',
   },
-  actionSubtitle: {
-    marginTop: 2,
-    fontSize: 13,
-    color: '#64748B',
-    lineHeight: 18,
+  choiceBtnTextSeries: {
+    color: '#1E40AF',
   },
   cancelBtn: {
-    marginTop: 14,
-    alignSelf: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    marginTop: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
   },
   cancelText: {
     fontSize: 14,
     fontWeight: '600',
     color: '#64748B',
+    ...LEAGUE_FONT,
   },
 });

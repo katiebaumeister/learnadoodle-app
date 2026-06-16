@@ -652,6 +652,10 @@ export default function SubjectClassworkSection({
   const useInlineUnitsEditor = inlineUnitsEditing && isParentViewer;
   const showEmbeddedUnitsEditor = useInlineUnitsEditor && inlineUnitsStarted;
 
+  const startInlineUnitsEditing = useCallback(() => {
+    setInlineUnitsStarted(true);
+  }, []);
+
   const handleOpenLearningDay = useCallback((event) => {
     if (!event?.id) return;
     dispatchOpenLearningDayChoiceModal({ event, eventId: event.id });

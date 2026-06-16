@@ -897,8 +897,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(99, 102, 241, 0.12)',
     backgroundColor: colors.bgSubtle,
-    minHeight: 92,
-    paddingVertical: 18,
+    minHeight: 115,
+    paddingVertical: 23,
     paddingHorizontal: 24,
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
@@ -928,11 +928,11 @@ const styles = StyleSheet.create({
   greetingTitle: {
     flex: 1,
     minWidth: 0,
-    fontSize: 30,
+    fontSize: 34,
     fontWeight: '700',
     color: '#0f172a',
     letterSpacing: -0.4,
-    lineHeight: 34,
+    lineHeight: 38,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -1013,8 +1013,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 14,
-    paddingTop: 10,
-    paddingBottom: 4,
+    paddingTop: 12,
+    paddingBottom: 10,
+    marginBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.16)',
     flexShrink: 0,
     gap: 12,
   },
@@ -1084,7 +1087,7 @@ const styles = StyleSheet.create({
   },
   /** Section title — slightly heavier than body, below page hero */
   sectionLabel: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
     color: '#1e293b',
     letterSpacing: -0.2,

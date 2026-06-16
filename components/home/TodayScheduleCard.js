@@ -663,17 +663,25 @@ const styles = StyleSheet.create({
     }),
   },
   eventsList: {
-    gap: 16,
+    gap: 10,
+    paddingTop: 2,
+    paddingBottom: 4,
   },
   eventRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 4,
-    paddingVertical: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.16)',
+    backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
-      transition: 'background-color 0.2s ease',
-      '&:hover': {
-        backgroundColor: colors.bgSubtle,
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+      transition: 'border-color 0.12s ease, box-shadow 0.12s ease',
+      ':hover': {
+        borderColor: '#CBD5E1',
       },
     }),
   },
@@ -681,7 +689,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     position: 'relative',
     zIndex: 2,
-    marginTop: -2,
+    alignSelf: 'center',
   },
   eventMenuBtn: {
     width: 28,
@@ -715,8 +723,8 @@ const styles = StyleSheet.create({
   },
   eventRowInner: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
+    alignItems: 'center',
+    gap: 12,
     width: '100%',
     minWidth: 0,
   },
@@ -724,7 +732,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     alignItems: 'flex-start',
-    gap: 2,
+    gap: 3,
   },
   sublineRow: {
     flexDirection: 'row',
@@ -742,7 +750,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   childLabelText: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#64748B',
     fontWeight: '400',
     flexShrink: 1,
@@ -763,11 +771,11 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   timeText: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#64748B',
     fontWeight: '400',
     flexShrink: 0,
-    lineHeight: 16,
+    lineHeight: 18,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -777,11 +785,11 @@ const styles = StyleSheet.create({
   },
   /** Primary row label: subject name or event title */
   eventPrimaryTitle: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
     color: '#111827',
     minWidth: 0,
-    lineHeight: 18,
+    lineHeight: 22,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       margin: 0,
@@ -790,10 +798,10 @@ const styles = StyleSheet.create({
   },
   /** Secondary line when both subject and a distinct title exist */
   eventSubtitle: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '400',
     color: '#64748b',
-    lineHeight: 16,
+    lineHeight: 20,
     marginTop: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',

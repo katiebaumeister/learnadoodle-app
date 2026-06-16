@@ -75,9 +75,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     gap: 12,
     ...(Platform.OS === 'web' && {
-      flex: 2.55,
+      flex: 1.5,
       minWidth: 0,
-      maxWidth: 'calc(71.2% - 7px)',
+      maxWidth: 'calc(60% - 7px)',
       minHeight: 0,
       height: '100%',
       display: 'flex',
@@ -95,7 +95,7 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       flex: 1,
       minWidth: 236,
-      maxWidth: 'calc(28.8% - 7px)',
+      maxWidth: 'calc(40% - 7px)',
       minHeight: 0,
       height: '100%',
       alignSelf: 'stretch',

@@ -1,12 +1,15 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Platform, StyleSheet } from 'react-native';
 import { ChevronDown, CheckCircle } from 'lucide-react';
 import { createModalStyles as styles } from '../../create/shared/createModalStyles';
 import { SingleDateField } from '../../create/shared/ScheduleDateFields';
 import Dropdown from '../../ui/Dropdown';
+import MaskedTimeInput from '../../ui/MaskedTimeInput';
+import { normalizeTimeValue, parseTimeString } from '../../../lib/create/eventTimeUtils';
 import {
   WEEKDAY_OPTIONS,
-  normalizeHm,
+  hmToMaskedTime,
+  maskedTimeToHm,
 } from '../../../lib/subjectConfigureSchedule';
 
 function isWeekdayActive(weekdays, dayNum) {
@@ -54,6 +57,28 @@ export default function SubjectScheduleFields({
   const schoolTermTriggerRef = useRef(null);
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [showSchoolTermDropdown, setShowSchoolTermDropdown] = useState(false);
+  const [maskedStartTime, setMaskedStartTime] = useState('');
+  const startTimeRef = useRef(startTime);
+
+  useEffect(() => {
+    startTimeRef.current = startTime;
+    setMaskedStartTime(hmToMaskedTime(startTime || SCHEDULE_FIELD_DEFAULTS.time));
+  }, [startTime]);
+
+  const commitStartTime = (masked) => {
+    const hm = maskedTimeToHm(masked, startTimeRef.current || SCHEDULE_FIELD_DEFAULTS.time);
+    setMaskedStartTime(hmToMaskedTime(hm));
+    onStartTimeChange?.(hm);
+  };
+
+  const handleMaskedStartTimeChange = (masked) => {
+    setMaskedStartTime(masked);
+    const parsed = parseTimeString(normalizeTimeValue(masked));
+    if (parsed) {
+      const hm = `${String(parsed.hours).padStart(2, '0')}:${String(parsed.minutes).padStart(2, '0')}`;
+      onStartTimeChange?.(hm);
+    }
+  };
 
   const activeTermLabel = (termOptions.find((opt) => opt.id === schoolTerm) || termOptions[0])?.label || 'Full year';
   const showScopeFields = typeof onSchoolYearChange === 'function';
@@ -204,11 +229,12 @@ export default function SubjectScheduleFields({
       <View style={styles.dateTimeInlineRow}>
         <View style={[styles.scheduleColumn, { flex: 1 }]}>
           <Text style={styles.fieldLabel}>Time</Text>
-          <TextInput
-            value={startTime}
-            onChangeText={(text) => onStartTimeChange(normalizeHm(text.replace(/[^\d:]/g, ''), startTime || SCHEDULE_FIELD_DEFAULTS.time))}
-            placeholder="09:00"
-            style={styles.fieldInput}
+          <MaskedTimeInput
+            value={maskedStartTime}
+            onChangeText={handleMaskedStartTimeChange}
+            onBlur={commitStartTime}
+            placeholder="Optional"
+            wrapStyle={styles.scheduleTimeInputWrap}
           />
         </View>
         <View style={[styles.scheduleColumn, { flex: 1 }]}>
