@@ -44,6 +44,7 @@ import {
 } from '../lib/subjectClassworkNavigation'
 import {
   enrichLearningDayEvent,
+  dispatchOpenLearningDayChoiceModal,
   OPEN_LEARNING_DAY_MODAL_EVENT,
   OPEN_LEARNING_DAY_CHOICE_EVENT,
   learningDayEventSelectFields,
@@ -882,7 +883,7 @@ function readSubjectDetailSessionSnapshot(familyId) {
 
 import ParentHomeScreen from './home/ParentHomeScreen';
 
-export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null, preloadedAcademicYears: propPreloadedAcademicYears = null, onHomeInitialDataReady = null, onViewAsChild = null, onExitChildView = null }) {
+export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'board', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null, preloadedAcademicYears: propPreloadedAcademicYears = null, onHomeInitialDataReady = null, onViewAsChild = null, onExitChildView = null }) {
   /** Same user across Supabase token refresh; avoids re-running home/family effects on every tab focus. */
   const authUserId = user?.id ?? null;
 
@@ -5477,12 +5478,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       return;
     }
     if (getPlannerEventCategory(ev) === 'Learning day') {
-      const enriched = await enrichLearningDayEvent({ supabase, familyId, event: ev });
-      setLearningDayChoicePrompt({
-        visible: true,
-        event: enriched,
-        options: options || {},
-      });
+      dispatchOpenLearningDayChoiceModal({ event: ev, eventId: ev.id });
       return;
     }
     const cleanId = cleanPlannerEventId(String(ev.id || ''));

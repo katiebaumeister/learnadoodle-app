@@ -36,6 +36,19 @@ import {
 import { draftFromCurriculumStructure } from '../lib/subjectUnitsEditorDraft';
 import { useToast } from './Toast';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
+import {
+  CLASSWORK_ACCENT as ACCENT,
+  CLASSWORK_FG as FG,
+  CLASSWORK_MUTED as MUTED,
+  CLASSWORK_BORDER as BORDER,
+  CLASSWORK_BG as BG,
+  CLASSWORK_ERROR as ERROR,
+  CLASSWORK_LINK,
+  CLASSWORK_LEAGUE_FONT,
+  CLASSWORK_BODY_FONT,
+} from '../lib/classworkPanelTheme';
+
+const DRAFT_LESSON_DRAG_MIME = 'application/x-learnadoodle-draft-lesson';
 
 const s = (path) => {
   const parts = path.split('.');
@@ -43,14 +56,6 @@ const s = (path) => {
   for (const p of parts) v = v?.[p];
   return typeof v === 'string' ? v : path;
 };
-
-const ACCENT = '#9ECFFB';
-const FG = '#111827';
-const MUTED = '#6b7280';
-const BORDER = '#e5e7eb';
-const BG = '#FFFFFF';
-const ERROR = '#ef4444';
-const DRAFT_LESSON_DRAG_MIME = 'application/x-learnadoodle-draft-lesson';
 
 function tempId() {
   return `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -1303,25 +1308,26 @@ const styles = StyleSheet.create({
   },
   unitTitleInput: {
     fontSize: 15,
-    fontWeight: '700',
+    fontWeight: '600',
     paddingVertical: 4,
     paddingHorizontal: 4,
     marginBottom: 2,
     color: FG,
     backgroundColor: 'transparent',
     borderWidth: 0,
+    lineHeight: 20,
     ...(Platform.OS === 'web' && {
       outlineStyle: 'none',
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      ...CLASSWORK_LEAGUE_FONT,
     }),
   },
   unitSubtitle: {
-    fontSize: 12,
+    fontSize: 13,
+    fontWeight: '400',
     color: MUTED,
     marginTop: 2,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+    lineHeight: 18,
+    ...CLASSWORK_BODY_FONT,
   },
   unitLessonsWrap: {
     borderTopWidth: 1,
@@ -1339,7 +1345,8 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   lessonRow: {
-    paddingVertical: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     paddingRight: 4,
   },
   lessonRowBorder: {
@@ -1349,8 +1356,8 @@ const styles = StyleSheet.create({
   },
   lessonRowInner: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    alignItems: 'flex-start',
+    gap: 8,
   },
   gripHandle: {
     paddingVertical: 6,
@@ -1378,16 +1385,19 @@ const styles = StyleSheet.create({
   },
   lessonTitleInput: {
     flex: 1,
-    fontSize: 14,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
+    fontSize: 15,
+    fontWeight: '500',
+    paddingVertical: 2,
+    paddingHorizontal: 0,
     minWidth: 0,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 6,
+    borderWidth: 0,
     color: FG,
-    backgroundColor: '#fff',
-    ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
+    backgroundColor: 'transparent',
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      outlineStyle: 'none',
+      ...CLASSWORK_LEAGUE_FONT,
+    }),
   },
   dropZone: {
     minHeight: 14,
@@ -1404,9 +1414,10 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   addLessonLinkText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    color: ACCENT,
+    color: CLASSWORK_LINK,
+    ...CLASSWORK_LEAGUE_FONT,
   },
   addUnitLink: {
     flexDirection: 'row',

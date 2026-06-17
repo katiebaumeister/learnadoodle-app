@@ -12,57 +12,24 @@ import {
 } from 'react-native';
 import {
   ArrowUpRight,
-  BookOpen,
-  CheckCircle2,
-  FileText,
-  HelpCircle,
-  Megaphone,
-  Upload,
 } from 'lucide-react';
-import { formatStreamTimestamp } from '../../lib/services/bulletinClient';
-import { STREAM_CARD_TYPE } from '../../lib/bulletinStreamModel';
+import { buildStreamPreviewDisplay } from '../../lib/bulletinStreamModel';
+import { resolveStreamCardIcon } from './bulletinStreamIcons';
 import BulletinLearnadoodleBody from './BulletinLearnadoodleBody';
-
-const ICON_BY_TYPE = {
-  [STREAM_CARD_TYPE.ASSIGNMENT_POSTED]: FileText,
-  [STREAM_CARD_TYPE.SUBMISSION]: Upload,
-  [STREAM_CARD_TYPE.FEEDBACK]: CheckCircle2,
-  [STREAM_CARD_TYPE.QUESTION]: HelpCircle,
-  [STREAM_CARD_TYPE.ANNOUNCEMENT]: Megaphone,
-  [STREAM_CARD_TYPE.LESSON_COMPLETE]: BookOpen,
-};
-
-const ICON_COLOR_BY_TYPE = {
-  [STREAM_CARD_TYPE.ASSIGNMENT_POSTED]: '#2563EB',
-  [STREAM_CARD_TYPE.SUBMISSION]: '#7C3AED',
-  [STREAM_CARD_TYPE.FEEDBACK]: '#059669',
-  [STREAM_CARD_TYPE.QUESTION]: '#D97706',
-  [STREAM_CARD_TYPE.ANNOUNCEMENT]: '#6366F1',
-  [STREAM_CARD_TYPE.LESSON_COMPLETE]: '#0D9488',
-};
-
-const ICON_BG_BY_TYPE = {
-  [STREAM_CARD_TYPE.ASSIGNMENT_POSTED]: '#EFF6FF',
-  [STREAM_CARD_TYPE.SUBMISSION]: '#F5F3FF',
-  [STREAM_CARD_TYPE.FEEDBACK]: '#ECFDF5',
-  [STREAM_CARD_TYPE.QUESTION]: '#FFFBEB',
-  [STREAM_CARD_TYPE.ANNOUNCEMENT]: '#EEF2FF',
-  [STREAM_CARD_TYPE.LESSON_COMPLETE]: '#F0FDFA',
-};
 
 export default function BulletinStreamCard({
   entry,
   showSubjectName = false,
+  preview = false,
   onPress = null,
   onSubjectPress = null,
   headerRight = null,
+  contextMenuHandlers = null,
 }) {
-  const Icon = ICON_BY_TYPE[entry.cardType] || Megaphone;
-  const iconColor = ICON_COLOR_BY_TYPE[entry.cardType] || '#64748B';
-  const iconBg = ICON_BG_BY_TYPE[entry.cardType] || '#F8FAFC';
-  const clickable = Boolean(entry.clickable && onPress);
+  const { Icon, color: iconColor, backgroundColor: iconBg } = resolveStreamCardIcon(entry.cardType);
+  const clickable = Boolean(onPress && (preview || entry.clickable));
   const showSubjectChip = Boolean(
-    showSubjectName && entry.subjectName && entry.subjectId,
+    !preview && showSubjectName && entry.subjectName && entry.subjectId,
   );
   const subjectChipClickable = Boolean(showSubjectChip && onSubjectPress);
 
@@ -95,6 +62,64 @@ export default function BulletinStreamCard({
     )
   ) : null;
 
+  if (preview) {
+    const lines = buildStreamPreviewDisplay(entry, { showSubjectName });
+    const previewBody = (
+      <View style={styles.previewRow}>
+        <View style={[styles.previewIconWrap, { backgroundColor: iconBg }]}>
+          <Icon size={16} color={iconColor} strokeWidth={2.25} />
+        </View>
+        <View style={styles.previewCopy}>
+          {lines.label ? (
+            <Text style={styles.previewLabel} numberOfLines={1}>
+              {lines.label}
+            </Text>
+          ) : null}
+          {lines.title ? (
+            <Text style={styles.previewTitle} numberOfLines={2}>
+              {lines.title}
+            </Text>
+          ) : null}
+          {lines.subtitle ? (
+            <Text style={styles.previewSubtitle} numberOfLines={2}>
+              {lines.subtitle}
+            </Text>
+          ) : null}
+          {lines.meta ? (
+            <Text style={styles.previewMeta} numberOfLines={1}>
+              {lines.meta}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+    );
+
+    return (
+      <View style={styles.previewWrap}>
+        <View style={styles.previewCard}>
+          <View style={styles.previewRowOuter} {...(contextMenuHandlers || {})}>
+            {clickable ? (
+              <TouchableOpacity
+                onPress={() => onPress(entry)}
+                accessibilityRole="button"
+                activeOpacity={0.92}
+                style={[styles.previewPressArea, styles.previewCardClickable]}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                {previewBody}
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.previewPressArea}>{previewBody}</View>
+            )}
+            {headerRight ? (
+              <View style={styles.previewMenuWrap}>{headerRight}</View>
+            ) : null}
+          </View>
+        </View>
+      </View>
+    );
+  }
+
   const cardBody = (
     <>
       {entry.title ? (
@@ -118,8 +143,7 @@ export default function BulletinStreamCard({
   );
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.timeDivider}>{formatStreamTimestamp(entry.createdAt)}</Text>
+    <View style={styles.wrap} {...(contextMenuHandlers || {})}>
       <View style={[styles.card, clickable && styles.cardClickable]}>
         <View style={styles.cardTop}>
           <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
@@ -156,18 +180,95 @@ export default function BulletinStreamCard({
 }
 
 const styles = StyleSheet.create({
+  previewWrap: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.14)',
+  },
+  previewCard: {
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+  },
+  previewRowOuter: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 2,
+  },
+  previewPressArea: {
+    flex: 1,
+    minWidth: 0,
+  },
+  previewMenuWrap: {
+    flexShrink: 0,
+    marginTop: 2,
+    alignSelf: 'flex-start',
+  },
+  previewCardClickable: {
+    ...(Platform.OS === 'web' && {
+      transition: 'background-color 0.12s ease',
+      ':hover': {
+        backgroundColor: 'rgba(248, 250, 252, 0.9)',
+      },
+    }),
+  },
+  previewRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  previewIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    marginTop: 1,
+  },
+  previewCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  previewLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.35,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  previewTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#0F172A',
+    lineHeight: 22,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  previewSubtitle: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#64748B',
+    lineHeight: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  previewMeta: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#94A3B8',
+    lineHeight: 16,
+    marginTop: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   wrap: {
     marginBottom: 4,
-  },
-  timeDivider: {
-    alignSelf: 'center',
-    fontSize: 11,
-    color: '#94A3B8',
-    marginTop: 6,
-    marginBottom: 4,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   card: {
     borderRadius: 16,

@@ -2,7 +2,7 @@
  * Google Classroom–style family bulletin board stream.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from 'react';
 import {
   View,
   Text,
@@ -33,6 +33,7 @@ import {
   deleteBulletinPost,
   updateBulletinPost,
   displayNameForUser,
+  mergeFamilyMemberProfiles,
   formatBulletinTimestamp,
   formatStreamTimestamp,
   resolveMaterialUrl,
@@ -54,8 +55,14 @@ import EventAttachmentsField from '../create/shared/EventAttachmentsField';
 import useAssignmentActivity from './useAssignmentActivity';
 import BulletinLearnadoodleBody from './BulletinLearnadoodleBody';
 import BulletinStreamCard from './BulletinStreamCard';
-import { mergeBulletinStreamItems } from '../../lib/bulletinStreamModel';
-import { openBulletinActivityItem } from '../../lib/bulletinFeedNavigation';
+import BulletinStreamDetailModal from './BulletinStreamDetailModal';
+import { mergeBulletinStreamItems, STREAM_CARD_TYPE } from '../../lib/bulletinStreamModel';
+import { fetchAssignment, openBulletinActivityItem } from '../../lib/bulletinFeedNavigation';
+import { dispatchOpenEditAssignment } from '../../lib/openAssignmentWorkflow';
+import {
+  deleteAssignmentAndEvent,
+  resolveLinkedEventIdFromAssignment,
+} from '../../lib/create/assignmentEditHelpers';
 import {
   fetchAndCacheBulletinPosts,
   hydrateBulletinPostsState,
@@ -425,9 +432,48 @@ function BulletinPostCard({
   );
 }
 
-function StreamPostMenu({ post, onEdit, onDelete }) {
+function resolveContextMenuPoint(nativeEvent) {
+  let x =
+    nativeEvent?.clientX ??
+    nativeEvent?.pageX ??
+    nativeEvent?.x ??
+    nativeEvent?.nativeEvent?.clientX ??
+    nativeEvent?.nativeEvent?.pageX ??
+    nativeEvent?.nativeEvent?.x;
+  let y =
+    nativeEvent?.clientY ??
+    nativeEvent?.pageY ??
+    nativeEvent?.y ??
+    nativeEvent?.nativeEvent?.clientY ??
+    nativeEvent?.nativeEvent?.pageY ??
+    nativeEvent?.nativeEvent?.y;
+  if ((x == null || y == null) && nativeEvent?.target?.getBoundingClientRect) {
+    const rect = nativeEvent.target.getBoundingClientRect();
+    x = rect.left + rect.width / 2;
+    y = rect.top + rect.height / 2;
+  }
+  return { x: x ?? 0, y: y ?? 0 };
+}
+
+const StreamPostMenu = forwardRef(function StreamPostMenu({ post, onEdit, onDelete }, ref) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [anchorPoint, setAnchorPoint] = useState(null);
   const menuBtnRef = useRef(null);
+
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+    setAnchorPoint(null);
+  }, []);
+
+  const openAt = useCallback((nativeEvent) => {
+    if (Platform.OS !== 'web') return;
+    nativeEvent?.preventDefault?.();
+    nativeEvent?.stopPropagation?.();
+    setAnchorPoint(resolveContextMenuPoint(nativeEvent));
+    setMenuOpen(true);
+  }, []);
+
+  useImperativeHandle(ref, () => ({ openAt, close: closeMenu }), [openAt, closeMenu]);
 
   const stopCardPress = (e) => {
     if (Platform.OS === 'web' && e?.stopPropagation) e.stopPropagation();
@@ -440,6 +486,7 @@ function StreamPostMenu({ post, onEdit, onDelete }) {
         style={[styles.postMenuBtn, menuOpen && styles.postMenuBtnActive]}
         onPress={(e) => {
           stopCardPress(e);
+          setAnchorPoint(null);
           setMenuOpen((open) => !open);
         }}
         accessibilityLabel="Post options"
@@ -449,8 +496,9 @@ function StreamPostMenu({ post, onEdit, onDelete }) {
       </TouchableOpacity>
       <Dropdown
         visible={menuOpen}
-        triggerRef={menuBtnRef}
-        onClose={() => setMenuOpen(false)}
+        triggerRef={anchorPoint ? null : menuBtnRef}
+        anchorPoint={anchorPoint}
+        onClose={closeMenu}
         placement="bottom-end"
         width={168}
         variant="context"
@@ -459,7 +507,7 @@ function StreamPostMenu({ post, onEdit, onDelete }) {
           icon={Pencil}
           label="Edit"
           onPress={() => {
-            setMenuOpen(false);
+            closeMenu();
             onEdit?.(post);
           }}
         />
@@ -468,12 +516,95 @@ function StreamPostMenu({ post, onEdit, onDelete }) {
           label="Delete"
           danger
           onPress={() => {
-            setMenuOpen(false);
+            closeMenu();
             onDelete?.(post);
           }}
         />
       </Dropdown>
     </View>
+  );
+});
+
+function useStreamContextMenuHandlers(menuRef) {
+  return Platform.OS === 'web' ? {
+    onContextMenu: (e) => {
+      e.preventDefault?.();
+      e.stopPropagation?.();
+      menuRef.current?.openAt(e);
+    },
+    onMouseDown: (e) => {
+      const button = e?.button ?? e?.nativeEvent?.button;
+      if (button !== 2) return;
+      e.preventDefault?.();
+      e.stopPropagation?.();
+      menuRef.current?.openAt(e?.nativeEvent || e);
+    },
+  } : {};
+}
+
+function AuthorBulletinPostCard({
+  entry,
+  post,
+  preview,
+  showSubjectName,
+  onPress,
+  onSubjectPress,
+  onEdit,
+  onDelete,
+}) {
+  const menuRef = useRef(null);
+  const contextMenuHandlers = useStreamContextMenuHandlers(menuRef);
+
+  return (
+    <BulletinStreamCard
+      entry={entry}
+      preview={preview}
+      showSubjectName={showSubjectName}
+      onPress={onPress}
+      onSubjectPress={onSubjectPress}
+      contextMenuHandlers={contextMenuHandlers}
+      headerRight={(
+        <StreamPostMenu
+          ref={menuRef}
+          post={post}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
+      )}
+    />
+  );
+}
+
+function ParentAssignmentStreamCard({
+  entry,
+  activityItem,
+  preview,
+  showSubjectName,
+  onPress,
+  onSubjectPress,
+  onEdit,
+  onDelete,
+}) {
+  const menuRef = useRef(null);
+  const contextMenuHandlers = useStreamContextMenuHandlers(menuRef);
+
+  return (
+    <BulletinStreamCard
+      entry={entry}
+      preview={preview}
+      showSubjectName={showSubjectName}
+      onPress={onPress}
+      onSubjectPress={onSubjectPress}
+      contextMenuHandlers={contextMenuHandlers}
+      headerRight={(
+        <StreamPostMenu
+          ref={menuRef}
+          post={activityItem}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
+      )}
+    />
   );
 }
 
@@ -500,7 +631,6 @@ export default function BulletinBoardSection({
     () => hydrateBulletinPostsState(familyId),
     [familyId]
   );
-  const [loading, setLoading] = useState(() => !initialBulletinState.fromCache);
   const [posts, setPosts] = useState(() => initialBulletinState.posts);
   const [profileMap, setProfileMap] = useState(() => initialBulletinState.profileMap);
   const [currentUserId, setCurrentUserId] = useState(() => initialBulletinState.currentUserId);
@@ -522,8 +652,13 @@ export default function BulletinBoardSection({
   const [error, setError] = useState(null);
   const [pendingDeletePost, setPendingDeletePost] = useState(null);
   const [deletingPost, setDeletingPost] = useState(false);
+  const [pendingDeleteAssignment, setPendingDeleteAssignment] = useState(null);
+  const [deletingAssignment, setDeletingAssignment] = useState(false);
   const [editingPost, setEditingPost] = useState(null);
+  const [detailEntry, setDetailEntry] = useState(null);
   const feedScrollRef = useRef(null);
+  const messageEditorRef = useRef(null);
+  const usePreviewFeed = !filterSubjectId;
 
   const subjectById = useMemo(() => {
     const map = new Map();
@@ -566,10 +701,8 @@ export default function BulletinBoardSection({
     });
   }, [familyId]);
 
-  const loadPosts = useCallback(async (options = {}) => {
-    const silent = options?.silent === true;
+  const loadPosts = useCallback(async () => {
     if (!familyId) return;
-    if (!silent) setLoading(true);
     setError(null);
     try {
       const payload = await fetchAndCacheBulletinPosts(familyId);
@@ -579,12 +712,7 @@ export default function BulletinBoardSection({
       setFamilyMembers(payload.familyMembers || []);
       setProfileMap(payload.profileMap instanceof Map ? payload.profileMap : new Map());
     } catch (err) {
-      if (!silent) {
-        setError(err?.message || 'Could not load bulletin board');
-        setPosts([]);
-      }
-    } finally {
-      setLoading(false);
+      setError(err?.message || 'Could not load bulletin board');
     }
   }, [familyId]);
   const loadPostsRef = useRef(loadPosts);
@@ -598,11 +726,8 @@ export default function BulletinBoardSection({
       setProfileMap(cached.profileMap);
       setCurrentUserId(cached.currentUserId);
       setFamilyMembers(cached.familyMembers);
-      setLoading(false);
-      loadPostsRef.current({ silent: true });
-      return;
     }
-    loadPostsRef.current({ silent: false });
+    loadPostsRef.current();
   }, [familyId]);
 
   useEffect(() => {
@@ -613,7 +738,7 @@ export default function BulletinBoardSection({
       if (filterSubjectId && detail.subjectId && String(detail.subjectId) !== String(filterSubjectId)) {
         return;
       }
-      loadPosts({ silent: true });
+      loadPosts();
     };
     window.addEventListener('refreshBulletinBoard', handler);
     return () => window.removeEventListener('refreshBulletinBoard', handler);
@@ -633,7 +758,7 @@ export default function BulletinBoardSection({
 
   const streamPosts = visiblePosts;
 
-  const { items: activityItems, loading: activityLoading } = useAssignmentActivity(
+  const { items: activityItems } = useAssignmentActivity(
     familyId,
     filterSubjectId || null,
     50,
@@ -651,16 +776,92 @@ export default function BulletinBoardSection({
     }),
     [streamPosts, activityItems, subjectById, profileMap, filterSubjectId]
   );
-  const showFeedLoading = (loading || activityLoading) && mergedStreamItems.length === 0;
+  const detailPost = detailEntry?.kind === 'post' ? detailEntry.payload : null;
+  const canManageDetailPost = Boolean(
+    detailPost
+      && detailPost.source !== 'learnadoodle'
+      && currentUserId
+      && String(detailPost.authorUserId) === String(currentUserId),
+  );
+  const detailMenuRef = useRef(null);
+  const detailContextMenuHandlers = canManageDetailPost && Platform.OS === 'web' ? {
+    onContextMenu: (e) => {
+      e.preventDefault?.();
+      e.stopPropagation?.();
+      detailMenuRef.current?.openAt(e);
+    },
+    onMouseDown: (e) => {
+      const button = e?.button ?? e?.nativeEvent?.button;
+      if (button !== 2) return;
+      e.preventDefault?.();
+      e.stopPropagation?.();
+      detailMenuRef.current?.openAt(e?.nativeEvent || e);
+    },
+  } : null;
 
   const handleStreamCardPress = useCallback((entry) => {
-    if (entry.kind !== 'activity' || !entry.payload) return;
-    if (onAssignmentActivityPress) {
-      onAssignmentActivityPress(entry.payload);
+    if (entry.kind === 'activity' && entry.payload) {
+      if (onAssignmentActivityPress) {
+        onAssignmentActivityPress(entry.payload);
+        return;
+      }
+      openBulletinActivityItem(entry.payload);
       return;
     }
-    openBulletinActivityItem(entry.payload);
-  }, [onAssignmentActivityPress]);
+    if (entry.kind === 'post' && usePreviewFeed) {
+      setDetailEntry(entry);
+    }
+  }, [onAssignmentActivityPress, usePreviewFeed]);
+
+  const openEditAssignmentFromActivity = useCallback(async (activityItem) => {
+    if (!activityItem?.assignmentId) return;
+    const assignment = await fetchAssignment(activityItem.assignmentId);
+    if (!assignment) {
+      setError('Could not open assignment');
+      return;
+    }
+    dispatchOpenEditAssignment({ assignment, view: 'edit' });
+  }, []);
+
+  const dispatchAssignmentFeedRefresh = useCallback(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+    window.dispatchEvent(new CustomEvent('refreshBulletinBoard', { detail: { familyId } }));
+    window.dispatchEvent(new CustomEvent('refreshCalendar'));
+    window.dispatchEvent(new CustomEvent('refreshSubjects'));
+  }, [familyId]);
+
+  const handleConfirmDeleteAssignment = useCallback(async () => {
+    if (!pendingDeleteAssignment?.assignmentId || deletingAssignment || !familyId) return;
+    setDeletingAssignment(true);
+    try {
+      const assignment = await fetchAssignment(pendingDeleteAssignment.assignmentId);
+      if (!assignment) throw new Error('Assignment not found');
+      const eventId = resolveLinkedEventIdFromAssignment(assignment);
+      if (!eventId) throw new Error('Could not delete assignment');
+      const subjectIdForDelete =
+        pendingDeleteAssignment.subjectId || assignment.related_subject || null;
+      await deleteAssignmentAndEvent({
+        eventId,
+        familyId,
+        subjectId: subjectIdForDelete,
+      });
+      setPendingDeleteAssignment(null);
+      dispatchAssignmentFeedRefresh();
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId } }));
+      }
+    } catch (err) {
+      setError(err?.message || 'Could not delete assignment');
+    } finally {
+      setDeletingAssignment(false);
+    }
+  }, [
+    pendingDeleteAssignment,
+    deletingAssignment,
+    familyId,
+    dispatchAssignmentFeedRefresh,
+  ]);
 
   const toggleParticipant = (participant) => {
     if (participant.type === 'child') {
@@ -746,8 +947,8 @@ export default function BulletinBoardSection({
   };
 
   const handleSavePost = async () => {
-    const trimmed = body.trim();
-    if (!trimmed || posting || !familyId) return;
+    const latestBody = String(messageEditorRef.current?.getMarkdown?.() ?? body).trim();
+    if (!latestBody || posting || !familyId) return;
     if (visibility === VISIBILITY_SELECTED && selectedUserIds.length === 0 && selectedChildIds.length === 0) {
       setError('Select at least one family member to share with.');
       return;
@@ -758,7 +959,7 @@ export default function BulletinBoardSection({
       if (editingPost?.id) {
         const { data, error: updateError } = await updateBulletinPost({
           postId: editingPost.id,
-          body: trimmed,
+          body: latestBody,
           subjectId,
           visibility,
           audienceUserIds: visibility === VISIBILITY_SELECTED ? selectedUserIds : [],
@@ -776,7 +977,7 @@ export default function BulletinBoardSection({
       } else {
         const { data, error: createError } = await createBulletinPost({
           familyId,
-          body: trimmed,
+          body: latestBody,
           subjectId,
           visibility,
           audienceUserIds: visibility === VISIBILITY_SELECTED ? selectedUserIds : [],
@@ -785,14 +986,19 @@ export default function BulletinBoardSection({
         });
         if (createError) throw createError;
         if (data) {
-          const nextProfiles = new Map(profileMap);
-          if (currentUserId && profile) {
+          let nextProfiles = new Map(profileMap);
+          if (currentUserId) {
+            const memberRow = (familyMembers || []).find(
+              (member) => String(member?.user_id || member?.userId) === String(currentUserId),
+            );
             nextProfiles.set(String(currentUserId), {
               id: currentUserId,
-              firstName: profile.first_name,
-              name: profile.name || profile.first_name,
+              firstName: profile?.first_name || profile?.firstName || null,
+              name: profile?.name || profile?.first_name || memberRow?.name || null,
+              email: profile?.email || memberRow?.email || null,
             });
           }
+          nextProfiles = mergeFamilyMemberProfiles(nextProfiles, familyMembers);
           setProfileMap(nextProfiles);
           setPosts((prev) => {
             const next = [data, ...prev];
@@ -962,6 +1168,7 @@ export default function BulletinBoardSection({
       ) : null}
 
       <InstructionsEditor
+        ref={messageEditorRef}
         value={body}
         onChangeText={setBody}
         label="Message"
@@ -1074,58 +1281,86 @@ export default function BulletinBoardSection({
         </Modal>
       ) : null}
 
-      {showFeedLoading ? (
-        <View style={[styles.loadingWrap, styles.loadingWrapExpanded]}>
-          <ActivityIndicator size="small" color="#6366F1" />
-        </View>
-      ) : (
-        <>
-          <ScrollView
-            ref={feedScrollRef}
-            style={styles.feedScrollExpanded}
-            contentContainerStyle={[
-              styles.feedContentStream,
-              mergedStreamItems.length === 0 && styles.feedContentEmptyExpanded,
-            ]}
-            showsVerticalScrollIndicator
-            keyboardShouldPersistTaps="handled"
-          >
-            {mergedStreamItems.length === 0 ? (
-              <View style={styles.emptyStateExpanded}>
-                <View style={styles.emptyIllustration}>
-                  <FileText size={28} color="#94a3b8" strokeWidth={1.75} />
-                </View>
-                <Text style={styles.emptyTitle}>{emptyStateMessage}</Text>
-              </View>
-            ) : (
-              mergedStreamItems.map((entry) => {
+      <ScrollView
+        ref={feedScrollRef}
+        style={styles.feedScrollExpanded}
+        contentContainerStyle={[
+          styles.feedContentStream,
+          mergedStreamItems.length === 0 && styles.feedContentEmptyExpanded,
+        ]}
+        showsVerticalScrollIndicator
+        keyboardShouldPersistTaps="handled"
+      >
+        {mergedStreamItems.length === 0 ? (
+          <View style={styles.emptyStateExpanded}>
+            <View style={styles.emptyIllustration}>
+              <FileText size={28} color="#94a3b8" strokeWidth={1.75} />
+            </View>
+            <Text style={styles.emptyTitle}>{emptyStateMessage}</Text>
+          </View>
+        ) : (
+          mergedStreamItems.map((entry) => {
                 const post = entry.kind === 'post' ? entry.payload : null;
+                const activityItem = entry.kind === 'activity' ? entry.payload : null;
                 const isPostAuthor = post
                   && post.source !== 'learnadoodle'
                   && String(post.authorUserId) === String(currentUserId);
+                const isManageableAssignment = Boolean(
+                  canDeleteAny
+                    && activityItem?.assignmentId
+                    && entry.cardType === STREAM_CARD_TYPE.ASSIGNMENT_POSTED,
+                );
+                if (isPostAuthor) {
+                  return (
+                    <AuthorBulletinPostCard
+                      key={entry.id}
+                      entry={entry}
+                      post={post}
+                      preview={usePreviewFeed}
+                      showSubjectName={!filterSubjectId}
+                      onPress={
+                        entry.kind === 'activity' || usePreviewFeed
+                          ? handleStreamCardPress
+                          : undefined
+                      }
+                      onSubjectPress={onSubjectPress}
+                      onEdit={openEditPost}
+                      onDelete={setPendingDeletePost}
+                    />
+                  );
+                }
+                if (isManageableAssignment) {
+                  return (
+                    <ParentAssignmentStreamCard
+                      key={entry.id}
+                      entry={entry}
+                      activityItem={activityItem}
+                      preview={usePreviewFeed}
+                      showSubjectName={!filterSubjectId}
+                      onPress={handleStreamCardPress}
+                      onSubjectPress={onSubjectPress}
+                      onEdit={openEditAssignmentFromActivity}
+                      onDelete={setPendingDeleteAssignment}
+                    />
+                  );
+                }
                 return (
                   <BulletinStreamCard
                     key={entry.id}
                     entry={entry}
+                    preview={usePreviewFeed}
                     showSubjectName={!filterSubjectId}
-                    onPress={entry.kind === 'activity' ? handleStreamCardPress : undefined}
-                    onSubjectPress={onSubjectPress}
-                    headerRight={
-                      isPostAuthor ? (
-                        <StreamPostMenu
-                          post={post}
-                          onEdit={openEditPost}
-                          onDelete={setPendingDeletePost}
-                        />
-                      ) : null
+                    onPress={
+                      entry.kind === 'activity' || usePreviewFeed
+                        ? handleStreamCardPress
+                        : undefined
                     }
+                    onSubjectPress={onSubjectPress}
                   />
                 );
               })
             )}
-          </ScrollView>
-        </>
-      )}
+      </ScrollView>
 
       <ConfirmDialog
         visible={!!pendingDeletePost}
@@ -1138,6 +1373,46 @@ export default function BulletinBoardSection({
         onCancel={() => {
           if (!deletingPost) setPendingDeletePost(null);
         }}
+      />
+
+      <ConfirmDialog
+        visible={!!pendingDeleteAssignment}
+        title="Delete assignment?"
+        message={
+          pendingDeleteAssignment?.assignmentTitle
+            ? `Delete "${pendingDeleteAssignment.assignmentTitle}"? This cannot be undone.`
+            : 'Delete this assignment? This cannot be undone.'
+        }
+        confirmLabel={deletingAssignment ? 'Deleting…' : 'Delete'}
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={handleConfirmDeleteAssignment}
+        onCancel={() => {
+          if (!deletingAssignment) setPendingDeleteAssignment(null);
+        }}
+      />
+
+      <BulletinStreamDetailModal
+        visible={!!detailEntry}
+        entry={detailEntry}
+        onClose={() => setDetailEntry(null)}
+        contextMenuHandlers={detailContextMenuHandlers}
+        headerRight={
+          canManageDetailPost ? (
+            <StreamPostMenu
+              ref={detailMenuRef}
+              post={detailPost}
+              onEdit={(post) => {
+                setDetailEntry(null);
+                openEditPost(post);
+              }}
+              onDelete={(post) => {
+                setDetailEntry(null);
+                setPendingDeletePost(post);
+              }}
+            />
+          ) : null
+        }
       />
     </View>
   );
@@ -1514,10 +1789,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   feedContentStream: {
-    gap: 4,
-    paddingTop: 8,
+    gap: 0,
+    paddingTop: 6,
     paddingBottom: 16,
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
   },
   streamPostWrap: {
     gap: 2,
@@ -1685,17 +1960,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingTop: 10,
-    paddingBottom: 4,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
     flexShrink: 0,
     gap: 12,
   },
   feedTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1e293b',
-    letterSpacing: -0.2,
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#334155',
+    letterSpacing: -0.1,
     flex: 1,
     minWidth: 0,
     ...(Platform.OS === 'web' && {

@@ -54,6 +54,9 @@ import {
   CLASSWORK_MUTED,
   CLASSWORK_BORDER,
   CLASSWORK_BG,
+  CLASSWORK_LINK,
+  CLASSWORK_LEAGUE_FONT,
+  CLASSWORK_BODY_FONT,
 } from '../../lib/classworkPanelTheme';
 
 const ASSIGNMENT_PLACEMENT_DRAG_MIME = 'application/x-learnadoodle-assignment-placement';
@@ -239,7 +242,7 @@ function LessonPeerRow({
             {lesson.title || 'Lesson'}
           </Text>
           {lesson.schedule?.dateLabel ? (
-            <Text style={styles.lessonMetaLine} numberOfLines={1}>
+            <Text style={styles.rowMeta} numberOfLines={1}>
               {lesson.schedule.dateLabel}
             </Text>
           ) : isParentViewer && onScheduleLesson ? (
@@ -250,12 +253,12 @@ function LessonPeerRow({
               accessibilityLabel={`Schedule ${lesson.title || 'lesson'}`}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={[styles.lessonMetaMuted, styles.lessonScheduleLink]} numberOfLines={1}>
+              <Text style={[styles.rowMetaMuted, styles.lessonScheduleLink]} numberOfLines={1}>
                 Not scheduled
               </Text>
             </TouchableOpacity>
           ) : (
-            <Text style={styles.lessonMetaMuted} numberOfLines={1}>
+            <Text style={styles.rowMetaMuted} numberOfLines={1}>
               Not scheduled
             </Text>
           )}
@@ -385,7 +388,7 @@ function AssignmentPeerRow({
             {assignment.title || 'Assignment'}
           </Text>
           <Text
-            style={scheduleLine ? styles.lessonMetaLine : styles.lessonMetaMuted}
+            style={scheduleLine ? styles.rowMeta : styles.rowMetaMuted}
             numberOfLines={1}
           >
             {subtitleLine}
@@ -402,7 +405,7 @@ function AssignmentPeerRow({
             </TouchableOpacity>
           ) : null}
           {attachedLessonTitle ? (
-            <Text style={styles.lessonMetaMuted} numberOfLines={1}>
+            <Text style={styles.rowMetaMuted} numberOfLines={1}>
               {attachedLessonTitle}
             </Text>
           ) : null}
@@ -508,7 +511,7 @@ function ScheduledClassDaysBucket({ days = [], onOpenDay }) {
                       <Text style={styles.lessonTitleText} numberOfLines={2}>
                         {row.dateLabel || 'Upcoming session'}
                       </Text>
-                      <Text style={styles.lessonMetaMuted} numberOfLines={1}>
+                      <Text style={styles.rowMetaMuted} numberOfLines={1}>
                         No lesson planned
                       </Text>
                     </View>
@@ -1556,15 +1559,13 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   panelTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '700',
     color: '#1e293b',
     letterSpacing: -0.2,
     flex: 1,
     minWidth: 0,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+    ...CLASSWORK_LEAGUE_FONT,
   },
   panelActionBtn: {
     flexDirection: 'row',
@@ -1582,12 +1583,10 @@ const styles = StyleSheet.create({
     }),
   },
   panelActionBtnText: {
-    fontSize: 15,
-    fontWeight: '500',
+    fontSize: 14,
+    fontWeight: '600',
     color: 'rgba(15,23,42,0.85)',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+    ...CLASSWORK_LEAGUE_FONT,
   },
   panelScroll: {
     flex: 1,
@@ -1598,12 +1597,10 @@ const styles = StyleSheet.create({
     }),
   },
   actionPillBtnText: {
-    fontSize: 15,
-    fontWeight: '500',
+    fontSize: 14,
+    fontWeight: '600',
     color: 'rgba(15,23,42,0.85)',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+    ...CLASSWORK_LEAGUE_FONT,
   },
   wrap: {
     paddingHorizontal: 14,
@@ -1650,19 +1647,18 @@ const styles = StyleSheet.create({
   },
   unitTitleText: {
     fontSize: 15,
-    fontWeight: '700',
+    fontWeight: '600',
     color: CLASSWORK_FG,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+    lineHeight: 20,
+    ...CLASSWORK_LEAGUE_FONT,
   },
   unitSubtitle: {
-    fontSize: 12,
+    fontSize: 13,
+    fontWeight: '400',
     color: CLASSWORK_MUTED,
     marginTop: 2,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+    lineHeight: 18,
+    ...CLASSWORK_BODY_FONT,
   },
   unitLessonsWrap: {
     borderTopWidth: 1,
@@ -1677,7 +1673,8 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   lessonRow: {
-    paddingVertical: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     paddingRight: 4,
   },
   lessonRowBorder: {
@@ -1687,8 +1684,8 @@ const styles = StyleSheet.create({
   },
   lessonRowInner: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    alignItems: 'flex-start',
+    gap: 8,
   },
   lessonRowInnerTop: {
     alignItems: 'flex-start',
@@ -1741,29 +1738,29 @@ const styles = StyleSheet.create({
   lessonTitleField: {
     flex: 1,
     minWidth: 0,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 6,
-    backgroundColor: '#fff',
-    gap: 2,
+    paddingVertical: 2,
+    gap: 3,
   },
   lessonTitleText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '500',
     color: CLASSWORK_FG,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+    lineHeight: 20,
+    ...CLASSWORK_LEAGUE_FONT,
   },
-  lessonMetaLine: {
-    fontSize: 12,
-    color: '#64748B',
-  },
-  lessonMetaMuted: {
-    fontSize: 12,
+  rowMeta: {
+    fontSize: 13,
+    fontWeight: '400',
     color: CLASSWORK_MUTED,
+    lineHeight: 18,
+    ...CLASSWORK_BODY_FONT,
+  },
+  rowMetaMuted: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: CLASSWORK_MUTED,
+    lineHeight: 18,
+    ...CLASSWORK_BODY_FONT,
   },
   lessonScheduleLink: {
     textDecorationLine: 'underline',
@@ -1798,11 +1795,10 @@ const styles = StyleSheet.create({
   },
   peerAction: {
     fontSize: 13,
-    fontWeight: '500',
-    color: '#2563EB',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+    fontWeight: '600',
+    color: CLASSWORK_LINK,
+    marginTop: 1,
+    ...CLASSWORK_LEAGUE_FONT,
   },
   iconBtn: {
     padding: 4,
@@ -1823,22 +1819,21 @@ const styles = StyleSheet.create({
     minHeight: 280,
   },
   emptyHeading: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: CLASSWORK_FG,
     letterSpacing: -0.2,
     textAlign: 'center',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+    ...CLASSWORK_LEAGUE_FONT,
   },
   emptySubtext: {
     fontSize: 14,
-    lineHeight: 21,
+    lineHeight: 20,
     color: CLASSWORK_MUTED,
     maxWidth: 360,
     textAlign: 'center',
     marginBottom: 8,
+    ...CLASSWORK_BODY_FONT,
   },
   emptyUnitsWrap: {
     alignItems: 'center',

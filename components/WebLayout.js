@@ -97,6 +97,7 @@ import {
   handleLegacyPlanYearRequest,
   handleLegacyBuildCurriculumRequest,
   sanitizeLegacyPlanYearView,
+  PLANNER_DEFAULT_CALENDAR_VIEW,
 } from '../lib/planYearRetirement';
 import { prefetchAllSubjectProgressPlans } from '../lib/prefetchSubjectProgressPlan';
 import { parseExplorerTourFromPrefs, persistExplorerTourMerge, EXPLORER_TOUR_PREFS_KEY } from '../lib/services/explorerTourClient';
@@ -1031,7 +1032,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   
   const [defaultView, setDefaultViewState] = useState(() => getDefaultView());
   
-  // Get current view from URL params, localStorage default, or 'month'
+  // Get current view from URL params, localStorage default, or week (board)
   const [currentView, setCurrentView] = useState(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
@@ -1039,9 +1040,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       if (urlView) return sanitizeLegacyPlanYearView(urlView);
       const savedDefault = getDefaultView();
       if (savedDefault) return savedDefault;
-      return 'month';
+      return PLANNER_DEFAULT_CALENDAR_VIEW;
     }
-    return 'month';
+    return PLANNER_DEFAULT_CALENDAR_VIEW;
   });
 
   // Close filter dropdown when clicking outside
@@ -1508,7 +1509,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           if (savedDefault) {
             setCurrentView(savedDefault);
           } else {
-            setCurrentView('month');
+            setCurrentView(PLANNER_DEFAULT_CALENDAR_VIEW);
           }
         }
       };
@@ -1528,7 +1529,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setActiveRightTool(null);
         }
         const url = new URL(window.location.href);
-        if (newView === 'month' || newView === 'Month') {
+        const normalizedView = String(newView || '').toLowerCase();
+        if (normalizedView === 'board' || normalizedView === 'week') {
           url.searchParams.delete('view');
         } else {
           url.searchParams.set('view', newView);
@@ -1552,7 +1554,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const url = new URL(window.location.href);
-      if (view === 'month') {
+      const normalizedView = String(view || '').toLowerCase();
+      if (normalizedView === 'board' || normalizedView === 'week') {
         url.searchParams.delete('view');
       } else {
         url.searchParams.set('view', view);

@@ -1,9 +1,11 @@
 import React, {
+  forwardRef,
   useRef,
   useLayoutEffect,
   useCallback,
   useState,
   useEffect,
+  useImperativeHandle,
 } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Platform } from 'react-native';
 import { Bold, Italic, Underline, List } from 'lucide-react';
@@ -242,6 +244,7 @@ function WebInstructionsEditor({
   autoFocus,
   hideToolbar,
   textAreaStyle,
+  editorRef,
 }) {
   const containerRef = useRef(null);
   const editableRef = useRef(null);
@@ -259,12 +262,20 @@ function WebInstructionsEditor({
   }, [placeholder]);
 
   const emitMarkdown = useCallback((el) => {
-    if (!el) return;
+    if (!el) return '';
     const markdown = htmlToMarkdown(el).replace(/\u200B/g, '');
-    skipExternalSyncRef.current = true;
-    onChangeText?.(markdown);
     syncPlaceholder(el);
+    onChangeText?.(markdown);
+    return markdown;
   }, [onChangeText, syncPlaceholder]);
+
+  useImperativeHandle(editorRef, () => ({
+    getMarkdown: () => {
+      const el = editableRef.current;
+      if (!el) return String(value ?? '');
+      return htmlToMarkdown(el).replace(/\u200B/g, '');
+    },
+  }), [value]);
 
   const refreshFormatState = useCallback(() => {
     setActiveFormats(readWebFormatState(editableRef.current));
@@ -299,14 +310,18 @@ function WebInstructionsEditor({
     Object.assign(el.style, WEB_EDITOR_INNER_STYLE);
 
     const handleInput = () => {
-      if (skipExternalSyncRef.current) return;
       emitMarkdown(el);
       refreshFormatState();
+    };
+
+    const handleBlur = () => {
+      emitMarkdown(el);
     };
 
     const onSelectionActivity = () => refreshFormatState();
 
     el.addEventListener('input', handleInput);
+    el.addEventListener('blur', handleBlur);
     el.addEventListener('keyup', onSelectionActivity);
     el.addEventListener('mouseup', onSelectionActivity);
     el.addEventListener('focus', onSelectionActivity);
@@ -322,6 +337,7 @@ function WebInstructionsEditor({
 
     return () => {
       el.removeEventListener('input', handleInput);
+      el.removeEventListener('blur', handleBlur);
       el.removeEventListener('keyup', onSelectionActivity);
       el.removeEventListener('mouseup', onSelectionActivity);
       el.removeEventListener('focus', onSelectionActivity);
@@ -406,6 +422,7 @@ function NativeInstructionsEditor({
   autoFocus,
   hideToolbar,
   textAreaStyle,
+  editorRef,
 }) {
   const inputRef = useRef(null);
   const selectionRef = useRef({ start: 0, end: 0 });
@@ -413,6 +430,10 @@ function NativeInstructionsEditor({
   const [activeFormats, setActiveFormats] = useState({ bold: false, italic: false, underline: false });
 
   const textValue = String(value ?? '');
+
+  useImperativeHandle(editorRef, () => ({
+    getMarkdown: () => textValue,
+  }), [textValue]);
 
   const syncSelection = useCallback((start, end) => {
     const safeStart = typeof start === 'number' ? start : 0;
@@ -512,9 +533,11 @@ function NativeInstructionsEditor({
   );
 }
 
-export default function InstructionsEditor(props) {
+const InstructionsEditor = forwardRef(function InstructionsEditor(props, ref) {
   if (Platform.OS === 'web') {
-    return <WebInstructionsEditor {...props} />;
+    return <WebInstructionsEditor {...props} editorRef={ref} />;
   }
-  return <NativeInstructionsEditor {...props} />;
-}
+  return <NativeInstructionsEditor {...props} editorRef={ref} />;
+});
+
+export default InstructionsEditor;

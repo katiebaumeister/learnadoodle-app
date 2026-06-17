@@ -29,6 +29,7 @@ export default function Dropdown({
   matchTriggerWidth = false,
   variant = 'default', // 'default' | 'context'
   panelProps = null,
+  anchorPoint = null,
 }) {
   const [position, setPosition] = useState(null);
   const dropdownRef = useRef(null);
@@ -40,6 +41,26 @@ export default function Dropdown({
     }
     
     const updatePosition = () => {
+      if (anchorPoint) {
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const resolvedWidth = width;
+        const itemCount = React.Children.count(children);
+        const estimatedHeight = Math.min(maxHeight, Math.max(itemCount * 44, 44));
+        let top = anchorPoint.y + offset;
+        let left = anchorPoint.x;
+        if (left + resolvedWidth > viewportWidth) {
+          left = viewportWidth - resolvedWidth - 16;
+        }
+        if (left < 16) left = 16;
+        if (top + estimatedHeight > viewportHeight) {
+          top = anchorPoint.y - estimatedHeight - offset;
+        }
+        if (top < 8) top = 8;
+        setPosition({ top, left, width: resolvedWidth });
+        return true;
+      }
+
       if (!triggerRef?.current) return false;
       
       // Handle React Native refs that may need _nativeNode
@@ -138,7 +159,7 @@ export default function Dropdown({
       window.removeEventListener('scroll', scheduleUpdate, true);
       window.removeEventListener('resize', scheduleUpdate);
     };
-  }, [visible, triggerRef, placement, offset, width, maxHeight, matchTriggerWidth, children]);
+  }, [visible, triggerRef, anchorPoint, placement, offset, width, maxHeight, matchTriggerWidth, children]);
   
   useEffect(() => {
     if (!visible) return;

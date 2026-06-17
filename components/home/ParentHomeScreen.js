@@ -20,7 +20,6 @@ import ParentDigestModal from './ParentDigestModal';
 import BulletinBoardSection from '../bulletin/BulletinBoardSection';
 import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
-import { openBulletinActivityItem } from '../../lib/bulletinFeedNavigation';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
 
 function getTimeBasedGreeting() {
@@ -105,15 +104,21 @@ function pickSubjectListSource(overview, subjects) {
 
 async function hydrateLearningAssignees(learning = [], familyId) {
   const items = Array.isArray(learning) ? learning : [];
-  const eventIds = items
-    .map((event) => event?.id)
-    .filter((id) => id != null && id !== '');
+  const eventIds = Array.from(
+    new Set(
+      items.flatMap((event) => {
+        const raw = String(event?.id || '').trim();
+        const clean = cleanPlannerEventId(raw);
+        return [raw, clean].filter(Boolean);
+      }),
+    ),
+  );
   if (!familyId || eventIds.length === 0) return items;
 
   try {
     const { data, error } = await supabase
       .from('events')
-      .select('id, child_id, child_ids')
+      .select('id, child_id, child_ids, subject_id, generated_by, source_block_id, academic_year_id, curriculum_lesson_id, event_type, title')
       .eq('family_id', familyId)
       .in('id', eventIds);
 
@@ -126,7 +131,9 @@ async function hydrateLearningAssignees(learning = [], familyId) {
     );
 
     return items.map((event) => {
-      const assigneeRow = assigneesByEventId.get(String(event?.id));
+      const rawId = String(event?.id || '').trim();
+      const cleanId = cleanPlannerEventId(rawId);
+      const assigneeRow = assigneesByEventId.get(cleanId) || assigneesByEventId.get(rawId);
       if (!assigneeRow) return event;
 
       const rowChildIds = Array.isArray(assigneeRow.child_ids)
@@ -145,8 +152,16 @@ async function hydrateLearningAssignees(learning = [], familyId) {
 
       return {
         ...event,
+        id: assigneeRow.id || cleanId || rawId,
         child_id: assigneeRow.child_id ?? event?.child_id ?? null,
         child_ids: mergedChildIds,
+        subject_id: assigneeRow.subject_id ?? event?.subject_id ?? null,
+        generated_by: assigneeRow.generated_by ?? event?.generated_by ?? null,
+        source_block_id: assigneeRow.source_block_id ?? event?.source_block_id ?? null,
+        academic_year_id: assigneeRow.academic_year_id ?? event?.academic_year_id ?? null,
+        curriculum_lesson_id: assigneeRow.curriculum_lesson_id ?? event?.curriculum_lesson_id ?? null,
+        event_type: assigneeRow.event_type ?? event?.event_type ?? null,
+        title: assigneeRow.title ?? event?.title ?? null,
       };
     });
   } catch {
@@ -807,10 +822,6 @@ export default function ParentHomeScreen({
     </View>
   );
 
-  const handleBulletinActivityPress = useCallback((item) => {
-    openBulletinActivityItem(item, { onNavigate });
-  }, [onNavigate]);
-
   const handleBulletinSubjectPress = useCallback((subjectId) => {
     if (!subjectId) return;
     onNavigate?.(`subject-${subjectId}`);
@@ -830,7 +841,6 @@ export default function ParentHomeScreen({
         subjects={effectiveHomeData.subjects?.length ? effectiveHomeData.subjects : stableSubjects}
         profile={profile}
         feedTitle="Bulletin Board"
-        onAssignmentActivityPress={handleBulletinActivityPress}
         onSubjectPress={handleBulletinSubjectPress}
       />
     </View>
@@ -897,8 +907,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(99, 102, 241, 0.12)',
     backgroundColor: colors.bgSubtle,
-    minHeight: 115,
-    paddingVertical: 23,
+    minHeight: 96,
+    paddingVertical: 18,
     paddingHorizontal: 24,
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
@@ -915,7 +925,7 @@ const styles = StyleSheet.create({
   greetingCopy: {
     flex: 1,
     justifyContent: 'center',
-    gap: 4,
+    gap: 2,
     minWidth: 0,
   },
   greetingTitleRow: {
@@ -928,7 +938,7 @@ const styles = StyleSheet.create({
   greetingTitle: {
     flex: 1,
     minWidth: 0,
-    fontSize: 34,
+    fontSize: 32,
     fontWeight: '700',
     color: '#0f172a',
     letterSpacing: -0.4,
@@ -938,20 +948,20 @@ const styles = StyleSheet.create({
     }),
   },
   greetingSubtitle: {
-    fontSize: 17,
-    fontWeight: '500',
-    color: '#334155',
-    lineHeight: 24,
+    fontSize: 16,
+    fontWeight: '400',
+    color: '#475569',
+    lineHeight: 22,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   greetingDateLine: {
     flexShrink: 0,
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#64748b',
-    lineHeight: 20,
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#475569',
+    lineHeight: 22,
     textAlign: 'right',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -973,11 +983,11 @@ const styles = StyleSheet.create({
     flexBasis: 0,
     minHeight: 0,
     marginTop: 2,
-    paddingTop: 4,
+    paddingTop: 6,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 0,
-    paddingBottom: 0,
+    paddingBottom: 8,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.12)',
     overflow: 'hidden',
@@ -993,11 +1003,11 @@ const styles = StyleSheet.create({
     flexBasis: 0,
     minHeight: 0,
     marginTop: 2,
-    paddingTop: 4,
+    paddingTop: 6,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.12)',
     overflow: 'hidden',
@@ -1012,10 +1022,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingTop: 12,
-    paddingBottom: 10,
-    marginBottom: 4,
+    paddingHorizontal: 4,
+    paddingTop: 10,
+    paddingBottom: 12,
+    marginBottom: 6,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(148, 163, 184, 0.16)',
     flexShrink: 0,
@@ -1087,11 +1097,11 @@ const styles = StyleSheet.create({
   },
   /** Section title — slightly heavier than body, below page hero */
   sectionLabel: {
-    fontSize: 18,
+    fontSize: 21,
     fontWeight: '700',
     color: '#1e293b',
-    letterSpacing: -0.2,
-    textTransform: 'none',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
     marginTop: 0,
     flexShrink: 1,
     ...(Platform.OS === 'web' && {

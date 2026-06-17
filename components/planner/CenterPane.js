@@ -11,7 +11,7 @@ import MobileCardView from './MobileCardView';
 import { startOfToday, startOfWeek } from './utils/date';
 import { eventMatchesPlannerCategoryFilter } from '../../lib/planner/plannerEventCategories';
 
-const DEFAULT_VIEW = 'Month';
+const DEFAULT_VIEW = 'Board';
 
 /** Lowercase keys from URL / WebLayout must map to PascalCase mode (render branches use 'Month', 'Week', …). */
 const KNOWN_MODES = {

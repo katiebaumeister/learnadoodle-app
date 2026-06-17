@@ -11,23 +11,17 @@ export default function useAssignmentActivity(familyId, subjectId, limit = 20, e
     [enabled, familyId, subjectId]
   );
   const [items, setItems] = useState(() => initialState.items);
-  const [loading, setLoading] = useState(() => enabled && !!familyId && !initialState.fromCache);
 
-  const load = useCallback(async (options = {}) => {
-    const silent = options?.silent === true;
+  const load = useCallback(async () => {
     if (!enabled || !familyId) {
       setItems([]);
-      setLoading(false);
       return;
     }
-    if (!silent) setLoading(true);
     try {
       const data = await fetchAndCacheAssignmentActivity(familyId, subjectId, limit);
       setItems(data || []);
     } catch (_) {
-      if (!silent) setItems([]);
-    } finally {
-      setLoading(false);
+      // Keep showing cached items on refresh failure.
     }
   }, [enabled, familyId, subjectId, limit]);
   const loadRef = useRef(load);
@@ -36,22 +30,18 @@ export default function useAssignmentActivity(familyId, subjectId, limit = 20, e
   useEffect(() => {
     if (!enabled || !familyId) {
       setItems([]);
-      setLoading(false);
       return;
     }
     const cached = hydrateAssignmentActivityState(familyId, subjectId);
     if (cached.fromCache) {
       setItems(cached.items);
-      setLoading(false);
-      loadRef.current({ silent: true });
-      return;
     }
-    loadRef.current({ silent: false });
+    loadRef.current();
   }, [enabled, familyId, subjectId, limit]);
 
   useEffect(() => {
     if (!enabled || typeof window === 'undefined') return undefined;
-    const handler = () => loadRef.current({ silent: true });
+    const handler = () => loadRef.current();
     window.addEventListener('childAssignmentsNeedRefresh', handler);
     window.addEventListener('parentAssignmentsNeedRefresh', handler);
     return () => {
@@ -61,7 +51,7 @@ export default function useAssignmentActivity(familyId, subjectId, limit = 20, e
   }, [enabled]);
 
   const reload = useCallback(() => {
-    loadRef.current({ silent: true });
+    loadRef.current();
   }, []);
 
   const updateItems = useCallback((nextItems) => {
@@ -70,5 +60,5 @@ export default function useAssignmentActivity(familyId, subjectId, limit = 20, e
     if (familyId) writeAssignmentActivityCache(familyId, subjectId, normalized);
   }, [familyId, subjectId]);
 
-  return { items, loading, reload, updateItems };
+  return { items, loading: false, reload, updateItems };
 }

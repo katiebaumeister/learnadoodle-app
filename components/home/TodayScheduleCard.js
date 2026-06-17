@@ -1,15 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
-import { Plus, CalendarDays, MoreVertical, Edit2, Trash2 } from 'lucide-react';
+import { Plus, CalendarDays, MoreVertical } from 'lucide-react';
 import CompletionRing from '../calendar/CompletionRing';
 import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
-import Dropdown, { DropdownItem } from '../ui/Dropdown';
-import ConfirmDialog from '../ConfirmDialog';
-import { useSession } from '../../contexts/SessionContext';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
-import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
 
 const ATTENDANCE_RING_SIZE = 20;
@@ -28,18 +24,11 @@ function ScheduleEventRow({
   eventChildIds,
   showEventMenu,
   onOpenEvent,
-  onRequestDelete,
   handleAttendanceToggle,
   handleEventContextMenu,
   formatChildNamesLine,
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef(null);
-
-  const runMenuAction = (action) => {
-    setMenuOpen(false);
-    action?.();
-  };
 
   const handleEditEvent = () => {
     if (typeof onOpenEvent === 'function') {
@@ -56,6 +45,25 @@ function ScheduleEventRow({
         })
       );
     }
+  };
+
+  const handleOpenEventMenu = (pressEvent) => {
+    pressEvent?.stopPropagation?.();
+    if (Platform.OS !== 'web') return;
+    let nativeEvent = pressEvent?.nativeEvent || pressEvent;
+    const node = menuBtnRef.current;
+    const el = node?.getBoundingClientRect ? node : node?._nativeNode ?? node?.nativeElement;
+    if (el?.getBoundingClientRect) {
+      const rect = el.getBoundingClientRect();
+      nativeEvent = {
+        clientX: rect.right,
+        clientY: rect.bottom,
+        target: el,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      };
+    }
+    handleEventContextMenu(event, nativeEvent);
   };
 
   return (
@@ -158,37 +166,14 @@ function ScheduleEventRow({
         <View style={styles.eventMenuWrap}>
           <TouchableOpacity
             ref={menuBtnRef}
-            style={[styles.eventMenuBtn, menuOpen && styles.eventMenuBtnActive]}
-            onPress={(e) => {
-              e?.stopPropagation?.();
-              setMenuOpen((open) => !open);
-            }}
+            style={styles.eventMenuBtn}
+            onPress={handleOpenEventMenu}
             accessibilityRole="button"
             accessibilityLabel={`${primaryLabel} actions`}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
             <MoreVertical size={16} color="#94A3B8" />
           </TouchableOpacity>
-          <Dropdown
-            visible={menuOpen}
-            triggerRef={menuBtnRef}
-            onClose={() => setMenuOpen(false)}
-            placement="bottom-end"
-            width={220}
-            variant="context"
-          >
-            <DropdownItem
-              icon={Edit2}
-              label="Edit Event"
-              onPress={() => runMenuAction(handleEditEvent)}
-            />
-            <DropdownItem
-              icon={Trash2}
-              label="Delete Event"
-              danger
-              onPress={() => runMenuAction(() => onRequestDelete?.(event))}
-            />
-          </Dropdown>
         </View>
       ) : null}
     </View>
@@ -212,10 +197,6 @@ export default function TodayScheduleCard({
 }) {
   /** Optimistic done state by event id until server props catch up */
   const [attendanceOptimistic, setAttendanceOptimistic] = useState({});
-  const [pendingDeleteEvent, setPendingDeleteEvent] = useState(null);
-  const [deletingEvent, setDeletingEvent] = useState(false);
-  const session = useSession();
-  const familyId = session?.family_id;
 
   useEffect(() => {
     setAttendanceOptimistic((prev) => {
@@ -328,31 +309,6 @@ export default function TodayScheduleCard({
       })
     );
   }, []);
-
-  const handleRequestDeleteEvent = useCallback((event) => {
-    setPendingDeleteEvent(event);
-  }, []);
-
-  const handleConfirmDeleteEvent = useCallback(async () => {
-    const event = pendingDeleteEvent;
-    const cleanId = cleanPlannerEventId(String(event?.id || ''));
-    if (!cleanId || !familyId) {
-      setPendingDeleteEvent(null);
-      return;
-    }
-    setDeletingEvent(true);
-    try {
-      const { error } = await deletePlannerEvent(cleanId, familyId);
-      if (error) throw error;
-    } catch (err) {
-      if (Platform.OS === 'web') {
-        window.alert?.(`Could not delete event: ${err?.message || err}`);
-      }
-    } finally {
-      setDeletingEvent(false);
-      setPendingDeleteEvent(null);
-    }
-  }, [pendingDeleteEvent, familyId]);
 
   const formatTime = (timeString) => {
     if (!timeString) return '';
@@ -509,7 +465,6 @@ export default function TodayScheduleCard({
                 eventChildIds={eventChildIds}
                 showEventMenu={!isHoliday}
                 onOpenEvent={onOpenEvent}
-                onRequestDelete={handleRequestDeleteEvent}
                 handleAttendanceToggle={handleAttendanceToggle}
                 handleEventContextMenu={handleEventContextMenu}
                 formatChildNamesLine={formatChildNamesLine}
@@ -528,18 +483,6 @@ export default function TodayScheduleCard({
         </View>
       )}
     </View>
-    <ConfirmDialog
-      visible={!!pendingDeleteEvent}
-      title="Delete event?"
-      message="Are you sure you want to delete this event?"
-      confirmLabel={deletingEvent ? 'Deleting…' : 'Delete'}
-      cancelLabel="Cancel"
-      destructive
-      onConfirm={handleConfirmDeleteEvent}
-      onCancel={() => {
-        if (!deletingEvent) setPendingDeleteEvent(null);
-      }}
-    />
     </>
   );
 }
@@ -663,16 +606,17 @@ const styles = StyleSheet.create({
     }),
   },
   eventsList: {
-    gap: 10,
-    paddingTop: 2,
-    paddingBottom: 4,
+    gap: 12,
+    paddingTop: 4,
+    paddingBottom: 8,
+    paddingHorizontal: 2,
   },
   eventRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.16)',

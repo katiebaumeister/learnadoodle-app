@@ -1,0 +1,44 @@
+import {
+  BookOpen,
+  CheckCircle2,
+  FileText,
+  HelpCircle,
+  Megaphone,
+  Upload,
+} from 'lucide-react';
+import { STREAM_CARD_TYPE } from '../../lib/bulletinStreamModel';
+
+export const STREAM_ICON_BY_TYPE = {
+  [STREAM_CARD_TYPE.ASSIGNMENT_POSTED]: FileText,
+  [STREAM_CARD_TYPE.SUBMISSION]: Upload,
+  [STREAM_CARD_TYPE.FEEDBACK]: CheckCircle2,
+  [STREAM_CARD_TYPE.QUESTION]: HelpCircle,
+  [STREAM_CARD_TYPE.ANNOUNCEMENT]: Megaphone,
+  [STREAM_CARD_TYPE.LESSON_COMPLETE]: BookOpen,
+};
+
+export const STREAM_ICON_COLOR_BY_TYPE = {
+  [STREAM_CARD_TYPE.ASSIGNMENT_POSTED]: '#2563EB',
+  [STREAM_CARD_TYPE.SUBMISSION]: '#7C3AED',
+  [STREAM_CARD_TYPE.FEEDBACK]: '#059669',
+  [STREAM_CARD_TYPE.QUESTION]: '#D97706',
+  [STREAM_CARD_TYPE.ANNOUNCEMENT]: '#6366F1',
+  [STREAM_CARD_TYPE.LESSON_COMPLETE]: '#0D9488',
+};
+
+export const STREAM_ICON_BG_BY_TYPE = {
+  [STREAM_CARD_TYPE.ASSIGNMENT_POSTED]: '#EFF6FF',
+  [STREAM_CARD_TYPE.SUBMISSION]: '#F5F3FF',
+  [STREAM_CARD_TYPE.FEEDBACK]: '#ECFDF5',
+  [STREAM_CARD_TYPE.QUESTION]: '#FFFBEB',
+  [STREAM_CARD_TYPE.ANNOUNCEMENT]: '#EEF2FF',
+  [STREAM_CARD_TYPE.LESSON_COMPLETE]: '#F0FDFA',
+};
+
+export function resolveStreamCardIcon(cardType) {
+  return {
+    Icon: STREAM_ICON_BY_TYPE[cardType] || Megaphone,
+    color: STREAM_ICON_COLOR_BY_TYPE[cardType] || '#64748B',
+    backgroundColor: STREAM_ICON_BG_BY_TYPE[cardType] || '#F8FAFC',
+  };
+}

@@ -644,16 +644,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 }),
               }}>{displayTime}</Text>
             )}
-            {!hideChildDots && participatingChildIds.length > 0 && (
-              <ChildAvatarCluster
-                childIds={participatingChildIds}
-                familyChildren={children}
-                size={16}
-                overlap={-7}
-                hideBackground
-                style={{ marginLeft: 'auto', flexShrink: 0, alignSelf: 'center' }}
-              />
-            )}
           </View>
         ) : alignDotsNearTime ? (
           // Layout for day view: dots right after time

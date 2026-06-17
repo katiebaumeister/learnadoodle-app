@@ -435,19 +435,19 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   greetingTitle: {
-    fontSize: 34,
+    fontSize: 37,
     fontWeight: '700',
     color: '#0f172a',
     letterSpacing: -0.4,
-    lineHeight: 38,
+    lineHeight: 42,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   greetingSubtitle: {
     fontSize: 17,
-    fontWeight: '500',
-    color: '#334155',
+    fontWeight: '400',
+    color: '#64748b',
     lineHeight: 24,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
