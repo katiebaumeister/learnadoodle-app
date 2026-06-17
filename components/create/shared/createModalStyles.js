@@ -715,14 +715,14 @@ export const createModalStyles = StyleSheet.create({
     minWidth: 0,
     ...(Platform.OS === 'web'
       ? {
-          width: 'calc((100% - 36px) / 4)',
-          maxWidth: 'calc((100% - 36px) / 4)',
-          minWidth: 112,
+          width: 'min(100px, calc((100% - 36px) / 4))',
+          maxWidth: 'min(100px, calc((100% - 36px) / 4))',
+          minWidth: 84,
         }
       : {
-          width: '30%',
-          maxWidth: '30%',
-          minWidth: 112,
+          width: '26%',
+          maxWidth: '26%',
+          minWidth: 84,
         }),
   },
   scheduleColumnCompact: {

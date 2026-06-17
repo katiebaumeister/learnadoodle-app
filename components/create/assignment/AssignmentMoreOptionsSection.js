@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TextInput, Switch, TouchableOpacity } from 'react-native';
 import { Settings2 } from 'lucide-react';
 import { ModalSectionCard } from '../../ui/ModalSectionCard';
@@ -8,7 +8,7 @@ import { SingleDateField } from '../shared/ScheduleDateFields';
 import RubricSelectField from '../shared/RubricSelectField';
 import { CheckboxRow } from '../shared/assignmentFormParts';
 import { createModalStyles as styles, PLACEHOLDER } from '../shared/createModalStyles';
-import { fetchSubjectCurriculumEventsStructure } from '../../../lib/services/curriculumClient';
+import { useSubjectCurriculumUnits } from '../../../lib/useSubjectCurriculumUnits';
 
 function OptionChip({ label, active, onPress }) {
   return (
@@ -49,31 +49,9 @@ export default function AssignmentMoreOptionsSection({
   onMilestoneDueDateChange,
   onOpenMilestoneDatePicker,
 }) {
-  const [curriculumUnits, setCurriculumUnits] = useState([]);
-  const [loadingUnits, setLoadingUnits] = useState(false);
+  const curriculumUnits = useSubjectCurriculumUnits(familyId, subjectId);
   const { more } = layout;
   const patch = (partial) => onWorkSpecChange?.({ ...workSpec, ...partial });
-
-  useEffect(() => {
-    if (!familyId || !subjectId || !more.unit) {
-      setCurriculumUnits([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      setLoadingUnits(true);
-      try {
-        const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, subjectId, null);
-        if (cancelled) return;
-        setCurriculumUnits(error ? [] : (Array.isArray(data?.units) ? data.units : []));
-      } finally {
-        if (!cancelled) setLoadingUnits(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [familyId, subjectId, more.unit]);
 
   const unitLessons = useMemo(() => {
     const unit = curriculumUnits.find((u) => String(u?.title || '').trim() === String(unitTitle || '').trim());
@@ -124,9 +102,7 @@ export default function AssignmentMoreOptionsSection({
         {more.unit && subjectId ? (
           <View style={styles.formGroup}>
             <Text style={styles.fieldLabel}>Unit</Text>
-            {loadingUnits ? (
-              <Text style={{ fontSize: 13, color: '#6b7280' }}>Loading units…</Text>
-            ) : curriculumUnits.length === 0 ? (
+            {curriculumUnits.length === 0 ? (
               <Text style={{ fontSize: 13, color: '#6b7280' }}>No units in curriculum yet</Text>
             ) : (
               <View style={styles.modeChipRow}>

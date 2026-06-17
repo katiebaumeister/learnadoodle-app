@@ -16,6 +16,7 @@ import {
 import { buildStreamPreviewDisplay } from '../../lib/bulletinStreamModel';
 import { resolveStreamCardIcon } from './bulletinStreamIcons';
 import BulletinLearnadoodleBody from './BulletinLearnadoodleBody';
+import { ACCENT_TEXT } from '../create/shared/createModalStyles';
 
 export default function BulletinStreamCard({
   entry,
@@ -268,7 +269,7 @@ const styles = StyleSheet.create({
     }),
   },
   wrap: {
-    marginBottom: 4,
+    marginBottom: 0,
   },
   card: {
     borderRadius: 16,
@@ -388,7 +389,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 13,
     fontWeight: '600',
-    color: '#2563EB',
+    color: ACCENT_TEXT,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

@@ -1505,7 +1505,7 @@ export default function MaterialsLibrary({
           <>
             {renderMaterialsToolbar()}
             {renderMaterialFilterChipRows()}
-            {renderListColumnHeaders()}
+            {!embedded && renderListColumnHeaders()}
 
               {nothingVisible ? (
                 <View style={styles.emptyFilteredState}>
@@ -1519,7 +1519,10 @@ export default function MaterialsLibrary({
                   </Text>
                 </View>
               ) : (
-                <ScrollView style={styles.listContainer} contentContainerStyle={styles.listContent}>
+                <ScrollView
+                  style={styles.listContainer}
+                  contentContainerStyle={embedded ? styles.embeddedListContent : styles.listContent}
+                >
                 {/* Unified materials list (includes both purchased materials and uploaded files) */}
                 {visibleMaterials
                 .map(m => {
@@ -1552,8 +1555,8 @@ export default function MaterialsLibrary({
                 <View key={`${kind}-${data.id}`}>
                   <View
                     style={[
-                      styles.listItem,
-                      Platform.OS === 'web' && { cursor: 'pointer' }
+                      embedded ? styles.embeddedMaterialChip : styles.listItem,
+                      Platform.OS === 'web' && { cursor: 'pointer' },
                     ]}
                     {...(Platform.OS === 'web' && typeof window !== 'undefined' && {
                       onMouseEnter: () => setHoveredItemId(data.id),
@@ -1571,16 +1574,16 @@ export default function MaterialsLibrary({
                         e.stopPropagation();
                         const nativeEvent = e.nativeEvent || e;
                         handleItemRightClick(item, nativeEvent);
-                      }
+                      },
                     })}
                   >
                     <TouchableOpacity
-                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+                      style={styles.embeddedMaterialChipMain}
                       onPress={() => handleItemClick(item)}
                       activeOpacity={0.7}
                     >
                       <View style={styles.listItemContent}>
-                        <View style={styles.listItemTitleRow}>
+                        <View style={[styles.listItemTitleRow, embedded && styles.embeddedMaterialTitleRow]}>
                           <Text style={styles.listItemTitle} numberOfLines={1}>
                             {normalized.title}
                           </Text>
@@ -1631,7 +1634,7 @@ export default function MaterialsLibrary({
                       <TouchableOpacity
                         style={[
                           styles.menuButton,
-                          !isHovered && styles.menuButtonHidden
+                          !embedded && !isHovered && styles.menuButtonHidden,
                         ]}
                         onPress={(e) => handleMenuButtonClick(item, e)}
                         data-menu-button-id={data.id}
@@ -1641,7 +1644,7 @@ export default function MaterialsLibrary({
                       </TouchableOpacity>
                     )}
                   </View>
-                  {!isLast && <View style={styles.listItemDivider} />}
+                  {!embedded && !isLast && <View style={styles.listItemDivider} />}
                 </View>
                 );
               })}
@@ -3055,6 +3058,41 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingVertical: 8,
+  },
+  embeddedListContent: {
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 16,
+    gap: 12,
+  },
+  embeddedMaterialChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.16)',
+    backgroundColor: '#FFFFFF',
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+      transition: 'border-color 0.12s ease, box-shadow 0.12s ease',
+      cursor: 'pointer',
+      ':hover': {
+        borderColor: '#CBD5E1',
+      },
+    }),
+  },
+  embeddedMaterialChipMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 0,
+  },
+  embeddedMaterialTitleRow: {
+    marginBottom: 4,
   },
   listItem: {
     flexDirection: 'row',

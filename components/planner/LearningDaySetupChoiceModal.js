@@ -8,7 +8,6 @@ import {
 } from 'react-native';
 import { CalendarDays, CalendarPlus } from 'lucide-react';
 import CreateModalShell from '../create/shared/CreateModalShell';
-import { ModalFooter } from '../ui/ModalFooter';
 import { createModalStyles as styles, FG, MUTED } from '../create/shared/createModalStyles';
 
 function ChoiceCard({
@@ -56,21 +55,7 @@ export default function LearningDaySetupChoiceModal({
         shellStyle={styles.compactShell}
         titleRowStyle={styles.compactTitleRow}
         bodyStyle={styles.shellBody}
-        footer={(
-          <ModalFooter
-            mode="edit"
-            primaryLabel="Close"
-            onCancel={onClose}
-            onPrimary={onClose}
-            accent="#9ECFFB"
-          />
-        )}
       >
-        <Text style={styles.fieldHint}>Add learning days</Text>
-        <Text style={choiceStyles.prompt}>
-          Add a single session on any date, or set up the recurring class schedule for this subject.
-        </Text>
-
         <View style={choiceStyles.list}>
           <ChoiceCard
             icon={CalendarPlus}
@@ -92,16 +77,6 @@ export default function LearningDaySetupChoiceModal({
 }
 
 const choiceStyles = {
-  prompt: {
-    marginTop: 4,
-    marginBottom: 14,
-    fontSize: 14,
-    lineHeight: 20,
-    color: MUTED,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
   list: {
     gap: 10,
   },

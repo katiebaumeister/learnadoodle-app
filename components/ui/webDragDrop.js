@@ -1,8 +1,24 @@
 import React, { useCallback, useLayoutEffect, useRef } from 'react';
 import { Platform, View } from 'react-native';
 
+let activeDragMime = null;
+let activeDragPayload = null;
+
+if (Platform.OS === 'web' && typeof window !== 'undefined') {
+  window.addEventListener('dragend', () => {
+    activeDragMime = null;
+    activeDragPayload = null;
+  });
+}
+
 export function getEventDataTransfer(ev) {
   return ev?.nativeEvent?.dataTransfer ?? ev?.dataTransfer;
+}
+
+export function isWebDragOfType(ev, mimeType) {
+  const types = getEventDataTransfer(ev)?.types;
+  if (!types) return activeDragMime === mimeType;
+  return Array.from(types).includes(mimeType);
 }
 
 export function writeWebDragPayload(ev, mimeType, payload) {
@@ -12,18 +28,25 @@ export function writeWebDragPayload(ev, mimeType, payload) {
   dt.setData(mimeType, raw);
   dt.setData('text/plain', raw);
   dt.effectAllowed = 'move';
+  activeDragMime = mimeType;
+  activeDragPayload = payload;
 }
 
 export function readWebDragPayload(ev, mimeType, validate) {
   try {
     const dt = getEventDataTransfer(ev);
     const raw = dt?.getData?.(mimeType) || dt?.getData?.('text/plain');
-    if (!raw) return null;
-    const payload = JSON.parse(raw);
-    return validate(payload) ? payload : null;
+    if (raw) {
+      const payload = JSON.parse(raw);
+      if (validate(payload)) return payload;
+    }
   } catch (_) {
-    return null;
+    // Fall through to in-memory payload.
   }
+  if (activeDragMime === mimeType && activeDragPayload && validate(activeDragPayload)) {
+    return activeDragPayload;
+  }
+  return null;
 }
 
 function useStableHandlerRef(handlers) {
@@ -32,33 +55,45 @@ function useStableHandlerRef(handlers) {
   return ref;
 }
 
-function attachDropListeners(node, handlersRef) {
+function attachDropListeners(node, handlersRef, { capture = false } = {}) {
+  const acceptDrag = (ev) => {
+    const accept = handlersRef.current.shouldAcceptDrag?.(ev);
+    return accept !== false;
+  };
+
   const dragOver = (ev) => {
+    if (!acceptDrag(ev)) return;
     ev.preventDefault();
+    ev.stopPropagation();
+    if (ev?.dataTransfer) ev.dataTransfer.dropEffect = 'move';
     handlersRef.current.onDragOver?.(ev);
   };
   const dragEnter = (ev) => {
+    if (!acceptDrag(ev)) return;
     ev.preventDefault();
+    ev.stopPropagation();
     handlersRef.current.onDragEnter?.(ev);
   };
   const dragLeave = (ev) => {
     handlersRef.current.onDragLeave?.(ev);
   };
   const drop = (ev) => {
+    if (!acceptDrag(ev)) return;
     ev.preventDefault();
+    ev.stopPropagation();
     handlersRef.current.onDrop?.(ev);
   };
 
-  node.addEventListener('dragover', dragOver);
-  node.addEventListener('dragenter', dragEnter);
-  node.addEventListener('dragleave', dragLeave);
-  node.addEventListener('drop', drop);
+  node.addEventListener('dragover', dragOver, capture);
+  node.addEventListener('dragenter', dragEnter, capture);
+  node.addEventListener('dragleave', dragLeave, capture);
+  node.addEventListener('drop', drop, capture);
 
   return () => {
-    node.removeEventListener('dragover', dragOver);
-    node.removeEventListener('dragenter', dragEnter);
-    node.removeEventListener('dragleave', dragLeave);
-    node.removeEventListener('drop', drop);
+    node.removeEventListener('dragover', dragOver, capture);
+    node.removeEventListener('dragenter', dragEnter, capture);
+    node.removeEventListener('dragleave', dragLeave, capture);
+    node.removeEventListener('drop', drop, capture);
   };
 }
 
@@ -109,6 +144,8 @@ export const WebDropView = React.forwardRef(function WebDropView(
     onDragEnter,
     onDragLeave,
     onDrop,
+    shouldAcceptDrag,
+    dropCapture = false,
     style,
     children,
     ...rest
@@ -117,7 +154,13 @@ export const WebDropView = React.forwardRef(function WebDropView(
 ) {
   const innerRef = useRef(null);
   const cleanupRef = useRef(null);
-  const handlersRef = useStableHandlerRef({ onDragOver, onDragEnter, onDragLeave, onDrop });
+  const handlersRef = useStableHandlerRef({
+    onDragOver,
+    onDragEnter,
+    onDragLeave,
+    onDrop,
+    shouldAcceptDrag,
+  });
 
   const setRef = useCallback((node) => {
     if (cleanupRef.current) {
@@ -128,9 +171,9 @@ export const WebDropView = React.forwardRef(function WebDropView(
     if (typeof forwardedRef === 'function') forwardedRef(node);
     else if (forwardedRef) forwardedRef.current = node;
     if (Platform.OS === 'web' && node) {
-      cleanupRef.current = attachDropListeners(node, handlersRef);
+      cleanupRef.current = attachDropListeners(node, handlersRef, { capture: dropCapture });
     }
-  }, [forwardedRef]);
+  }, [forwardedRef, dropCapture]);
 
   useLayoutEffect(() => () => {
     if (cleanupRef.current) {

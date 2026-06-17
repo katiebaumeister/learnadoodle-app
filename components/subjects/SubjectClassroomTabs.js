@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { ACCENT_TEXT } from '../create/shared/createModalStyles';
 
 const TABS = [
   { id: 'bulletin', label: 'Bulletin Board' },
@@ -60,7 +61,7 @@ const styles = StyleSheet.create({
     }),
   },
   tabActive: {
-    borderBottomColor: '#2563EB',
+    borderBottomColor: ACCENT_TEXT,
   },
   label: {
     fontSize: 15,
@@ -70,6 +71,6 @@ const styles = StyleSheet.create({
     ...LEAGUE_FONT,
   },
   labelActive: {
-    color: '#0F172A',
+    color: ACCENT_TEXT,
   },
 });

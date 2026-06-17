@@ -455,7 +455,14 @@ function resolveContextMenuPoint(nativeEvent) {
   return { x: x ?? 0, y: y ?? 0 };
 }
 
-const StreamPostMenu = forwardRef(function StreamPostMenu({ post, onEdit, onDelete }, ref) {
+const StreamPostMenu = forwardRef(function StreamPostMenu({
+  post,
+  onEdit,
+  onDelete,
+  editLabel = 'Edit',
+  deleteLabel = 'Delete',
+  menuWidth = 168,
+}, ref) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [anchorPoint, setAnchorPoint] = useState(null);
   const menuBtnRef = useRef(null);
@@ -500,12 +507,12 @@ const StreamPostMenu = forwardRef(function StreamPostMenu({ post, onEdit, onDele
         anchorPoint={anchorPoint}
         onClose={closeMenu}
         placement="bottom-end"
-        width={168}
+        width={menuWidth}
         variant="context"
       >
         <DropdownItem
           icon={Pencil}
-          label="Edit"
+          label={editLabel}
           onPress={() => {
             closeMenu();
             onEdit?.(post);
@@ -513,7 +520,7 @@ const StreamPostMenu = forwardRef(function StreamPostMenu({ post, onEdit, onDele
         />
         <DropdownItem
           icon={Trash2}
-          label="Delete"
+          label={deleteLabel}
           danger
           onPress={() => {
             closeMenu();
@@ -569,6 +576,9 @@ function AuthorBulletinPostCard({
           post={post}
           onEdit={onEdit}
           onDelete={onDelete}
+          editLabel="Edit Announcement"
+          deleteLabel="Delete Announcement"
+          menuWidth={220}
         />
       )}
     />
@@ -602,6 +612,9 @@ function ParentAssignmentStreamCard({
           post={activityItem}
           onEdit={onEdit}
           onDelete={onDelete}
+          editLabel="Edit assignment"
+          deleteLabel="Delete assignment"
+          menuWidth={220}
         />
       )}
     />
@@ -1286,6 +1299,7 @@ export default function BulletinBoardSection({
         style={styles.feedScrollExpanded}
         contentContainerStyle={[
           styles.feedContentStream,
+          filterSubjectId ? styles.feedContentStreamSpaced : null,
           mergedStreamItems.length === 0 && styles.feedContentEmptyExpanded,
         ]}
         showsVerticalScrollIndicator
@@ -1402,6 +1416,9 @@ export default function BulletinBoardSection({
             <StreamPostMenu
               ref={detailMenuRef}
               post={detailPost}
+              editLabel="Edit Announcement"
+              deleteLabel="Delete Announcement"
+              menuWidth={220}
               onEdit={(post) => {
                 setDetailEntry(null);
                 openEditPost(post);
@@ -1793,6 +1810,10 @@ const styles = StyleSheet.create({
     paddingTop: 6,
     paddingBottom: 16,
     paddingHorizontal: 16,
+  },
+  feedContentStreamSpaced: {
+    gap: 12,
+    paddingTop: 8,
   },
   streamPostWrap: {
     gap: 2,

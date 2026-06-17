@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native
 import { ChevronDown } from 'lucide-react';
 import Dropdown from '../../ui/Dropdown';
 import { createModalStyles as styles, MUTED, ACCENT_TEXT, FG } from './createModalStyles';
-import { fetchSubjectCurriculumEventsStructure } from '../../../lib/services/curriculumClient';
+import { useSubjectCurriculumUnits } from '../../../lib/useSubjectCurriculumUnits';
 
 function unitOptionValue(unit, index) {
   const id = unit?.id != null ? String(unit.id).trim() : '';
@@ -112,29 +112,7 @@ export default function ClassworkPlacementFields({
   onUnitChange,
   onLessonChange,
 }) {
-  const [units, setUnits] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!familyId || !subjectId) {
-      setUnits([]);
-      return undefined;
-    }
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      try {
-        const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, subjectId, null);
-        if (cancelled) return;
-        setUnits(error ? [] : (Array.isArray(data?.units) ? data.units : []));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [familyId, subjectId]);
+  const units = useSubjectCurriculumUnits(familyId, subjectId);
 
   const unitOptions = useMemo(() => {
     const rows = [{ key: 'none', value: '', label: 'No unit' }];
@@ -186,7 +164,7 @@ export default function ClassworkPlacementFields({
     ? (lessonLabel || lessonOptions.find((row) => String(row.value) === String(curriculumLessonId))?.label || 'Lesson')
     : null;
 
-  const disabled = !subjectId || loading;
+  const disabled = !subjectId;
 
   return (
     <>
@@ -194,7 +172,7 @@ export default function ClassworkPlacementFields({
         label="Unit"
         value={selectedUnitValue}
         displayValue={unitDisplay}
-        placeholder={loading ? 'Loading units…' : 'No unit'}
+        placeholder="No unit"
         disabled={disabled}
         options={unitOptions}
         onSelect={(option) => {

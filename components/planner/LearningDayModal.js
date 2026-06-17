@@ -11,9 +11,14 @@ import { ModalFooter } from '../ui/ModalFooter';
 import CreateModalShell from '../create/shared/CreateModalShell';
 import ClassworkPlacementFields from '../create/shared/ClassworkPlacementFields';
 import ScheduleDateFields from '../create/shared/ScheduleDateFields';
+import AdditionalNotesSection from '../create/shared/AdditionalNotesSection';
+import EventAttachmentsField, { materialIdsFromSelection } from '../create/shared/EventAttachmentsField';
+import AddMaterialModal from '../materials/AddMaterialModal';
+import { nestedAddMaterialModalProps } from '../create/shared/nestedAddMaterialModalProps';
 import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import { createModalStyles as styles, PLACEHOLDER } from '../create/shared/createModalStyles';
+import { resolveMaterialId } from '../../lib/create/calendarEventFormUtils';
 import { normalizeTimeValue, parseTimeString, toYmd } from '../../lib/create/eventTimeUtils';
 import {
   hmToMaskedTime,
@@ -59,6 +64,9 @@ export default function LearningDayModal({
   const [unitTitle, setUnitTitle] = useState('');
   const [curriculumLessonId, setCurriculumLessonId] = useState(null);
   const [lessonLabel, setLessonLabel] = useState('');
+  const [notes, setNotes] = useState('');
+  const [materialId, setMaterialId] = useState(null);
+  const [showAddMaterial, setShowAddMaterial] = useState(false);
   const [formDirty, setFormDirty] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
 
@@ -120,6 +128,9 @@ export default function LearningDayModal({
     const lessonId = row?.curriculum_lesson_id != null ? String(row.curriculum_lesson_id) : null;
     setCurriculumLessonId(lessonId);
     setLessonLabel(getPlannerLearningDayLessonTitle(row) || String(row?.lesson || '').trim());
+    setNotes(String(row?.description || '').trim());
+    setMaterialId(resolveMaterialId(row));
+    setShowAddMaterial(false);
     setFormDirty(false);
   }, []);
 
@@ -231,6 +242,30 @@ export default function LearningDayModal({
             curriculum_metadata: nextLesson ? { lesson_label: nextLesson } : {},
           };
         }
+      }
+
+      const originalNotes = String(activeEvent?.description || '').trim();
+      const nextNotes = String(notes || '').trim();
+      const originalMaterialId = resolveMaterialId(activeEvent);
+      const nextMaterialId = materialId ? String(materialId) : null;
+      if (nextNotes !== originalNotes || nextMaterialId !== originalMaterialId) {
+        const materialIds = materialIdsFromSelection(nextMaterialId);
+        const { error } = await updateEvent(
+          eventId,
+          {
+            description: nextNotes || null,
+            material_id: nextMaterialId,
+            materials_attachment_ids: materialIds.length ? materialIds : null,
+          },
+          familyId,
+        );
+        if (error) throw error;
+        patch = {
+          ...patch,
+          description: nextNotes || null,
+          material_id: nextMaterialId,
+          materials_attachment_ids: materialIds.length ? materialIds : null,
+        };
       }
 
       setSessionEvent((prev) => ({ ...(prev || activeEvent), ...patch }));
@@ -391,11 +426,55 @@ export default function LearningDayModal({
                     setFormDirty(true);
                   }}
                 />
+
+                <AdditionalNotesSection
+                  value={notes}
+                  onChangeText={(value) => {
+                    setNotes(value);
+                    setFormDirty(true);
+                  }}
+                  label="Session notes"
+                  placeholder="Special notes for this learning day"
+                />
+
+                {familyId ? (
+                  <EventAttachmentsField
+                    familyId={familyId}
+                    selectedMaterialId={materialId}
+                    onMaterialChange={(nextMaterialId) => {
+                      setMaterialId(nextMaterialId);
+                      setFormDirty(true);
+                    }}
+                    onAddNew={() => setShowAddMaterial(true)}
+                    placeholder="Select attachment…"
+                  />
+                ) : null}
               </>
             )}
           </View>
         </CreateModalShell>
       </Modal>
+
+      {showAddMaterial ? (
+        <AddMaterialModal
+          visible
+          {...nestedAddMaterialModalProps({
+            familyId,
+            familyMembers: children || [],
+            subjectId,
+            assigneeIds: sessionChildIds,
+            subjects,
+          })}
+          onClose={() => setShowAddMaterial(false)}
+          onSaved={(material) => {
+            if (material?.id) {
+              setMaterialId(material.id);
+              setFormDirty(true);
+            }
+            setShowAddMaterial(false);
+          }}
+        />
+      ) : null}
 
       <AppCalendarDatePickerModal
         visible={datePickerOpen}

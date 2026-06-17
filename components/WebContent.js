@@ -6390,8 +6390,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               });
             },
           });
+          if (!isLearningDay) {
           menuItems.push({
-            text: isLearningDay ? 'Delete all sessions' : 'Delete Series',
+            text: 'Delete Series',
             isDelete: true,
             iconKey: 'trash2',
             action: () => {
@@ -6400,11 +6401,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               const cleanId = cleanPlannerEventId(eventId || '');
               setConfirm({
                 visible: true,
-                title: isLearningDay ? 'Delete all sessions?' : 'Delete all in series?',
-                message: isLearningDay
-                  ? 'Remove every session generated from this subject schedule?'
-                  : 'Are you sure you want to delete all occurrences in this series?',
-                confirmLabel: isLearningDay ? 'Delete all sessions' : 'Delete series',
+                title: 'Delete all in series?',
+                message: 'Are you sure you want to delete all occurrences in this series?',
+                confirmLabel: 'Delete series',
                 cancelLabel: 'Cancel',
                 destructive: true,
                 onConfirm: async () => {
@@ -6434,6 +6433,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               });
             },
           });
+          }
         } else {
           menuItems.push({
             text: isLearningDay ? 'Delete this learning day' : 'Delete Event',
@@ -11217,16 +11217,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           if (detail?.event) {
             setLearningDayModalState((prev) => {
               if (!prev.visible || String(prev.event?.id) !== String(detail.event?.id)) return prev;
-              const nextEvent = {
-                ...prev.event,
-                curriculum_lesson_id: detail.lessonId,
-              };
-              if (detail.lessonId == null) {
-                nextEvent.lesson = null;
-                nextEvent.unit = null;
-                nextEvent.curriculum_metadata = {};
-              }
-              return { ...prev, event: nextEvent };
+              return { ...prev, event: { ...prev.event, ...detail.event } };
             });
           }
         }}

@@ -188,6 +188,6 @@ const styles = StyleSheet.create({
   actionHint: {
     fontSize: 13,
     fontWeight: '500',
-    color: '#2563EB',
+    color: '#6BB3E8',
   },
 });

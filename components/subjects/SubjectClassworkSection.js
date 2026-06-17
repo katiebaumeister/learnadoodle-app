@@ -14,7 +14,9 @@ import {
   FileText,
   GripVertical,
   MoreVertical,
+  Pencil,
   Plus,
+  Trash2,
 } from 'lucide-react';
 import {
   buildSubjectClassworkModel,
@@ -23,6 +25,7 @@ import {
   resolveAssignmentLearningDay,
 } from '../../lib/subjectClassworkModel';
 import {
+  attachLearningDayToLesson,
   autoAssignLessonsToUnlinkedEvents,
   buildLessonSchedulePreview,
   formatLessonSchedulePreviewLine,
@@ -44,7 +47,7 @@ import {
 import ManualCurriculumBuilderModal from '../ManualCurriculumBuilderModal';
 import { useToast } from '../Toast';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
-import { WebDragHandle, WebDropView, readWebDragPayload, writeWebDragPayload } from '../ui/webDragDrop';
+import { WebDragHandle, WebDropView, readWebDragPayload, writeWebDragPayload, isWebDragOfType } from '../ui/webDragDrop';
 import ClassworkPlanningModal from './ClassworkPlanningModal';
 import ScheduleLessonModal from './ScheduleLessonModal';
 import { dispatchOpenLearningDayModal } from '../../lib/planner/learningDayModalNavigation';
@@ -61,6 +64,7 @@ import {
 
 const ASSIGNMENT_PLACEMENT_DRAG_MIME = 'application/x-learnadoodle-assignment-placement';
 const CLASSWORK_LESSON_DRAG_MIME = 'application/x-learnadoodle-classwork-lesson-placement';
+const LEARNING_DAY_PLACEMENT_DRAG_MIME = 'application/x-learnadoodle-learning-day-placement';
 
 function readAssignmentDragPayload(ev) {
   return readWebDragPayload(
@@ -78,9 +82,22 @@ function readLessonDragPayload(ev) {
   );
 }
 
+function readLearningDayDragPayload(ev) {
+  return readWebDragPayload(
+    ev,
+    LEARNING_DAY_PLACEMENT_DRAG_MIME,
+    (payload) => !!payload?.eventId,
+  );
+}
+
+function isLearningDayDrag(ev) {
+  return isWebDragOfType(ev, LEARNING_DAY_PLACEMENT_DRAG_MIME);
+}
+
 function dropTargetWebProps({ onDrop }) {
   if (!onDrop) return {};
   return {
+    shouldAcceptDrag: (ev) => !isLearningDayDrag(ev),
     onDragOver: (ev) => {
       if (ev?.dataTransfer) ev.dataTransfer.dropEffect = 'move';
     },
@@ -91,19 +108,44 @@ function dropTargetWebProps({ onDrop }) {
   };
 }
 
-function lessonDropTargetWebProps({ onDrop, onDragEnter, onDragLeave }) {
-  if (!onDrop) return {};
+function lessonRowDropTargetWebProps({
+  onDrop,
+  onLearningDayDrop,
+  onDragEnter,
+  onDragLeave,
+  getActiveLearningDayId,
+}) {
+  if (!onDrop && !onLearningDayDrop) return {};
   return {
+    shouldAcceptDrag: (ev) => {
+      if (isLearningDayDrag(ev) || getActiveLearningDayId?.()) {
+        return !!onLearningDayDrop;
+      }
+      if (isWebDragOfType(ev, CLASSWORK_LESSON_DRAG_MIME)) {
+        return !!onDrop;
+      }
+      return false;
+    },
     onDragOver: (ev) => {
       if (ev?.dataTransfer) ev.dataTransfer.dropEffect = 'move';
     },
     onDragEnter,
     onDragLeave,
     onDrop: (ev) => {
+      const learningDayPayload = readLearningDayDragPayload(ev);
+      const eventId = learningDayPayload?.eventId || getActiveLearningDayId?.();
+      if (eventId) {
+        onLearningDayDrop?.({ eventId: String(eventId) });
+        return;
+      }
       const payload = readLessonDragPayload(ev);
-      if (payload) onDrop(payload);
+      if (payload) onDrop?.(payload);
     },
   };
+}
+
+function lessonDropTargetWebProps({ onDrop, onDragEnter, onDragLeave }) {
+  return lessonRowDropTargetWebProps({ onDrop, onLearningDayDrop: null, onDragEnter, onDragLeave });
 }
 
 function ClassworkUnitCard({
@@ -122,7 +164,7 @@ function ClassworkUnitCard({
       ? null
       : `${lessonCount} ${lessonCount === 1 ? 'lesson' : 'lessons'}`
   );
-  const { style: dropStyle, onDragOver, onDragEnter, onDragLeave, onDrop, ...restDropWebProps } = dropWebProps;
+  const { style: dropStyle, onDragOver, onDragEnter, onDragLeave, onDrop, shouldAcceptDrag, ...restDropWebProps } = dropWebProps;
 
   return (
     <View style={styles.sectionBlock}>
@@ -136,6 +178,7 @@ function ClassworkUnitCard({
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
+        shouldAcceptDrag={shouldAcceptDrag}
         {...restDropWebProps}
       >
         <View style={styles.unitHeaderRow}>
@@ -190,15 +233,19 @@ function LessonPeerRow({
   onDragLeaveLesson,
   onDragStartLesson,
   onLessonDrop,
+  onLearningDayDrop,
+  getActiveLearningDayId,
 }) {
   const menuBtnRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const showLessonMenu = isParentViewer && lesson.lessonId;
   const canDrag = isParentViewer && Platform.OS === 'web' && lesson.lessonId;
-  const lessonDropHandlers = lessonDropTargetWebProps({
+  const lessonDropHandlers = lessonRowDropTargetWebProps({
     onDrop: onLessonDrop,
+    onLearningDayDrop,
     onDragEnter: onDragEnterLesson,
     onDragLeave: onDragLeaveLesson,
+    getActiveLearningDayId,
   });
   const handleLessonDragStart = useCallback((ev) => {
     onDragStartLesson?.(lesson.lessonId);
@@ -222,6 +269,8 @@ function LessonPeerRow({
       onDragEnter={lessonDropHandlers.onDragEnter}
       onDragLeave={lessonDropHandlers.onDragLeave}
       onDrop={lessonDropHandlers.onDrop}
+      shouldAcceptDrag={lessonDropHandlers.shouldAcceptDrag}
+      dropCapture
     >
       <View style={[styles.lessonRowInner, dragging && styles.lessonRowDragging]}>
         {canDrag ? (
@@ -278,21 +327,21 @@ function LessonPeerRow({
               triggerRef={menuBtnRef}
               onClose={() => setMenuOpen(false)}
               placement="bottom-end"
-              width={240}
+              width={168}
               offset={6}
               variant="context"
             >
               <DropdownItem
+                icon={Pencil}
                 label="Edit"
-                variant="context"
                 onPress={() => {
                   setMenuOpen(false);
                   onEditLesson?.({ lesson, unit });
                 }}
               />
               <DropdownItem
+                icon={Trash2}
                 label="Delete"
-                variant="context"
                 danger
                 onPress={() => {
                   setMenuOpen(false);
@@ -313,9 +362,8 @@ function AssignmentPeerRow({
   learningDay = null,
   isParentViewer,
   onOpen,
-  onMoveToUnit,
+  onEditAssignment,
   onDeleteAssignment,
-  unitOptions = [],
   highlighted = false,
   rowRef,
   isFirst = true,
@@ -333,19 +381,6 @@ function AssignmentPeerRow({
     || (isParentViewer ? 'Set due date in edit' : 'No date');
   const canDrag = isParentViewer && Platform.OS === 'web';
   const showAssignmentMenu = isParentViewer && assignment?.id;
-
-  const moveTargets = useMemo(() => {
-    const targets = [];
-    if (fromUnitId != null && String(fromUnitId).trim()) {
-      targets.push({ id: null, title: 'No unit' });
-    }
-    (unitOptions || []).forEach((unit) => {
-      if (String(unit.id) !== String(fromUnitId || '')) {
-        targets.push(unit);
-      }
-    });
-    return targets;
-  }, [fromUnitId, unitOptions]);
 
   const handleAssignmentDragStart = useCallback((ev) => {
     if (!assignment?.id) return;
@@ -426,28 +461,21 @@ function AssignmentPeerRow({
                 triggerRef={menuBtnRef}
                 onClose={() => setMenuOpen(false)}
                 placement="bottom-end"
-                width={240}
+                width={220}
                 offset={6}
                 variant="context"
               >
-                {moveTargets.map((unit) => (
-                  <DropdownItem
-                    key={unit.id != null ? String(unit.id) : 'no-unit'}
-                    label={unit.id != null ? `Move to ${unit.title}` : 'Move to no unit'}
-                    variant="context"
-                    onPress={() => {
-                      setMenuOpen(false);
-                      onMoveToUnit?.({
-                        assignment,
-                        unitId: unit.id,
-                        unitTitle: unit.title,
-                      });
-                    }}
-                  />
-                ))}
                 <DropdownItem
+                  icon={Pencil}
+                  label="Edit assignment"
+                  onPress={() => {
+                    setMenuOpen(false);
+                    onEditAssignment?.(assignment);
+                  }}
+                />
+                <DropdownItem
+                  icon={Trash2}
                   label="Delete assignment"
-                  variant="context"
                   danger
                   onPress={() => {
                     setMenuOpen(false);
@@ -462,10 +490,69 @@ function AssignmentPeerRow({
   );
 }
 
-function ScheduledClassDaysBucket({ days = [], onOpenDay }) {
+function LearningDayPreviewRow({
+  row,
+  onOpenDay,
+  isFirst = true,
+  canDrag = false,
+  dragging = false,
+  onDragStartLearningDay,
+}) {
+  const eventId = row?.eventId || row?.event?.id;
+  const handleLearningDayDragStart = useCallback((ev) => {
+    if (!eventId) return;
+    onDragStartLearningDay?.(eventId);
+    writeWebDragPayload(ev, LEARNING_DAY_PLACEMENT_DRAG_MIME, {
+      eventId: String(eventId),
+    });
+  }, [eventId, onDragStartLearningDay]);
+
+  return (
+    <View style={[styles.lessonRow, !isFirst && styles.lessonRowBorder]}>
+      <View style={[styles.lessonRowInner, dragging && styles.lessonRowDragging]}>
+        {canDrag && eventId ? (
+          <WebDragHandle
+            enabled={canDrag}
+            onDragStart={handleLearningDayDragStart}
+            style={styles.gripHandle}
+            accessibilityLabel="Drag learning day to a lesson"
+          >
+            <GripVertical size={16} color={CLASSWORK_MUTED} />
+          </WebDragHandle>
+        ) : (
+          <View style={styles.gripSpacer} />
+        )}
+        <TouchableOpacity
+          style={styles.learningDayRowContent}
+          onPress={() => onOpenDay?.(row.event)}
+          accessibilityLabel={`Open learning day ${row.dateLabel || ''}`}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Text style={styles.lessonBullet}>•</Text>
+          <View style={styles.lessonTitleField}>
+            <Text style={styles.lessonTitleText} numberOfLines={2}>
+              {row.dateLabel || 'Learning day'}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+function ScheduledClassDaysBucket({
+  days = [],
+  onOpenDay,
+  canDragLearningDays = false,
+  draggingLearningDayId = null,
+  onDragStartLearningDay,
+}) {
   const [expanded, setExpanded] = useState(false);
   if (!days.length) return null;
 
+  const firstRow = days[0];
+  const moreCount = days.length - 1;
+  const bucketTitle = 'Learning days - No unit or lesson attached';
   const sessionLabel = `${days.length} ${days.length === 1 ? 'session' : 'sessions'}`;
 
   return (
@@ -478,7 +565,7 @@ function ScheduledClassDaysBucket({ days = [], onOpenDay }) {
             style={styles.chevronBtn}
             accessibilityRole="button"
             accessibilityState={{ expanded }}
-            accessibilityLabel={`Scheduled class days, ${sessionLabel}`}
+            accessibilityLabel={`${bucketTitle}, ${sessionLabel}`}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
             {expanded ? (
@@ -488,39 +575,57 @@ function ScheduledClassDaysBucket({ days = [], onOpenDay }) {
             )}
           </TouchableOpacity>
           <View style={styles.unitHeaderBody}>
-            <Text style={styles.unitTitleText} numberOfLines={2}>
-              Scheduled class days
+            <Text style={styles.unitTitleText} numberOfLines={3}>
+              {bucketTitle}
             </Text>
-            <Text style={styles.unitSubtitle}>{sessionLabel}</Text>
+            {expanded ? (
+              <Text style={styles.unitSubtitle}>{sessionLabel}</Text>
+            ) : null}
           </View>
         </View>
-        {expanded ? (
-          <View style={styles.unitLessonsWrap}>
-            <View style={styles.timelineList}>
-              {days.map((row, index) => (
-                <TouchableOpacity
+        <View style={styles.unitLessonsWrap}>
+          <View style={styles.timelineList}>
+            {expanded ? (
+              days.map((row, index) => (
+                <LearningDayPreviewRow
                   key={String(row.eventId || index)}
-                  style={[styles.lessonRow, index > 0 && styles.lessonRowBorder]}
-                  onPress={() => onOpenDay?.(row.event)}
-                  accessibilityLabel={`Open learning day ${row.dateLabel || ''}`}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.lessonRowInner}>
-                    <Text style={styles.lessonBullet}>•</Text>
-                    <View style={styles.lessonTitleField}>
-                      <Text style={styles.lessonTitleText} numberOfLines={2}>
-                        {row.dateLabel || 'Upcoming session'}
-                      </Text>
-                      <Text style={styles.rowMetaMuted} numberOfLines={1}>
-                        No lesson planned
+                  row={row}
+                  onOpenDay={onOpenDay}
+                  isFirst={index === 0}
+                  canDrag={canDragLearningDays}
+                  dragging={String(draggingLearningDayId || '') === String(row.eventId || row.event?.id || '')}
+                  onDragStartLearningDay={onDragStartLearningDay}
+                />
+              ))
+            ) : (
+              <>
+                <LearningDayPreviewRow
+                  row={firstRow}
+                  onOpenDay={onOpenDay}
+                  isFirst
+                  canDrag={canDragLearningDays}
+                  dragging={String(draggingLearningDayId || '') === String(firstRow.eventId || firstRow.event?.id || '')}
+                  onDragStartLearningDay={onDragStartLearningDay}
+                />
+                {moreCount > 0 ? (
+                  <TouchableOpacity
+                    onPress={() => setExpanded(true)}
+                    style={[styles.lessonRow, styles.lessonRowBorder, styles.learningDaysMoreRow]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Show ${moreCount} more learning days`}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={styles.lessonRowInner}>
+                      <Text style={styles.learningDaysMoreText}>
+                        {`+${moreCount} more`}
                       </Text>
                     </View>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
+                  </TouchableOpacity>
+                ) : null}
+              </>
+            )}
           </View>
-        ) : null}
+        </View>
       </View>
     </View>
   );
@@ -638,10 +743,12 @@ export default function SubjectClassworkSection({
   }, [schedulingAll, onSchedulingAllChange]);
   const [draggingAssignmentId, setDraggingAssignmentId] = useState(null);
   const [draggingLessonId, setDraggingLessonId] = useState(null);
+  const [draggingLearningDayId, setDraggingLearningDayId] = useState(null);
   const [dragOverTarget, setDragOverTarget] = useState(null);
   const [dragOverLessonTarget, setDragOverLessonTarget] = useState(null);
   const [movingPlacement, setMovingPlacement] = useState(false);
   const [movingLesson, setMovingLesson] = useState(false);
+  const [linkingLearningDay, setLinkingLearningDay] = useState(false);
   const [expandedUnits, setExpandedUnits] = useState(() => new Set());
   const [scheduleModal, setScheduleModal] = useState({
     visible: false,
@@ -661,6 +768,7 @@ export default function SubjectClassworkSection({
   });
   const lessonRowRefs = useRef({});
   const assignmentRowRefs = useRef({});
+  const draggingLearningDayIdRef = useRef(null);
   const hasUnitsContent = useMemo(
     () => curriculumStructureHasContent({ units }),
     [units],
@@ -918,16 +1026,6 @@ export default function SubjectClassworkSection({
     );
   }, [familyId, subjectId, subjectName, units, toast, onPlacementChanged]);
 
-  const unitMoveOptions = useMemo(
-    () => (units || [])
-      .map((unit) => ({
-        id: unit?.unitId || unit?.id || null,
-        title: unit?.title || unit?.unitTitle || 'Unit',
-      }))
-      .filter((unit) => unit.id),
-    [units],
-  );
-
   const findAssignmentById = useCallback((assignmentId) => {
     return (assignments || []).find((a) => String(a?.id) === String(assignmentId)) || null;
   }, [assignments]);
@@ -962,17 +1060,6 @@ export default function SubjectClassworkSection({
       setDragOverTarget(null);
     }
   }, [findAssignmentById, movingPlacement, familyId, toast, onPlacementChanged]);
-
-  const handleMoveAssignmentToUnit = useCallback(({ assignment, unitId, unitTitle }) => {
-    if (!assignment?.id) return;
-    moveAssignmentPlacement({
-      assignmentId: assignment.id,
-      unitId,
-      unitTitle,
-      lessonId: null,
-      lessonTitle: null,
-    });
-  }, [moveAssignmentPlacement]);
 
   const handleDeleteAssignment = useCallback((assignment) => {
     if (!assignment?.id || !familyId) return;
@@ -1026,6 +1113,40 @@ export default function SubjectClassworkSection({
   const handleLessonDragStart = useCallback((lessonId) => {
     setDraggingLessonId(String(lessonId));
   }, []);
+
+  const handleLearningDayDragStart = useCallback((eventId) => {
+    const id = String(eventId);
+    draggingLearningDayIdRef.current = id;
+    setDraggingLearningDayId(id);
+  }, []);
+
+  const getActiveLearningDayId = useCallback(
+    () => draggingLearningDayIdRef.current,
+    [],
+  );
+
+  const handleAttachLearningDayToLesson = useCallback(async (unit, lesson, { eventId }) => {
+    if (!eventId || !lesson?.lessonId || !familyId || linkingLearningDay) return;
+    setLinkingLearningDay(true);
+    try {
+      await attachLearningDayToLesson({
+        eventId,
+        familyId,
+        lessonId: lesson.lessonId,
+        unitTitle: unit?.title || '',
+        lessonTitle: lesson.title || '',
+      });
+      toast.push('Learning day linked to lesson', 'success');
+      onPlacementChanged?.();
+    } catch (err) {
+      toast.push(err?.message || 'Could not link learning day', 'error');
+    } finally {
+      setLinkingLearningDay(false);
+      setDraggingLearningDayId(null);
+      draggingLearningDayIdRef.current = null;
+      setDragOverLessonTarget(null);
+    }
+  }, [familyId, linkingLearningDay, toast, onPlacementChanged]);
 
   const moveLessonPlacement = useCallback(async ({
     lessonId,
@@ -1110,6 +1231,8 @@ export default function SubjectClassworkSection({
     const clearDrag = () => {
       setDraggingAssignmentId(null);
       setDraggingLessonId(null);
+      setDraggingLearningDayId(null);
+      draggingLearningDayIdRef.current = null;
       setDragOverTarget(null);
       setDragOverLessonTarget(null);
     };
@@ -1188,9 +1311,8 @@ export default function SubjectClassworkSection({
         learningDay={item.learningDay}
         isParentViewer={isParentViewer}
         onOpen={onOpenAssignment}
-        onMoveToUnit={handleMoveAssignmentToUnit}
+        onEditAssignment={onOpenAssignment}
         onDeleteAssignment={handleDeleteAssignment}
-        unitOptions={unitMoveOptions}
         highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
         isFirst={index === 0}
         fromUnitId={unit?.unitId}
@@ -1207,9 +1329,7 @@ export default function SubjectClassworkSection({
   }, [
     isParentViewer,
     onOpenAssignment,
-    handleMoveAssignmentToUnit,
     handleDeleteAssignment,
-    unitMoveOptions,
     highlightAssignmentId,
     draggingAssignmentId,
     handleAssignmentDragStart,
@@ -1276,6 +1396,9 @@ export default function SubjectClassworkSection({
             <ScheduledClassDaysBucket
               days={model.unlinkedLearningDays}
               onOpenDay={handleOpenLearningDay}
+              canDragLearningDays={isParentViewer && Platform.OS === 'web'}
+              draggingLearningDayId={draggingLearningDayId}
+              onDragStartLearningDay={handleLearningDayDragStart}
             />
           ) : null}
           {isParentViewer ? (
@@ -1335,6 +1458,9 @@ export default function SubjectClassworkSection({
         <ScheduledClassDaysBucket
           days={model.unlinkedLearningDays}
           onOpenDay={handleOpenLearningDay}
+          canDragLearningDays={isParentViewer && Platform.OS === 'web'}
+          draggingLearningDayId={draggingLearningDayId}
+          onDragStartLearningDay={handleLearningDayDragStart}
         />
       ) : null}
       {noUnitItems.length > 0 ? (
@@ -1368,9 +1494,8 @@ export default function SubjectClassworkSection({
                 learningDay={item.learningDay}
                 isParentViewer={isParentViewer}
                 onOpen={onOpenAssignment}
-                onMoveToUnit={handleMoveAssignmentToUnit}
+                onEditAssignment={onOpenAssignment}
                 onDeleteAssignment={handleDeleteAssignment}
-                unitOptions={unitMoveOptions}
                 highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
                 isFirst={index === 0}
                 fromUnitId={null}
@@ -1429,7 +1554,10 @@ export default function SubjectClassworkSection({
                 isActive: dragOverTarget === dropKey,
               }),
               ...(Platform.OS === 'web' ? {
-                onDragEnter: () => setDragOverTarget(dropKey),
+                onDragEnter: (ev) => {
+                  if (isLearningDayDrag(ev)) return;
+                  setDragOverTarget(dropKey);
+                },
                 onDragLeave: (ev) => {
                   if (!ev?.currentTarget?.contains?.(ev?.relatedTarget)) {
                     setDragOverTarget((prev) => (prev === dropKey ? null : prev));
@@ -1467,6 +1595,10 @@ export default function SubjectClassworkSection({
                       }}
                       onDragStartLesson={handleLessonDragStart}
                       onLessonDrop={handleLessonDropOnRow(unit, item.lesson.lessonId)}
+                      onLearningDayDrop={(payload) => {
+                        handleAttachLearningDayToLesson(unit, item.lesson, payload);
+                      }}
+                      getActiveLearningDayId={getActiveLearningDayId}
                       rowRef={(node) => {
                         if (node && item.lesson?.lessonId) {
                           lessonRowRefs.current[String(item.lesson.lessonId)] = node;
@@ -1483,9 +1615,8 @@ export default function SubjectClassworkSection({
                     learningDay={item.learningDay}
                     isParentViewer={isParentViewer}
                     onOpen={onOpenAssignment}
-                    onMoveToUnit={handleMoveAssignmentToUnit}
+                    onEditAssignment={onOpenAssignment}
                     onDeleteAssignment={handleDeleteAssignment}
-                    unitOptions={unitMoveOptions}
                     highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
                     isFirst={isFirst}
                     fromUnitId={unit.unitId}
@@ -1502,22 +1633,31 @@ export default function SubjectClassworkSection({
               })}
             </View>
             {Platform.OS === 'web' && lessonCount > 0 ? (
+              (() => {
+                const lessonEndDropHandlers = lessonDropTargetWebProps({
+                  onDrop: handleLessonDropEnd(unit),
+                });
+                const lessonEndDropKey = `lesson-end-${unit.unitId}`;
+                return (
               <WebDropView
                 style={[
                   styles.dropZone,
-                  dragOverLessonTarget === `lesson-end-${unit.unitId}` && styles.lessonRowDropActive,
+                  dragOverLessonTarget === lessonEndDropKey && styles.lessonRowDropActive,
                 ]}
-                onDragOver={lessonDropTargetWebProps({ onDrop: handleLessonDropEnd(unit) }).onDragOver}
-                onDragEnter={() => setDragOverLessonTarget(`lesson-end-${unit.unitId}`)}
+                onDragOver={lessonEndDropHandlers.onDragOver}
+                onDragEnter={() => setDragOverLessonTarget(lessonEndDropKey)}
                 onDragLeave={(ev) => {
                   if (!ev?.currentTarget?.contains?.(ev?.relatedTarget)) {
                     setDragOverLessonTarget((prev) => (
-                      prev === `lesson-end-${unit.unitId}` ? null : prev
+                      prev === lessonEndDropKey ? null : prev
                     ));
                   }
                 }}
-                onDrop={lessonDropTargetWebProps({ onDrop: handleLessonDropEnd(unit) }).onDrop}
+                onDrop={lessonEndDropHandlers.onDrop}
+                shouldAcceptDrag={lessonEndDropHandlers.shouldAcceptDrag}
               />
+                );
+              })()
             ) : null}
           </ClassworkUnitCard>
         );
@@ -1639,10 +1779,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingTop: 8,
     paddingBottom: 28,
-    gap: 20,
+    gap: 26,
   },
   sectionBlock: {
-    gap: 8,
+    gap: 12,
     overflow: 'visible',
   },
   unitCard: {
@@ -1774,6 +1914,13 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     gap: 3,
   },
+  learningDayRowContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    minWidth: 0,
+  },
   lessonTitleText: {
     fontSize: 15,
     fontWeight: '500',
@@ -1831,6 +1978,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: CLASSWORK_LINK,
     marginTop: 1,
+    ...CLASSWORK_LEAGUE_FONT,
+  },
+  learningDaysMoreRow: {
+    paddingVertical: 10,
+  },
+  learningDaysMoreText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: CLASSWORK_LINK,
+    paddingLeft: 14,
     ...CLASSWORK_LEAGUE_FONT,
   },
   iconBtn: {

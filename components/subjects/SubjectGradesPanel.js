@@ -427,7 +427,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingTop: 8,
     paddingBottom: 28,
-    gap: 16,
+    gap: 22,
   },
   emptyWrap: {
     flex: 1,

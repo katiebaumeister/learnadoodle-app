@@ -33,6 +33,7 @@ import {
   fetchSubjectCurriculumEventsStructure,
   getManualCommitValidationError,
 } from '../lib/services/curriculumClient';
+import { refreshSubjectCurriculumUnits } from '../lib/useSubjectCurriculumUnits';
 import { draftFromCurriculumStructure } from '../lib/subjectUnitsEditorDraft';
 import { useToast } from './Toast';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
@@ -298,10 +299,15 @@ export default function ManualCurriculumBuilderModal({
   }, []);
 
   const addUnit = useCallback(() => {
-    patchDraft((prev) => ({
-      ...prev,
-      units: [...prev.units, emptyUnit(prev.units.length + 1)],
-    }));
+    patchDraft((prev) => {
+      const seq = prev.units.length + 1;
+      const unit = emptyUnit(seq);
+      unit.lessons = [emptyLesson(1)];
+      return {
+        ...prev,
+        units: [...prev.units, unit],
+      };
+    });
     setExpandedUnits((prev) => {
       const next = new Set(prev);
       next.add(draft.units.length);
@@ -515,16 +521,15 @@ export default function ManualCurriculumBuilderModal({
   }, [patchDraft, closeWebDraftLessonMenu]);
 
   const validationError = useMemo(() => getManualCommitValidationError(draft), [draft]);
-  const blockingError = useMemo(() => {
-    if (!validationError) return null;
-    if (/lesson/i.test(String(validationError))) return null;
-    return validationError;
-  }, [validationError]);
 
   const handleSave = useCallback(async ({ closeOnSuccess = true } = {}) => {
     if (!subjectId || !familyId || !subjectName) return;
-    if (blockingError) {
-      setError(blockingError);
+    if (validationError) {
+      if (!embedded || !autoSave) {
+        setError(validationError);
+      } else {
+        setError(null);
+      }
       return;
     }
     setError(null);
@@ -542,7 +547,10 @@ export default function ManualCurriculumBuilderModal({
       if (academicYearId) payload.academic_year_id = academicYearId;
       const { data, err } = await commitManualDraft(payload);
       if (err || !data) {
-        setError(err?.message || s('courseStructure.manualBuilder.errorSave'));
+        const message = err?.message || s('courseStructure.manualBuilder.errorSave');
+        if (!embedded || !autoSave) {
+          setError(message);
+        }
         return;
       }
       if (!autoSave) {
@@ -550,11 +558,15 @@ export default function ManualCurriculumBuilderModal({
       }
       setDirty(false);
       onSaved?.();
+      refreshSubjectCurriculumUnits(familyId, subjectId, academicYearId || null).catch(() => {});
       if (closeOnSuccess && !embedded) {
         handleClose();
       }
     } catch (e) {
-      setError(e?.message || s('courseStructure.manualBuilder.errorSave'));
+      const message = e?.message || s('courseStructure.manualBuilder.errorSave');
+      if (!embedded || !autoSave) {
+        setError(message);
+      }
     } finally {
       setSaving(false);
     }
@@ -570,18 +582,20 @@ export default function ManualCurriculumBuilderModal({
     loadedExisting,
     createCalendarEvents,
     academicYearId,
-    blockingError,
+    validationError,
     embedded,
     autoSave,
   ]);
 
   useEffect(() => {
-    if (!embedded || !autoSave || !dirty || saving || !subjectId || !familyId) return undefined;
+    if (!embedded || !autoSave || !dirty || saving || !subjectId || !familyId || validationError) {
+      return undefined;
+    }
     const timer = setTimeout(() => {
       handleSave({ closeOnSuccess: false });
     }, 900);
     return () => clearTimeout(timer);
-  }, [embedded, autoSave, dirty, saving, subjectId, familyId, draft, handleSave]);
+  }, [embedded, autoSave, dirty, saving, subjectId, familyId, draft, handleSave, validationError]);
 
   const renderWebDraftUnitMenuPortal = () => {
     if (Platform.OS !== 'web' || draftBuilderUnitMenuKey === null || !webDraftUnitMenuLayout) return null;
@@ -830,7 +844,7 @@ export default function ManualCurriculumBuilderModal({
         showsVerticalScrollIndicator={false}
         nestedScrollEnabled
       >
-        {error ? (
+        {error && !(embedded && autoSave) ? (
           <View style={styles.errorBanner}>
             <Text style={styles.errorText}>{error}</Text>
           </View>
@@ -1119,10 +1133,19 @@ export default function ManualCurriculumBuilderModal({
       </ScrollView>
 
       {embedded ? (
-        autoSave && (saving || dirty) ? (
+        autoSave && (saving || dirty || validationError) ? (
           <View style={styles.embeddedStatusRow}>
-            <Text style={styles.embeddedStatusText}>
-              {saving ? 'Saving changes…' : 'Saving soon…'}
+            <Text
+              style={[
+                styles.embeddedStatusText,
+                validationError && !saving ? styles.embeddedStatusHint : null,
+              ]}
+            >
+              {saving
+                ? 'Saving changes…'
+                : validationError
+                  ? validationError
+                  : 'Saving soon…'}
             </Text>
           </View>
         ) : null
@@ -1137,10 +1160,10 @@ export default function ManualCurriculumBuilderModal({
             <Text style={styles.cancelText}>{s('global.actions.cancel')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.saveButton, (saving || blockingError) && styles.saveButtonDisabled]}
+            style={[styles.saveButton, (saving || validationError) && styles.saveButtonDisabled]}
             onPress={() => handleSave({ closeOnSuccess: true })}
-            disabled={saving || Boolean(blockingError)}
-            {...(Platform.OS === 'web' && { cursor: saving || blockingError ? 'not-allowed' : 'pointer' })}
+            disabled={saving || Boolean(validationError)}
+            {...(Platform.OS === 'web' && { cursor: saving || validationError ? 'not-allowed' : 'pointer' })}
           >
             {saving ? (
               <ActivityIndicator size="small" color="#FFFFFF" />
@@ -1268,6 +1291,11 @@ const styles = StyleSheet.create({
   embeddedStatusText: {
     fontSize: 12,
     color: MUTED,
+  },
+  embeddedStatusHint: {
+    color: '#64748B',
+    textAlign: 'right',
+    maxWidth: 320,
   },
   lessonTitleFieldWrap: {
     flex: 1,
@@ -1439,12 +1467,14 @@ const styles = StyleSheet.create({
     minWidth: 216,
     maxWidth: 320,
     backgroundColor: '#ffffff',
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: BORDER,
-    paddingVertical: 4,
+    borderColor: '#E5E7EB',
+    paddingVertical: 8,
     zIndex: 100001,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(15,23,42,0.16)' } : {}),
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05)',
+    } : {}),
   },
   inlineMenu: {
     position: 'absolute',
@@ -1453,33 +1483,40 @@ const styles = StyleSheet.create({
     marginTop: 4,
     minWidth: 216,
     backgroundColor: BG,
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: BORDER,
-    paddingVertical: 4,
+    borderColor: '#E5E7EB',
+    paddingVertical: 8,
     zIndex: 2000,
     ...(Platform.OS === 'web'
-      ? { boxShadow: '0 8px 24px rgba(15,23,42,0.12)' }
+      ? { boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05)' }
       : { elevation: 8 }),
   },
   menuItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'background-color 0.15s ease',
+      ':hover': {
+        backgroundColor: '#F8FAFC',
+      },
+    }),
   },
   menuItemBack: {
     borderBottomWidth: 1,
-    borderBottomColor: BORDER,
+    borderBottomColor: '#F3F4F6',
   },
   menuItemText: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '500',
-    color: FG,
+    color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   menuItemBackText: {
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '600',
     color: ACCENT,
     ...(Platform.OS === 'web' && {
