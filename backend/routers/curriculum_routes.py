@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 import json
 import uuid
+import re
 
 # Add parent directory to path
 backend_dir = Path(__file__).parent.parent
@@ -1948,6 +1949,124 @@ def _validate_manual_draft(draft: ManualDraftPayload) -> None:
                 raise ValueError(f"Lesson {j + 1} in unit '{u.title}' must have a title.")
 
 
+def _capture_lesson_event_links_before_replace(
+    supabase,
+    family_id: str,
+    existing_unit_ids: List[str],
+) -> Tuple[Dict[str, Tuple[str, str, int]], Dict[str, List[str]]]:
+    """Record lesson identity + linked events before delete (FK ON DELETE SET NULL)."""
+    if not existing_unit_ids:
+        return {}, {}
+    units_res = (
+        supabase.table("curriculum_units")
+        .select("id, title")
+        .in_("id", existing_unit_ids)
+        .execute()
+    )
+    unit_titles = {
+        str(row.get("id")): (row.get("title") or "").strip()
+        for row in (units_res.data or [])
+        if row.get("id")
+    }
+    lessons_res = (
+        supabase.table("curriculum_lessons")
+        .select("id, unit_id, title, sequence_index")
+        .in_("unit_id", existing_unit_ids)
+        .execute()
+    )
+    lesson_keys_by_old_id: Dict[str, Tuple[str, str, int]] = {}
+    old_lesson_ids: List[str] = []
+    for row in lessons_res.data or []:
+        lid = str(row.get("id") or "")
+        uid = str(row.get("unit_id") or "")
+        if not lid:
+            continue
+        old_lesson_ids.append(lid)
+        unit_title = unit_titles.get(uid) or ""
+        lesson_title = (row.get("title") or "").strip()
+        seq = int(row.get("sequence_index") or 0)
+        lesson_keys_by_old_id[lid] = (unit_title, lesson_title, seq)
+
+    events_by_old_lesson: Dict[str, List[str]] = {}
+    if old_lesson_ids:
+        ev_res = (
+            supabase.table("events")
+            .select("id, curriculum_lesson_id")
+            .eq("family_id", family_id)
+            .in_("curriculum_lesson_id", old_lesson_ids)
+            .is_("deleted_at", "null")
+            .execute()
+        )
+        for row in ev_res.data or []:
+            clid = str(row.get("curriculum_lesson_id") or "")
+            eid = str(row.get("id") or "")
+            if clid and eid:
+                events_by_old_lesson.setdefault(clid, []).append(eid)
+    return lesson_keys_by_old_id, events_by_old_lesson
+
+
+def _lesson_id_from_manual_temp_id(temp_id: Optional[str]) -> Optional[str]:
+    if not temp_id:
+        return None
+    match = re.match(r"^existing-l-(.+)$", str(temp_id).strip())
+    return match.group(1) if match else None
+
+
+def _remap_events_after_lesson_replace(
+    supabase,
+    family_id: str,
+    lesson_keys_by_old_id: Dict[str, Tuple[str, str, int]],
+    events_by_old_lesson: Dict[str, List[str]],
+    lesson_id_remap: Dict[str, str],
+    flat_rows: List[Dict[str, Any]],
+) -> int:
+    """Restore planner learning-day links after replace_existing recreates lesson rows."""
+    if not events_by_old_lesson:
+        return 0
+
+    new_lesson_by_key: Dict[Tuple[str, str, int], str] = {}
+    for row in flat_rows:
+        clid = row.get("curriculum_lesson_id")
+        if not clid:
+            continue
+        key = (
+            (row.get("unit_title") or "").strip(),
+            (row.get("lesson_title") or "").strip(),
+            int(row.get("seq") or 0),
+        )
+        new_lesson_by_key[key] = str(clid)
+
+    full_remap = dict(lesson_id_remap)
+    for old_lid, key in lesson_keys_by_old_id.items():
+        if old_lid in full_remap:
+            continue
+        new_lid = new_lesson_by_key.get(key)
+        if new_lid:
+            full_remap[old_lid] = new_lid
+
+    remapped = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for old_lid, event_ids in events_by_old_lesson.items():
+        new_lid = full_remap.get(old_lid)
+        if not new_lid:
+            continue
+        key = lesson_keys_by_old_id.get(old_lid)
+        unit_title = key[0] if key else None
+        lesson_title = key[1] if key else None
+        patch = {
+            "curriculum_lesson_id": new_lid,
+            "curriculum_unit_title": unit_title or None,
+            "unit": unit_title or None,
+            "lesson": lesson_title or None,
+            "curriculum_metadata": {"lesson_label": lesson_title} if lesson_title else {},
+            "updated_at": now_iso,
+        }
+        for eid in event_ids:
+            supabase.table("events").update(patch).eq("id", eid).eq("family_id", family_id).execute()
+            remapped += 1
+    return remapped
+
+
 @router.post("/commit-manual-draft", response_model=CommitManualDraftResponse)
 async def commit_manual_draft_endpoint(
     body: CommitManualDraftRequest,
@@ -1981,6 +2100,9 @@ async def commit_manual_draft_endpoint(
         unit_ids: List[str] = []
         lesson_ids: List[str] = []
         flat_rows: List[Dict[str, Any]] = []
+        lesson_id_remap: Dict[str, str] = {}
+        lesson_keys_by_old_id: Dict[str, Tuple[str, str, int]] = {}
+        events_by_old_lesson: Dict[str, List[str]] = {}
 
         # In "edit current units" flow, replace_existing should overwrite saved unit/lesson
         # structure for this subject instead of appending more curriculum_units rows.
@@ -2012,6 +2134,11 @@ async def commit_manual_draft_endpoint(
                 existing_unit_rows = by_tag_res.data or []
             existing_unit_ids = [str(r.get("id")) for r in existing_unit_rows if r.get("id")]
             if existing_unit_ids:
+                lesson_keys_by_old_id, events_by_old_lesson = _capture_lesson_event_links_before_replace(
+                    supabase,
+                    family_id,
+                    existing_unit_ids,
+                )
                 supabase.table("curriculum_lessons").delete().in_("unit_id", existing_unit_ids).execute()
                 supabase.table("curriculum_units").delete().in_("id", existing_unit_ids).execute()
 
@@ -2078,6 +2205,9 @@ async def commit_manual_draft_endpoint(
                 if les_ins.data and len(les_ins.data) > 0:
                     lid_str = str(les_ins.data[0]["id"])
                     lesson_ids.append(lid_str)
+                    prior_lesson_id = _lesson_id_from_manual_temp_id(getattr(le, "temp_id", None))
+                    if prior_lesson_id:
+                        lesson_id_remap[prior_lesson_id] = lid_str
                 flat_rows.append(
                     {
                         "unit_title": unit_title,
@@ -2094,6 +2224,23 @@ async def commit_manual_draft_endpoint(
                         "curriculum_lesson_id": lid_str,
                         "metadata_extra": {},
                     }
+                )
+
+        if body.replace_existing and events_by_old_lesson:
+            remapped = _remap_events_after_lesson_replace(
+                supabase,
+                family_id,
+                lesson_keys_by_old_id,
+                events_by_old_lesson,
+                lesson_id_remap,
+                flat_rows,
+            )
+            if remapped:
+                log_event(
+                    "curriculum.commit_manual.lesson_links_remapped",
+                    family_id=body.family_id,
+                    subject_id=body.subject_id,
+                    events_remapped=remapped,
                 )
 
         event_ids: List[str] = []

@@ -32,6 +32,7 @@ import {
   commitManualDraft,
   fetchSubjectCurriculumEventsStructure,
   getManualCommitValidationError,
+  invalidateSubjectCurriculumStructureCache,
 } from '../lib/services/curriculumClient';
 import { refreshSubjectCurriculumUnits } from '../lib/useSubjectCurriculumUnits';
 import { draftFromCurriculumStructure } from '../lib/subjectUnitsEditorDraft';
@@ -592,6 +593,7 @@ export default function ManualCurriculumBuilderModal({
         toast?.push(s('courseStructure.manualBuilder.saveSuccess'), 'success');
       }
       setDirty(false);
+      invalidateSubjectCurriculumStructureCache(familyId, subjectId, academicYearId || null);
       onSaved?.();
       refreshSubjectCurriculumUnits(familyId, subjectId, academicYearId || null).catch(() => {});
       if (closeOnSuccess && !embedded) {

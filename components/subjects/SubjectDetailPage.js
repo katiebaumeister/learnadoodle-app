@@ -50,7 +50,7 @@ import { extractStudentHelpReason, formatDueShort } from '../tutor/tutorHelpUtil
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
 import { findAcademicYearPlanForSubject } from '../../lib/subjectPlanSlotLines';
 import { getSubjectProgressCache, mergeSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
-import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
+import { fetchSubjectCurriculumEventsStructure, invalidateSubjectCurriculumStructureCache } from '../../lib/services/curriculumClient';
 import { createAttendanceLog, updateAttendanceLog, deleteAttendanceLog } from '../../lib/services/recordsClient';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
@@ -553,6 +553,7 @@ export default function SubjectDetailPage({
   );
   const learningGoalsFetchInFlightRef = useRef(false);
   const learningGoalsFetchCooldownUntilRef = useRef(0);
+  const learningGoalsFetchPromiseRef = useRef(null);
   const loadingRef = useRef(false);
   const autoOpenedMaterialKeyRef = useRef(null);
   const autoOpenedProgressActionRef = useRef(null);
@@ -572,40 +573,59 @@ export default function SubjectDetailPage({
     }
   }, [familyId, subjectData?.subject?.id]);
 
-  const loadLearningGoalsStructure = useCallback(async () => {
+  const loadLearningGoalsStructure = useCallback(async (opts = {}) => {
+    const force = opts.force === true;
     const sid = subjectData?.subject?.id;
     if (!familyId || !sid) {
       setLearningGoalsUnits([]);
       setLearningGoalsSource(null);
       return;
     }
+    if (!force && learningGoalsFetchPromiseRef.current) {
+      return learningGoalsFetchPromiseRef.current;
+    }
     const now = Date.now();
-    if (learningGoalsFetchInFlightRef.current) return;
-    if (learningGoalsFetchCooldownUntilRef.current > now) return;
-    learningGoalsFetchInFlightRef.current = true;
-    try {
-      // Use year-agnostic structure for Subject Detail section so saved edits are always visible.
-      const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, sid, null);
-      if (error) throw error;
-      const nextUnits = Array.isArray(data?.units) ? data.units : [];
-      const nextSource = data?.saved_content_source || null;
-      const currentUnits = Array.isArray(learningGoalsUnitsRef.current) ? learningGoalsUnitsRef.current : [];
-      if (nextUnits.length === 0 && currentUnits.length > 0) {
-        return;
+    if (!force && learningGoalsFetchCooldownUntilRef.current > now) return;
+    if (force) {
+      invalidateSubjectCurriculumStructureCache(familyId, sid, null);
+    }
+
+    const runFetch = async () => {
+      learningGoalsFetchInFlightRef.current = true;
+      try {
+        // Use year-agnostic structure for Subject Detail section so saved edits are always visible.
+        const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, sid, null);
+        if (error) throw error;
+        const nextUnits = Array.isArray(data?.units) ? data.units : [];
+        const nextSource = data?.saved_content_source || null;
+        const currentUnits = Array.isArray(learningGoalsUnitsRef.current) ? learningGoalsUnitsRef.current : [];
+        if (nextUnits.length === 0 && currentUnits.length > 0 && !force) {
+          return;
+        }
+        setLearningGoalsUnits(nextUnits);
+        setLearningGoalsSource(nextSource);
+        mergeSubjectProgressCache(familyId, sid, {
+          curriculumUnits: nextUnits,
+          curriculumSavedContentSource: nextSource,
+        });
+        learningGoalsFetchCooldownUntilRef.current = 0;
+      } catch (err) {
+        console.warn('[SubjectDetailPage] Failed loading learning goals structure:', err);
+        learningGoalsFetchCooldownUntilRef.current = Date.now() + 15000;
+        // Keep current UI/cache values on transient load failures to avoid wiping visible units.
+      } finally {
+        learningGoalsFetchInFlightRef.current = false;
       }
-      setLearningGoalsUnits(nextUnits);
-      setLearningGoalsSource(nextSource);
-      mergeSubjectProgressCache(familyId, sid, {
-        curriculumUnits: nextUnits,
-        curriculumSavedContentSource: nextSource,
-      });
-      learningGoalsFetchCooldownUntilRef.current = 0;
-    } catch (err) {
-      console.warn('[SubjectDetailPage] Failed loading learning goals structure:', err);
-      learningGoalsFetchCooldownUntilRef.current = Date.now() + 15000;
-      // Keep current UI/cache values on transient load failures to avoid wiping visible units.
+    };
+
+    const promise = runFetch();
+    learningGoalsFetchPromiseRef.current = promise;
+    try {
+      await promise;
     } finally {
-      learningGoalsFetchInFlightRef.current = false;
+      if (learningGoalsFetchPromiseRef.current === promise) {
+        learningGoalsFetchPromiseRef.current = null;
+      }
     }
   }, [familyId, subjectData?.subject?.id]);
   /** Parent often passes inline callbacks; keep loadSubjectDetail stable so mount effect does not loop. */
@@ -940,12 +960,13 @@ export default function SubjectDetailPage({
   const handleEditUnitsSaved = useCallback(async () => {
     setClassroomTab((tab) => (tab === 'classwork' ? tab : 'classwork'));
     learningGoalsFetchCooldownUntilRef.current = 0;
-    await loadLearningGoalsStructure();
+    invalidateSubjectCurriculumStructureCache(familyId, subject?.id, subjectPlanYearId || subjectPlanYearIdFromEvents || null);
+    await loadLearningGoalsStructure({ force: true });
     await loadSubjectDetail({ silent: true });
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: false } }));
     }
-  }, [loadLearningGoalsStructure, loadSubjectDetail]);
+  }, [loadLearningGoalsStructure, loadSubjectDetail, familyId, subject?.id, subjectPlanYearId, subjectPlanYearIdFromEvents]);
   const handleCreateAssignment = useCallback(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !subject?.id) return;
     window.dispatchEvent(
@@ -2381,9 +2402,23 @@ export default function SubjectDetailPage({
 
   const handleClassworkPlacementChanged = useCallback(async () => {
     learningGoalsFetchCooldownUntilRef.current = 0;
-    await loadLearningGoalsStructure();
+    if (familyId && subject?.id) {
+      invalidateSubjectCurriculumStructureCache(
+        familyId,
+        subject.id,
+        subjectPlanYearId || subjectPlanYearIdFromEvents || null,
+      );
+    }
+    await loadLearningGoalsStructure({ force: true });
     await loadSubjectDetail({ silent: true });
-  }, [loadLearningGoalsStructure, loadSubjectDetail]);
+  }, [
+    loadLearningGoalsStructure,
+    loadSubjectDetail,
+    familyId,
+    subject?.id,
+    subjectPlanYearId,
+    subjectPlanYearIdFromEvents,
+  ]);
 
   const gapAcademicYearId = subjectPlanYearId || subjectPlanYearIdFromEvents || null;
 
@@ -3697,7 +3732,6 @@ export default function SubjectDetailPage({
               unitsActionLabel={unitsEditorLabel}
               onCreateAssignment={handleCreateAssignment}
               onPlacementChanged={handleClassworkPlacementChanged}
-              inlineUnitsEditing={isParentViewer}
               highlightLessonId={highlightLessonId}
               highlightAssignmentId={highlightAssignmentId}
               onSchedulingAllChange={setClassworkSchedulingAll}

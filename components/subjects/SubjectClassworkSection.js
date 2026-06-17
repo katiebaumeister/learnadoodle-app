@@ -38,14 +38,13 @@ import {
   resolveLinkedEventIdFromAssignment,
 } from '../../lib/create/assignmentEditHelpers';
 import {
+  addLessonToSubjectCurriculum,
+  addUnitToSubjectCurriculum,
   deleteLessonFromSubjectCurriculum,
   moveLessonInSubjectCurriculum,
+  renameLessonInSubjectCurriculum,
 } from '../../lib/subjectClassworkLessonActions';
-import {
-  curriculumStructureHasContent,
-  draftFromCurriculumStructure,
-} from '../../lib/subjectUnitsEditorDraft';
-import ManualCurriculumBuilderModal from '../ManualCurriculumBuilderModal';
+import { curriculumStructureHasContent } from '../../lib/subjectUnitsEditorDraft';
 import { useToast } from '../Toast';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { WebDragHandle, WebDropView, readWebDragPayload, writeWebDragPayload, isWebDragOfType, LEARNING_DAY_PLACEMENT_DRAG_MIME } from '../ui/webDragDrop';
@@ -92,6 +91,64 @@ function readLearningDayDragPayload(ev) {
 
 function isLearningDayDrag(ev) {
   return isWebDragOfType(ev, LEARNING_DAY_PLACEMENT_DRAG_MIME);
+}
+
+const UNLINK_LESSON_EVENT_PATCH = {
+  curriculum_lesson_id: null,
+  curriculum_unit_title: null,
+  unit: null,
+  lesson: null,
+  curriculum_metadata: {},
+};
+
+function parseLinkedEventIds(raw) {
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+    } catch (_) {}
+  }
+  return [];
+}
+
+function buildLessonLinkEventPatch({ lessonId, lessonTitle, unitTitle }) {
+  const unit = String(unitTitle || '').trim() || null;
+  const lesson = String(lessonTitle || '').trim() || null;
+  return {
+    curriculum_lesson_id: String(lessonId),
+    curriculum_unit_title: unit,
+    unit,
+    lesson,
+    curriculum_metadata: lesson ? { lesson_label: lesson } : {},
+  };
+}
+
+function buildUnitOnlyEventPatch({ unitTitle }) {
+  const unit = String(unitTitle || '').trim() || null;
+  return {
+    curriculum_lesson_id: null,
+    curriculum_unit_title: unit,
+    unit,
+    lesson: null,
+    curriculum_metadata: {},
+  };
+}
+
+function applyOptimisticPatchesToEvents(events, patches) {
+  if (!patches || Object.keys(patches).length === 0) return events || [];
+  return (events || []).map((event) => {
+    const patch = patches[String(event?.id)];
+    return patch ? { ...event, ...patch } : event;
+  });
+}
+
+function applyOptimisticPatchesToAssignments(assignments, patches) {
+  if (!patches || Object.keys(patches).length === 0) return assignments || [];
+  return (assignments || []).map((assignment) => {
+    const patch = patches[String(assignment?.id)];
+    return patch ? { ...assignment, ...patch } : assignment;
+  });
 }
 
 function dropTargetWebProps({ onDrop }) {
@@ -174,10 +231,14 @@ function ClassworkUnitCard({
   subtitle = null,
   expanded = true,
   onToggleExpand = null,
+  showUnitMenu = false,
+  onEditUnits = null,
   children,
   dropActive = false,
   dropWebProps = {},
 }) {
+  const menuBtnRef = useRef(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const showChevron = !!onToggleExpand;
   const countLabel = subtitle ?? (
     lessonCount == null
@@ -226,6 +287,37 @@ function ClassworkUnitCard({
               <Text style={styles.unitSubtitle}>{countLabel}</Text>
             ) : null}
           </View>
+          {showUnitMenu && onEditUnits ? (
+            <View style={styles.menuAnchor}>
+              <TouchableOpacity
+                ref={menuBtnRef}
+                onPress={() => setMenuOpen((open) => !open)}
+                style={styles.iconBtn}
+                accessibilityLabel="Unit options"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <MoreVertical size={16} color={CLASSWORK_MUTED} />
+              </TouchableOpacity>
+              <Dropdown
+                visible={menuOpen}
+                triggerRef={menuBtnRef}
+                onClose={() => setMenuOpen(false)}
+                placement="bottom-end"
+                width={168}
+                offset={6}
+                variant="context"
+              >
+                <DropdownItem
+                  icon={Pencil}
+                  label="Edit units"
+                  onPress={() => {
+                    setMenuOpen(false);
+                    onEditUnits();
+                  }}
+                />
+              </Dropdown>
+            </View>
+          ) : null}
         </View>
         {expanded ? (
           <View style={styles.unitLessonsWrap}>
@@ -843,13 +935,8 @@ export default function SubjectClassworkSection({
   highlightLessonId = null,
   highlightAssignmentId = null,
   onSchedulingAllChange = null,
-  inlineUnitsEditing = false,
 }) {
   const toast = useToast();
-  const model = useMemo(
-    () => buildSubjectClassworkModel({ units, assignments, events }),
-    [units, assignments, events],
-  );
   const totalLessonCount = useMemo(
     () => (units || []).reduce(
       (sum, unit) => sum + (unit?.lessons || []).filter((lesson) => lesson?.id != null).length,
@@ -867,9 +954,11 @@ export default function SubjectClassworkSection({
   const [draggingLearningDayId, setDraggingLearningDayId] = useState(null);
   const [dragOverTarget, setDragOverTarget] = useState(null);
   const [dragOverLessonTarget, setDragOverLessonTarget] = useState(null);
+  const [optimisticEventPatches, setOptimisticEventPatches] = useState({});
+  const [optimisticAssignmentPatches, setOptimisticAssignmentPatches] = useState({});
   const [movingPlacement, setMovingPlacement] = useState(false);
   const [movingLesson, setMovingLesson] = useState(false);
-  const [linkingLearningDay, setLinkingLearningDay] = useState(false);
+  const linkingLearningDayRef = useRef(false);
   const [expandedUnits, setExpandedUnits] = useState(() => new Set());
   const [scheduleModal, setScheduleModal] = useState({
     visible: false,
@@ -895,20 +984,30 @@ export default function SubjectClassworkSection({
     () => curriculumStructureHasContent({ units }),
     [units],
   );
-  const [inlineUnitsStarted, setInlineUnitsStarted] = useState(false);
+  const savingStructureRef = useRef(false);
 
-  const useInlineUnitsEditor = inlineUnitsEditing && isParentViewer;
-  const showEmbeddedUnitsEditor = useInlineUnitsEditor && inlineUnitsStarted;
+  const mergedEvents = useMemo(
+    () => applyOptimisticPatchesToEvents(events, optimisticEventPatches),
+    [events, optimisticEventPatches],
+  );
+  const mergedAssignments = useMemo(
+    () => applyOptimisticPatchesToAssignments(assignments, optimisticAssignmentPatches),
+    [assignments, optimisticAssignmentPatches],
+  );
 
-  const startInlineUnitsEditing = useCallback(() => {
-    setInlineUnitsStarted(true);
-  }, []);
+  const model = useMemo(
+    () => buildSubjectClassworkModel({
+      units,
+      assignments: mergedAssignments,
+      events: mergedEvents,
+    }),
+    [units, mergedAssignments, mergedEvents],
+  );
 
   useEffect(() => {
-    if (!hasUnitsContent) {
-      setInlineUnitsStarted(false);
-    }
-  }, [hasUnitsContent]);
+    setOptimisticEventPatches({});
+    setOptimisticAssignmentPatches({});
+  }, [events, assignments]);
 
   const handleOpenLearningDay = useCallback((event) => {
     if (!event?.id) return;
@@ -1113,9 +1212,87 @@ export default function SubjectClassworkSection({
     return () => window.removeEventListener(OPEN_SUBJECT_CLASSWORK_SCHEDULE_ALL, handler);
   }, [subjectId, openScheduleAllModal]);
 
-  const handleEditLesson = useCallback(() => {
-    startInlineUnitsEditing();
-  }, [startInlineUnitsEditing]);
+  const handleAddUnit = useCallback(async () => {
+    if (!familyId || !subjectId || savingStructureRef.current) return;
+    savingStructureRef.current = true;
+    try {
+      await addUnitToSubjectCurriculum({
+        familyId,
+        subjectId,
+        subjectName: subjectName || 'Subject',
+        units,
+      });
+      toast.push('Unit added', 'success');
+      onPlacementChanged?.();
+    } catch (err) {
+      toast.push(err?.message || 'Could not add unit', 'error');
+    } finally {
+      savingStructureRef.current = false;
+    }
+  }, [familyId, subjectId, subjectName, units, toast, onPlacementChanged]);
+
+  const handleAddLesson = useCallback(async (unit) => {
+    if (!familyId || !subjectId || !unit?.unitId || savingStructureRef.current) return;
+    savingStructureRef.current = true;
+    try {
+      await addLessonToSubjectCurriculum({
+        familyId,
+        subjectId,
+        subjectName: subjectName || 'Subject',
+        units,
+        unitId: unit.unitId,
+      });
+      toast.push('Lesson added', 'success');
+      onPlacementChanged?.();
+    } catch (err) {
+      toast.push(err?.message || 'Could not add lesson', 'error');
+    } finally {
+      savingStructureRef.current = false;
+    }
+  }, [familyId, subjectId, subjectName, units, toast, onPlacementChanged]);
+
+  const handleEditLesson = useCallback(({ lesson }) => {
+    if (!lesson?.lessonId || !familyId || !subjectId) return;
+    const currentTitle = lesson.title || 'Lesson';
+    const runRename = async (nextTitle) => {
+      const trimmed = String(nextTitle || '').trim();
+      if (!trimmed || trimmed === currentTitle || savingStructureRef.current) return;
+      savingStructureRef.current = true;
+      try {
+        await renameLessonInSubjectCurriculum({
+          familyId,
+          subjectId,
+          subjectName: subjectName || 'Subject',
+          units,
+          lessonId: lesson.lessonId,
+          newTitle: trimmed,
+        });
+        toast.push('Lesson updated', 'success');
+        onPlacementChanged?.();
+      } catch (err) {
+        toast.push(err?.message || 'Could not update lesson', 'error');
+      } finally {
+        savingStructureRef.current = false;
+      }
+    };
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const next = window.prompt('Lesson title', currentTitle);
+      if (next != null) runRename(next);
+      return;
+    }
+    if (typeof Alert.prompt === 'function') {
+      Alert.prompt(
+        'Edit lesson',
+        'Lesson title',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Save', onPress: runRename },
+        ],
+        'plain-text',
+        currentTitle,
+      );
+    }
+  }, [familyId, subjectId, subjectName, units, toast, onPlacementChanged]);
 
   const handleDeleteLesson = useCallback(({ lesson }) => {
     if (!lesson?.lessonId || !familyId || !subjectId) return;
@@ -1163,6 +1340,33 @@ export default function SubjectClassworkSection({
   }) => {
     const assignment = findAssignmentById(assignmentId);
     if (!assignment?.id || movingPlacementRef.current) return;
+
+    const assignmentKey = String(assignment.id);
+    const linkedEventIds = parseLinkedEventIds(assignment.linked_event_ids);
+    const eventPatch = lessonId
+      ? buildLessonLinkEventPatch({ lessonId, lessonTitle, unitTitle })
+      : buildUnitOnlyEventPatch({ unitTitle });
+
+    setOptimisticAssignmentPatches((prev) => ({
+      ...prev,
+      [assignmentKey]: {
+        ...(prev[assignmentKey] || {}),
+        related_syllabus_unit: unitId || null,
+      },
+    }));
+    if (linkedEventIds.length > 0) {
+      setOptimisticEventPatches((prev) => {
+        const next = { ...prev };
+        linkedEventIds.forEach((eventId) => {
+          next[String(eventId)] = { ...(next[String(eventId)] || {}), ...eventPatch };
+        });
+        return next;
+      });
+    }
+
+    setDraggingAssignmentId(null);
+    setDragOverTarget(null);
+
     movingPlacementRef.current = true;
     setMovingPlacement(true);
     try {
@@ -1178,12 +1382,24 @@ export default function SubjectClassworkSection({
       toast.push('Assignment moved', 'success');
       onPlacementChanged?.();
     } catch (err) {
+      setOptimisticAssignmentPatches((prev) => {
+        const next = { ...prev };
+        delete next[assignmentKey];
+        return next;
+      });
+      if (linkedEventIds.length > 0) {
+        setOptimisticEventPatches((prev) => {
+          const next = { ...prev };
+          linkedEventIds.forEach((eventId) => {
+            delete next[String(eventId)];
+          });
+          return next;
+        });
+      }
       toast.push(err?.message || 'Could not move assignment', 'error');
     } finally {
       movingPlacementRef.current = false;
       setMovingPlacement(false);
-      setDraggingAssignmentId(null);
-      setDragOverTarget(null);
     }
   }, [findAssignmentById, familyId, toast, onPlacementChanged]);
 
@@ -1273,8 +1489,40 @@ export default function SubjectClassworkSection({
   );
 
   const handleAttachLearningDayToLesson = useCallback(async (unit, lesson, { eventId }) => {
-    if (!eventId || !lesson?.lessonId || !familyId || linkingLearningDay) return;
-    setLinkingLearningDay(true);
+    if (!eventId || !lesson?.lessonId || !familyId || linkingLearningDayRef.current) return;
+
+    const eventKey = String(eventId);
+    const lessonIdStr = String(lesson.lessonId);
+    const linkPatch = buildLessonLinkEventPatch({
+      lessonId: lesson.lessonId,
+      unitTitle: unit?.title || '',
+      lessonTitle: lesson.title || '',
+    });
+    const affectedEventKeys = [eventKey];
+    (events || []).forEach((ev) => {
+      if (String(ev.id) === eventKey) return;
+      if (String(ev.curriculum_lesson_id || '') === lessonIdStr) {
+        affectedEventKeys.push(String(ev.id));
+      }
+    });
+
+    setOptimisticEventPatches((prev) => {
+      const next = { ...prev };
+      affectedEventKeys.forEach((key) => {
+        if (key === eventKey) {
+          next[key] = { ...(next[key] || {}), ...linkPatch };
+        } else {
+          next[key] = { ...(next[key] || {}), ...UNLINK_LESSON_EVENT_PATCH };
+        }
+      });
+      return next;
+    });
+
+    setDraggingLearningDayId(null);
+    draggingLearningDayIdRef.current = null;
+    setDragOverLessonTarget(null);
+
+    linkingLearningDayRef.current = true;
     try {
       await attachLearningDayToLesson({
         eventId,
@@ -1286,14 +1534,18 @@ export default function SubjectClassworkSection({
       toast.push('Learning day linked to lesson', 'success');
       onPlacementChanged?.();
     } catch (err) {
+      setOptimisticEventPatches((prev) => {
+        const next = { ...prev };
+        affectedEventKeys.forEach((key) => {
+          delete next[key];
+        });
+        return next;
+      });
       toast.push(err?.message || 'Could not link learning day', 'error');
     } finally {
-      setLinkingLearningDay(false);
-      setDraggingLearningDayId(null);
-      draggingLearningDayIdRef.current = null;
-      setDragOverLessonTarget(null);
+      linkingLearningDayRef.current = false;
     }
-  }, [familyId, linkingLearningDay, toast, onPlacementChanged]);
+  }, [events, familyId, toast, onPlacementChanged]);
 
   const moveLessonPlacement = useCallback(async ({
     lessonId,
@@ -1405,83 +1657,6 @@ export default function SubjectClassworkSection({
     [model.noUnitAssignments, model.eventById],
   );
 
-  const unitsDraft = useMemo(
-    () => draftFromCurriculumStructure({ units }),
-    [units],
-  );
-
-  const lessonScheduleByLessonId = useMemo(() => {
-    const map = {};
-    (model.units || []).forEach((unit) => {
-      (unit?.lessons || []).forEach((lesson) => {
-        if (lesson?.lessonId) {
-          map[String(lesson.lessonId)] = lesson.schedule?.dateLabel || null;
-        }
-      });
-    });
-    return map;
-  }, [model.units]);
-
-  const getLessonScheduleLabel = useCallback((lessonId) => {
-    if (!lessonId) return null;
-    return lessonScheduleByLessonId[String(lessonId)] || null;
-  }, [lessonScheduleByLessonId]);
-
-  const getUnitDropWebProps = useCallback((unitIdx) => {
-    const unit = model.units?.[unitIdx];
-    if (!unit) return {};
-    const dropKey = `unit-${unit.unitId}`;
-    return {
-      ...dropTargetWebProps({
-        onDrop: handleUnitDrop(unit.unitId, unit.title),
-        isActive: dragOverTarget === dropKey,
-      }),
-      ...(Platform.OS === 'web' ? {
-        onDragEnter: () => setDragOverTarget(dropKey),
-        onDragLeave: (ev) => {
-          if (!ev?.currentTarget?.contains?.(ev?.relatedTarget)) {
-            setDragOverTarget((prev) => (prev === dropKey ? null : prev));
-          }
-        },
-        ...(dragOverTarget === dropKey ? { style: styles.unitCardDropActive } : {}),
-      } : {}),
-    };
-  }, [model.units, dragOverTarget, handleUnitDrop]);
-
-  const renderAssignmentRows = useCallback((assignmentItems, unit, { fromLessonId = null } = {}) => {
-    if (!assignmentItems.length) return null;
-    return assignmentItems.map((item, index) => (
-      <AssignmentPeerRow
-        key={item.assignment.id}
-        assignment={item.assignment}
-        attachedLessonTitle={item.attachedLessonTitle}
-        learningDay={item.learningDay}
-        isParentViewer={isParentViewer}
-        onOpen={onOpenAssignment}
-        onEditAssignment={onOpenAssignment}
-        onDeleteAssignment={handleDeleteAssignment}
-        highlighted={String(highlightAssignmentId || '') === String(item.assignment.id)}
-        isFirst={index === 0}
-        fromUnitId={unit?.unitId}
-        fromLessonId={fromLessonId ?? item.attachedLessonId}
-        dragging={String(draggingAssignmentId || '') === String(item.assignment.id)}
-        onDragStartAssignment={handleAssignmentDragStart}
-        rowRef={(node) => {
-          if (node && item.assignment?.id) {
-            assignmentRowRefs.current[String(item.assignment.id)] = node;
-          }
-        }}
-      />
-    ));
-  }, [
-    isParentViewer,
-    onOpenAssignment,
-    handleDeleteAssignment,
-    highlightAssignmentId,
-    draggingAssignmentId,
-    handleAssignmentDragStart,
-  ]);
-
   const renderLessonAttachedContent = useCallback((lesson, unit) => {
     if (!lesson) return null;
     return (
@@ -1514,34 +1689,10 @@ export default function SubjectClassworkSection({
     handleAssignmentDragStart,
   ]);
 
-  const renderLessonAssignments = useCallback((unitIdx, lessonIdx) => {
-    const unit = model.units?.[unitIdx];
-    const lesson = unit?.lessons?.[lessonIdx];
-    if (!lesson) return null;
-    return renderLessonAttachedContent(lesson, unit);
-  }, [model.units, renderLessonAttachedContent]);
-
-  const renderUnitLevelAssignments = useCallback((unitIdx) => {
-    const unit = model.units?.[unitIdx];
-    if (!unit?.unitAssignments?.length) return null;
-    const items = unit.unitAssignments.map((assignment) => ({
-      assignment,
-      attachedLessonTitle: null,
-      attachedLessonId: null,
-      learningDay: resolveAssignmentLearningDay(assignment, model.eventById),
-    }));
-    return (
-      <View style={styles.unitAssignmentsWrap}>
-        {renderAssignmentRows(items, unit)}
-      </View>
-    );
-  }, [model.units, model.eventById, renderAssignmentRows]);
-
   const hasNoUnitAssignments = model.noUnitAssignments.length > 0;
   const hasScheduledEmptyDays = (model.unlinkedLearningDays || []).length > 0;
   const hasVisibleContent = hasNoUnitAssignments
     || hasUnitsContent
-    || showEmbeddedUnitsEditor
     || hasScheduledEmptyDays;
 
   if (!hasVisibleContent) {
@@ -1568,7 +1719,7 @@ export default function SubjectClassworkSection({
             />
           ) : null}
           {isParentViewer ? (
-            <EmptyUnitsState onAddUnit={startInlineUnitsEditing} />
+            <EmptyUnitsState onAddUnit={handleAddUnit} />
           ) : (
             <EmptyClassworkState isParentViewer={isParentViewer} />
           )}
@@ -1676,35 +1827,8 @@ export default function SubjectClassworkSection({
         </ClassworkUnitCard>
       ) : null}
 
-      {showEmbeddedUnitsEditor ? (
-        <ManualCurriculumBuilderModal
-          embedded
-          visible
-          autoSave
-          familyId={familyId}
-          subjectId={subjectId}
-          subjectName={subjectName || 'Subject'}
-          initialDraft={unitsDraft}
-          loadExisting={false}
-          replaceExisting={hasUnitsContent || inlineUnitsStarted}
-          createCalendarEvents={false}
-          onSaved={onPlacementChanged}
-          getLessonScheduleLabel={getLessonScheduleLabel}
-          renderAfterLesson={renderLessonAssignments}
-          renderAfterUnitLessons={renderUnitLevelAssignments}
-          getUnitDropWebProps={getUnitDropWebProps}
-          getActiveLearningDayId={getActiveLearningDayId}
-          onLearningDayDropOnLesson={({ unitTitle, lessonId, lessonTitle, eventId }) => {
-            if (!lessonId || !eventId) return;
-            handleAttachLearningDayToLesson(
-              { title: unitTitle || '' },
-              { lessonId, title: lessonTitle || '' },
-              { eventId },
-            );
-          }}
-        />
-      ) : !hasUnitsContent && isParentViewer ? (
-        <EmptyUnitsState onAddUnit={startInlineUnitsEditing} />
+      {!hasUnitsContent && isParentViewer ? (
+        <EmptyUnitsState onAddUnit={handleAddUnit} />
       ) : model.units.map((unit) => {
         const peerItems = buildUnitPeerItems(unit, model.eventById);
         if (peerItems.length === 0) return null;
@@ -1719,6 +1843,8 @@ export default function SubjectClassworkSection({
             lessonCount={lessonCount}
             expanded={isExpanded}
             onToggleExpand={() => toggleUnitExpanded(unit.unitId)}
+            showUnitMenu={isParentViewer && !!onManageUnits}
+            onEditUnits={onManageUnits}
             dropActive={dragOverTarget === dropKey}
             dropWebProps={{
               ...dropTargetWebProps({
@@ -1837,15 +1963,15 @@ export default function SubjectClassworkSection({
                 );
               })()
             ) : null}
-            {isParentViewer && onManageUnits && isExpanded ? (
-              <AddLessonLink onPress={onManageUnits} />
+            {isParentViewer && isExpanded ? (
+              <AddLessonLink onPress={() => handleAddLesson(unit)} />
             ) : null}
           </ClassworkUnitCard>
         );
       })}
 
-      {isParentViewer && onManageUnits && hasUnitsContent && !showEmbeddedUnitsEditor ? (
-        <AddUnitLink onPress={onManageUnits} />
+      {isParentViewer && hasUnitsContent ? (
+        <AddUnitLink onPress={handleAddUnit} />
       ) : null}
 
       </ScrollView>
