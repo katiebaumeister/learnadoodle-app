@@ -988,27 +988,32 @@ export default function MaterialsLibrary({
   const hasNoMaterials = libraryReady && (subjectLocked ? visibleMaterials.length === 0 : allMaterials.length === 0);
   const nothingVisible = visibleMaterials.length === 0;
 
-  /** Dashed light-blue CTA on standalone Materials page; pill outline on embedded subject detail. */
+  /** Grey pill in toolbars; dashed light-blue CTA in standalone empty state only. */
   const renderUploadMaterialButton = ({ withTopMargin = false } = {}) => {
-    if (embedded) {
+    if (embedded || !withTopMargin) {
       return (
         <TouchableOpacity
-          style={[styles.embeddedPanelActionBtn, withTopMargin && styles.dashedActionButtonSpaced]}
+          style={[
+            styles.embeddedPanelActionBtn,
+            withTopMargin && styles.dashedActionButtonSpaced,
+          ]}
           onPress={handleOpenAddMaterialModal}
           activeOpacity={0.85}
           accessibilityRole="button"
-          accessibilityLabel="Add material"
+          accessibilityLabel={embedded ? 'Add material' : 'Upload material'}
           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >
           <Plus size={18} color="#334155" strokeWidth={2.25} />
-          <Text style={styles.embeddedPanelActionBtnText}>Add material</Text>
+          <Text style={styles.embeddedPanelActionBtnText}>
+            {embedded ? 'Add material' : 'Upload material'}
+          </Text>
         </TouchableOpacity>
       );
     }
 
     return (
       <TouchableOpacity
-        style={[styles.dashedActionButton, withTopMargin && styles.dashedActionButtonSpaced]}
+        style={[styles.dashedActionButton, styles.dashedActionButtonSpaced]}
         onPress={handleOpenAddMaterialModal}
         activeOpacity={0.85}
         accessibilityRole="button"

@@ -681,7 +681,8 @@ export default function BulletinBoardSection({
     return map;
   }, [subjects]);
 
-  const emptyStateMessage = useMemo(() => {
+  const emptyStateHeading = 'No posts yet';
+  const emptyStateSubheading = useMemo(() => {
     if (filterSubjectId) {
       return 'Post class updates here, or check back as students submit work and you review assignments.';
     }
@@ -1307,10 +1308,8 @@ export default function BulletinBoardSection({
       >
         {mergedStreamItems.length === 0 ? (
           <View style={styles.emptyStateExpanded}>
-            <View style={styles.emptyIllustration}>
-              <FileText size={28} color="#94a3b8" strokeWidth={1.75} />
-            </View>
-            <Text style={styles.emptyTitle}>{emptyStateMessage}</Text>
+            <Text style={styles.emptyHeading}>{emptyStateHeading}</Text>
+            <Text style={styles.emptySubheading}>{emptyStateSubheading}</Text>
           </View>
         ) : (
           mergedStreamItems.map((entry) => {
@@ -1511,41 +1510,20 @@ const styles = StyleSheet.create({
   loadingWrapExpanded: {
     minHeight: 0,
   },
-  emptyStateContainer: {
-    flex: 1,
-    minHeight: 148,
-    justifyContent: 'center',
+  emptyHeading: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+    textAlign: 'center',
     ...(Platform.OS === 'web' && {
-      display: 'flex',
-      flexDirection: 'column',
-      minHeight: 148,
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  emptyState: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    ...(Platform.OS === 'web' && {
-      display: 'flex',
-      flexDirection: 'column',
-    }),
-  },
-  emptyIllustration: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: 'rgba(148, 163, 184, 0.12)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-  /** Empty state — status message, not a headline (matches TodayScheduleCard) */
-  emptyTitle: {
+  emptySubheading: {
     fontSize: 14,
     fontWeight: '400',
-    color: '#94a3b8',
-    marginBottom: 16,
+    color: '#6B7280',
     maxWidth: 320,
     textAlign: 'center',
     lineHeight: 20,

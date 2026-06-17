@@ -27,7 +27,7 @@ import {
   GripVertical,
 } from 'lucide-react';
 import { STRINGS } from '../lib/i18n/strings';
-import { WebDragHandle, WebDropView, writeWebDragPayload } from './ui/webDragDrop';
+import { WebDragHandle, WebDropView, writeWebDragPayload, readWebDragPayload, isWebDragOfType, LEARNING_DAY_PLACEMENT_DRAG_MIME } from './ui/webDragDrop';
 import {
   commitManualDraft,
   fetchSubjectCurriculumEventsStructure,
@@ -187,6 +187,8 @@ export default function ManualCurriculumBuilderModal({
   renderAfterLesson = null,
   getLessonScheduleLabel = null,
   getUnitDropWebProps = null,
+  getActiveLearningDayId = null,
+  onLearningDayDropOnLesson = null,
 }) {
   const toast = useToast();
   const overlayRef = useRef(null);
@@ -871,7 +873,30 @@ export default function ManualCurriculumBuilderModal({
               onAssignmentUnitDrop?.(ev);
             };
 
+            const rejectLearningDayDrag = (ev) => !isWebDragOfType(ev, LEARNING_DAY_PLACEMENT_DRAG_MIME);
+
+            const tryLearningDayDropOnLesson = (ev, lesson) => {
+              if (!onLearningDayDropOnLesson) return false;
+              const payload = readWebDragPayload(
+                ev,
+                LEARNING_DAY_PLACEMENT_DRAG_MIME,
+                (p) => !!p?.eventId,
+              );
+              const eventId = payload?.eventId || getActiveLearningDayId?.();
+              const lessonId = lessonIdFromDraftTempId(lesson?.temp_id);
+              if (!eventId || !lessonId) return false;
+              onLearningDayDropOnLesson({
+                unitTitle: unit.title || '',
+                lessonId,
+                lessonTitle: lesson.title || '',
+                eventId: String(eventId),
+              });
+              return true;
+            };
+
             const handleLessonRowDrop = (ev, lessonIdx) => {
+              const lesson = lessons[lessonIdx];
+              if (tryLearningDayDropOnLesson(ev, lesson)) return;
               const p = readDraftLessonDragPayload(ev);
               if (p) {
                 if (p.fromUnit === unitIdx && p.fromLesson === lessonIdx) return;
@@ -890,6 +915,14 @@ export default function ManualCurriculumBuilderModal({
               handleAssignmentDropOnUnit(ev);
             };
 
+            const lessonRowShouldAcceptDrag = (ev) => {
+              if (isWebDragOfType(ev, LEARNING_DAY_PLACEMENT_DRAG_MIME) || getActiveLearningDayId?.()) {
+                return !!onLearningDayDropOnLesson;
+              }
+              if (isWebDragOfType(ev, DRAFT_LESSON_DRAG_MIME)) return true;
+              return !rejectLearningDayDrag(ev);
+            };
+
             const handleUnitCardDragOver = (ev) => {
               if (ev?.dataTransfer) ev.dataTransfer.dropEffect = 'move';
               onAssignmentDragOver?.(ev);
@@ -903,6 +936,8 @@ export default function ManualCurriculumBuilderModal({
                   onDragEnter={onAssignmentDragEnter}
                   onDragLeave={onAssignmentDragLeave}
                   onDrop={Platform.OS === 'web' ? handleUnitEndDrop : undefined}
+                  shouldAcceptDrag={Platform.OS === 'web' ? rejectLearningDayDrag : undefined}
+                  debugLabel={`draft-unit-${unitIdx}`}
                   {...restUnitDropProps}
                 >
                       <View style={styles.unitHeaderRow}>
@@ -995,6 +1030,9 @@ export default function ManualCurriculumBuilderModal({
                                     if (ev?.dataTransfer) ev.dataTransfer.dropEffect = 'move';
                                   } : undefined}
                                   onDrop={Platform.OS === 'web' ? (ev) => handleLessonRowDrop(ev, lessonIdx) : undefined}
+                                  shouldAcceptDrag={Platform.OS === 'web' ? lessonRowShouldAcceptDrag : undefined}
+                                  dropCapture
+                                  debugLabel={`draft-lesson-${unitIdx}-${lessonIdx}`}
                                 >
                                   <View style={styles.lessonRowInner}>
                                     {Platform.OS === 'web' ? (

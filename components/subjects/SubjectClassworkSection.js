@@ -47,7 +47,7 @@ import {
 import ManualCurriculumBuilderModal from '../ManualCurriculumBuilderModal';
 import { useToast } from '../Toast';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
-import { WebDragHandle, WebDropView, readWebDragPayload, writeWebDragPayload, isWebDragOfType } from '../ui/webDragDrop';
+import { WebDragHandle, WebDropView, readWebDragPayload, writeWebDragPayload, isWebDragOfType, getEventDataTransfer, LEARNING_DAY_PLACEMENT_DRAG_MIME } from '../ui/webDragDrop';
 import ClassworkPlanningModal from './ClassworkPlanningModal';
 import ScheduleLessonModal from './ScheduleLessonModal';
 import { dispatchOpenLearningDayModal } from '../../lib/planner/learningDayModalNavigation';
@@ -64,7 +64,14 @@ import {
 
 const ASSIGNMENT_PLACEMENT_DRAG_MIME = 'application/x-learnadoodle-assignment-placement';
 const CLASSWORK_LESSON_DRAG_MIME = 'application/x-learnadoodle-classwork-lesson-placement';
-const LEARNING_DAY_PLACEMENT_DRAG_MIME = 'application/x-learnadoodle-learning-day-placement';
+
+const DEBUG_CLASSWORK_DND = typeof __DEV__ !== 'undefined' ? __DEV__ : true;
+
+function logClassworkDnD(...args) {
+  if (DEBUG_CLASSWORK_DND) {
+    console.log('[ClassworkDnD]', ...args);
+  }
+}
 
 function readAssignmentDragPayload(ev) {
   return readWebDragPayload(
@@ -118,12 +125,23 @@ function lessonRowDropTargetWebProps({
   if (!onDrop && !onLearningDayDrop) return {};
   return {
     shouldAcceptDrag: (ev) => {
-      if (isLearningDayDrag(ev) || getActiveLearningDayId?.()) {
-        return !!onLearningDayDrop;
+      const isLearningDay = isLearningDayDrag(ev);
+      const activeLearningDayId = getActiveLearningDayId?.();
+      const isLesson = isWebDragOfType(ev, CLASSWORK_LESSON_DRAG_MIME);
+      if (isLearningDay || activeLearningDayId) {
+        const accept = !!onLearningDayDrop;
+        if (!accept) {
+          logClassworkDnD('lesson row rejected learning day drag — no onLearningDayDrop handler');
+        }
+        return accept;
       }
-      if (isWebDragOfType(ev, CLASSWORK_LESSON_DRAG_MIME)) {
+      if (isLesson) {
         return !!onDrop;
       }
+      logClassworkDnD('lesson row rejected drag', {
+        types: Array.from(getEventDataTransfer(ev)?.types || []),
+        activeLearningDayId,
+      });
       return false;
     },
     onDragOver: (ev) => {
@@ -134,12 +152,22 @@ function lessonRowDropTargetWebProps({
     onDrop: (ev) => {
       const learningDayPayload = readLearningDayDragPayload(ev);
       const eventId = learningDayPayload?.eventId || getActiveLearningDayId?.();
+      logClassworkDnD('lesson row drop', {
+        learningDayPayload,
+        eventIdFromRef: getActiveLearningDayId?.(),
+        resolvedEventId: eventId,
+      });
       if (eventId) {
         onLearningDayDrop?.({ eventId: String(eventId) });
         return;
       }
       const payload = readLessonDragPayload(ev);
-      if (payload) onDrop?.(payload);
+      if (payload) {
+        logClassworkDnD('lesson row drop — lesson reorder', payload);
+        onDrop?.(payload);
+        return;
+      }
+      logClassworkDnD('lesson row drop — no matching payload');
     },
   };
 }
@@ -179,6 +207,7 @@ function ClassworkUnitCard({
         onDragLeave={onDragLeave}
         onDrop={onDrop}
         shouldAcceptDrag={shouldAcceptDrag}
+        debugLabel={`unit-card-${title}`}
         {...restDropWebProps}
       >
         <View style={styles.unitHeaderRow}>
@@ -271,6 +300,7 @@ function LessonPeerRow({
       onDrop={lessonDropHandlers.onDrop}
       shouldAcceptDrag={lessonDropHandlers.shouldAcceptDrag}
       dropCapture
+      debugLabel={`lesson-row-${lesson.lessonId || lesson.title}`}
     >
       <View style={[styles.lessonRowInner, dragging && styles.lessonRowDragging]}>
         {canDrag ? (
@@ -279,6 +309,7 @@ function LessonPeerRow({
             onDragStart={handleLessonDragStart}
             style={styles.gripHandle}
             accessibilityLabel="Drag lesson to another unit"
+            debugLabel={`lesson-grip-${lesson.lessonId}`}
           >
             <GripVertical size={16} color={CLASSWORK_MUTED} />
           </WebDragHandle>
@@ -500,12 +531,16 @@ function LearningDayPreviewRow({
 }) {
   const eventId = row?.eventId || row?.event?.id;
   const handleLearningDayDragStart = useCallback((ev) => {
-    if (!eventId) return;
+    if (!eventId) {
+      logClassworkDnD('learning day dragstart skipped — missing eventId', { row });
+      return;
+    }
+    logClassworkDnD('learning day dragstart', { eventId, dateLabel: row?.dateLabel });
     onDragStartLearningDay?.(eventId);
     writeWebDragPayload(ev, LEARNING_DAY_PLACEMENT_DRAG_MIME, {
       eventId: String(eventId),
     });
-  }, [eventId, onDragStartLearningDay]);
+  }, [eventId, onDragStartLearningDay, row]);
 
   return (
     <View style={[styles.lessonRow, !isFirst && styles.lessonRowBorder]}>
@@ -516,6 +551,7 @@ function LearningDayPreviewRow({
             onDragStart={handleLearningDayDragStart}
             style={styles.gripHandle}
             accessibilityLabel="Drag learning day to a lesson"
+            debugLabel={`learning-day-grip-${eventId}`}
           >
             <GripVertical size={16} color={CLASSWORK_MUTED} />
           </WebDragHandle>
@@ -773,11 +809,7 @@ export default function SubjectClassworkSection({
     () => curriculumStructureHasContent({ units }),
     [units],
   );
-  const [inlineUnitsStarted, setInlineUnitsStarted] = useState(hasUnitsContent);
-
-  useEffect(() => {
-    if (hasUnitsContent) setInlineUnitsStarted(true);
-  }, [hasUnitsContent]);
+  const [inlineUnitsStarted, setInlineUnitsStarted] = useState(false);
 
   const useInlineUnitsEditor = inlineUnitsEditing && isParentViewer;
   const showEmbeddedUnitsEditor = useInlineUnitsEditor && inlineUnitsStarted;
@@ -1118,6 +1150,7 @@ export default function SubjectClassworkSection({
     const id = String(eventId);
     draggingLearningDayIdRef.current = id;
     setDraggingLearningDayId(id);
+    logClassworkDnD('handleLearningDayDragStart', { eventId: id });
   }, []);
 
   const getActiveLearningDayId = useCallback(
@@ -1126,7 +1159,22 @@ export default function SubjectClassworkSection({
   );
 
   const handleAttachLearningDayToLesson = useCallback(async (unit, lesson, { eventId }) => {
-    if (!eventId || !lesson?.lessonId || !familyId || linkingLearningDay) return;
+    logClassworkDnD('handleAttachLearningDayToLesson called', {
+      eventId,
+      lessonId: lesson?.lessonId,
+      unitTitle: unit?.title,
+      familyId,
+      linkingLearningDay,
+    });
+    if (!eventId || !lesson?.lessonId || !familyId || linkingLearningDay) {
+      logClassworkDnD('handleAttachLearningDayToLesson aborted — missing data or already linking', {
+        hasEventId: !!eventId,
+        hasLessonId: !!lesson?.lessonId,
+        hasFamilyId: !!familyId,
+        linkingLearningDay,
+      });
+      return;
+    }
     setLinkingLearningDay(true);
     try {
       await attachLearningDayToLesson({
@@ -1136,9 +1184,11 @@ export default function SubjectClassworkSection({
         unitTitle: unit?.title || '',
         lessonTitle: lesson.title || '',
       });
+      logClassworkDnD('handleAttachLearningDayToLesson success', { eventId, lessonId: lesson.lessonId });
       toast.push('Learning day linked to lesson', 'success');
       onPlacementChanged?.();
     } catch (err) {
+      logClassworkDnD('handleAttachLearningDayToLesson error', err?.message || err);
       toast.push(err?.message || 'Could not link learning day', 'error');
     } finally {
       setLinkingLearningDay(false);
@@ -1530,6 +1580,15 @@ export default function SubjectClassworkSection({
           renderAfterLesson={renderLessonAssignments}
           renderAfterUnitLessons={renderUnitLevelAssignments}
           getUnitDropWebProps={getUnitDropWebProps}
+          getActiveLearningDayId={getActiveLearningDayId}
+          onLearningDayDropOnLesson={({ unitTitle, lessonId, lessonTitle, eventId }) => {
+            if (!lessonId || !eventId) return;
+            handleAttachLearningDayToLesson(
+              { title: unitTitle || '' },
+              { lessonId, title: lessonTitle || '' },
+              { eventId },
+            );
+          }}
         />
       ) : !hasUnitsContent && isParentViewer ? (
         <EmptyUnitsState onAddUnit={startInlineUnitsEditing} />
@@ -1596,6 +1655,11 @@ export default function SubjectClassworkSection({
                       onDragStartLesson={handleLessonDragStart}
                       onLessonDrop={handleLessonDropOnRow(unit, item.lesson.lessonId)}
                       onLearningDayDrop={(payload) => {
+                        logClassworkDnD('onLearningDayDrop callback', {
+                          payload,
+                          lessonId: item.lesson.lessonId,
+                          unitTitle: unit.title,
+                        });
                         handleAttachLearningDayToLesson(unit, item.lesson, payload);
                       }}
                       getActiveLearningDayId={getActiveLearningDayId}
