@@ -1,11 +1,12 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Check, RotateCcw, Save, X } from 'lucide-react';
-import { modalButtonStyles } from '../../ui/modalButtonStyles';
+import { Check, Pencil, RotateCcw, Save, X } from 'lucide-react';
+import { modalButtonStyles, MODAL_ACCENT_TEXT } from '../../ui/modalButtonStyles';
 
 export default function AssignmentSubmissionsFooter({
   onCancel,
   onReturnForChanges,
+  onEditAssignment,
   onMarkComplete,
   onSaveSubmission,
   submitting = false,
@@ -42,17 +43,40 @@ export default function AssignmentSubmissionsFooter({
           </TouchableOpacity>
         ) : null}
 
+        {onEditAssignment ? (
+          <TouchableOpacity
+            onPress={onEditAssignment}
+            disabled={submitting}
+            style={[
+              styles.actionButton,
+              modalButtonStyles.secondaryButton,
+              submitting && modalButtonStyles.buttonDisabled,
+            ]}
+            activeOpacity={0.9}
+            accessibilityRole="button"
+            accessibilityLabel="Edit assignment"
+            {...(Platform.OS === 'web' && { cursor: submitting ? 'not-allowed' : 'pointer' })}
+          >
+            <Pencil size={16} color={MODAL_ACCENT_TEXT} />
+            <Text style={modalButtonStyles.secondaryButtonText}>Edit assignment</Text>
+          </TouchableOpacity>
+        ) : null}
+
         <TouchableOpacity
           onPress={onMarkComplete}
           disabled={submitting}
-          style={[styles.actionButton, styles.approveButton, submitting && styles.buttonDisabled]}
+          style={[
+            styles.actionButton,
+            modalButtonStyles.secondaryButton,
+            submitting && modalButtonStyles.buttonDisabled,
+          ]}
           activeOpacity={0.9}
           accessibilityRole="button"
           accessibilityLabel="Mark complete"
           {...(Platform.OS === 'web' && { cursor: submitting ? 'not-allowed' : 'pointer' })}
         >
-          <Check size={16} color="#15803D" />
-          <Text style={styles.approveText}>Mark complete</Text>
+          <Check size={16} color={MODAL_ACCENT_TEXT} />
+          <Text style={modalButtonStyles.secondaryButtonText}>Mark complete</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -136,18 +160,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#B45309',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", sans-serif',
-    }),
-  },
-  approveButton: {
-    borderColor: '#BBF7D0',
-    backgroundColor: '#F0FDF4',
-  },
-  approveText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#15803D',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", sans-serif',
     }),

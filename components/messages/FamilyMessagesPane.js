@@ -7,13 +7,10 @@ import {
   StyleSheet,
   Platform,
   ActivityIndicator,
-  Image,
 } from 'react-native';
 import { SquarePen } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { getFamilyMembers } from '../../lib/apiClient';
-import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
-import { sourceForChild } from '../ui/ChildAvatarCluster';
 import {
   ASSIGNMENT_SELECT,
   buildFamilyDmParticipants,
@@ -29,18 +26,8 @@ import {
 import FamilyDmChat from './FamilyDmChat';
 import FamilyNewMessagePicker from './FamilyNewMessagePicker';
 import MessagesPaneCloseButton from './MessagesPaneCloseButton';
+import DmParticipantAvatar from './DmParticipantAvatar';
 import { ACCENT_TEXT, ACCENT_CHIP_BORDER, ACCENT_SOFT_BG } from '../create/shared/createModalStyles';
-
-function avatarSourceForParticipant(participant) {
-  if (!participant) return resolveBundledAvatarSource('prof1');
-  if (participant.type === 'child') {
-    return sourceForChild({
-      avatar: participant.avatar,
-      avatar_url: participant.avatar,
-    });
-  }
-  return resolveBundledAvatarSource(participant.avatar || 'prof1');
-}
 
 export default function FamilyMessagesPane({
   familyId = null,
@@ -335,8 +322,10 @@ export default function FamilyMessagesPane({
               activeOpacity={0.8}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Image
-                source={avatarSourceForParticipant(participant)}
+              <DmParticipantAvatar
+                participant={participant}
+                familyChildren={familyChildren}
+                size={48}
                 style={styles.threadAvatar}
               />
               <View style={styles.threadBody}>
@@ -439,9 +428,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   threadAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    flexShrink: 0,
   },
   threadBody: {
     flex: 1,

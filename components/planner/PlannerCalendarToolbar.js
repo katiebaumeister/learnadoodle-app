@@ -6,7 +6,7 @@ import {
   Platform,
   TouchableOpacity,
 } from 'react-native';
-import { ChevronLeft, ChevronRight, ChevronDown, Filter } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Filter, Check } from 'lucide-react';
 import { addMonths, addWeeks } from './utils/date';
 import { formatWeekRangeLabel } from './plannerSectionRouting';
 
@@ -165,7 +165,7 @@ export default function PlannerCalendarToolbar({
                 return (
                   <TouchableOpacity
                     key={opt.key}
-                    style={styles.filterRow}
+                    style={[styles.filterRow, styles.filterTypeRow, { backgroundColor: opt.color }]}
                     onPress={() => {
                       const current = Array.isArray(selectedEventTypes) ? selectedEventTypes : [];
                       const next = selected
@@ -175,7 +175,10 @@ export default function PlannerCalendarToolbar({
                     }}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Text style={[styles.filterLabel, selected && styles.filterLabelActive]}>
+                    <View style={[styles.filterCheck, selected && styles.filterCheckSelected]}>
+                      {selected ? <Check size={10} color="#FFFFFF" strokeWidth={3} /> : null}
+                    </View>
+                    <Text style={[styles.filterTypeLabel, selected && styles.filterTypeLabelSelected]}>
                       {opt.label}
                     </Text>
                   </TouchableOpacity>
@@ -306,6 +309,28 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 6,
   },
+  filterTypeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 4,
+  },
+  filterCheck: {
+    width: 14,
+    height: 14,
+    borderRadius: 3,
+    borderWidth: 1.5,
+    borderColor: '#D1D5DB',
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterCheckSelected: {
+    borderColor: '#2563EB',
+    backgroundColor: '#2563EB',
+  },
   filterLabel: {
     fontSize: 13,
     color: '#374151',
@@ -313,5 +338,13 @@ const styles = StyleSheet.create({
   filterLabelActive: {
     color: '#2563EB',
     fontWeight: '600',
+  },
+  filterTypeLabel: {
+    fontSize: 13,
+    color: 'rgba(15, 23, 42, 0.9)',
+    fontWeight: '500',
+  },
+  filterTypeLabelSelected: {
+    fontWeight: '700',
   },
 });

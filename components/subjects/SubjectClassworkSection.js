@@ -9,6 +9,7 @@ import {
   ScrollView,
 } from 'react-native';
 import {
+  BookOpen,
   ChevronDown,
   ChevronUp,
   FileText,
@@ -437,31 +438,29 @@ function AssignmentPeerRow({
         ) : (
           <View style={styles.gripSpacer} />
         )}
-        <View style={styles.rowTypeMarker}>
-          <FileText size={16} color={CLASSWORK_MUTED} strokeWidth={2} />
-        </View>
-        <View style={styles.lessonTitleField}>
-          <Text style={styles.lessonTitleText} numberOfLines={2}>
-            {assignment.title || 'Assignment'}
-          </Text>
-          <Text
-            style={scheduleLine ? styles.rowMeta : styles.rowMetaMuted}
-            numberOfLines={1}
-          >
-            {subtitleLine}
-          </Text>
-          {isParentViewer ? (
-            <TouchableOpacity
-              onPress={() => onOpen?.(assignment)}
-              hitSlop={6}
-              accessibilityRole="link"
-              accessibilityLabel={`Open assignment ${assignment.title || ''}`}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        <TouchableOpacity
+          style={styles.assignmentRowContent}
+          onPress={() => onOpen?.(assignment)}
+          disabled={!onOpen}
+          accessibilityRole="button"
+          accessibilityLabel={`Open assignment ${assignment.title || ''}`}
+          {...(Platform.OS === 'web' && onOpen && { cursor: 'pointer' })}
+        >
+          <View style={styles.rowTypeMarker}>
+            <FileText size={16} color={CLASSWORK_MUTED} strokeWidth={2} />
+          </View>
+          <View style={styles.lessonTitleField}>
+            <Text style={styles.lessonTitleText} numberOfLines={2}>
+              {assignment.title || 'Assignment'}
+            </Text>
+            <Text
+              style={scheduleLine ? styles.rowMeta : styles.rowMetaMuted}
+              numberOfLines={1}
             >
-              <Text style={styles.peerAction}>Open assignment</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
+              {subtitleLine}
+            </Text>
+          </View>
+        </TouchableOpacity>
         {showAssignmentMenu ? (
           <View style={styles.menuAnchor}>
               <TouchableOpacity
@@ -545,7 +544,9 @@ function LearningDayPreviewRow({
           accessibilityLabel={`Open learning day ${row.dateLabel || ''}`}
           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >
-          <Text style={styles.lessonBullet}>•</Text>
+          <View style={styles.rowTypeMarker}>
+            <BookOpen size={16} color={CLASSWORK_MUTED} strokeWidth={2} />
+          </View>
           <View style={styles.lessonTitleField}>
             <Text style={styles.lessonTitleText} numberOfLines={2}>
               {row.dateLabel || 'Learning day'}
@@ -2113,6 +2114,13 @@ const styles = StyleSheet.create({
     gap: 8,
     minWidth: 0,
   },
+  assignmentRowContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    minWidth: 0,
+  },
   lessonTitleText: {
     fontSize: 15,
     fontWeight: '500',
@@ -2173,13 +2181,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(15,23,42,0.06)',
     backgroundColor: 'rgba(248,250,252,0.85)',
-  },
-  peerAction: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: CLASSWORK_LINK,
-    marginTop: 1,
-    ...CLASSWORK_LEAGUE_FONT,
   },
   learningDaysMoreRow: {
     paddingVertical: 10,

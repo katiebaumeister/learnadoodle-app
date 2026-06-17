@@ -389,6 +389,7 @@ export default function AssignmentEditModal({
         visible
         onClose={onClose}
         onReviewed={handleReviewed}
+        onEditAssignment={() => setShowSubmissions(false)}
         familyId={familyId}
         familyMembers={familyMembers}
         linkedEvent={eventRow}
@@ -582,6 +583,7 @@ export default function AssignmentEditModal({
           visible
           onClose={() => setShowSubmissions(false)}
           onReviewed={handleReviewed}
+          onEditAssignment={() => setShowSubmissions(false)}
           familyId={familyId}
           familyMembers={familyMembers}
           linkedEvent={eventRow}

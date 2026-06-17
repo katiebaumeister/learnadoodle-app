@@ -146,18 +146,18 @@ export default function BulletinStreamCard({
   return (
     <View style={styles.wrap} {...(contextMenuHandlers || {})}>
       <View style={[styles.card, clickable && styles.cardClickable]}>
+        {headerRight ? (
+          <View style={styles.cardHeaderMenu}>{headerRight}</View>
+        ) : null}
         <View style={styles.cardTop}>
           <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
             <Icon size={18} color={iconColor} strokeWidth={2.25} />
           </View>
-          <View style={styles.cardMain}>
+          <View style={[styles.cardMain, headerRight ? styles.cardMainWithMenu : null]}>
             <View style={styles.labelRow}>
               <Text style={styles.typeLabel}>{entry.label}</Text>
-              {(subjectChip || headerRight) ? (
-                <View style={styles.labelRowTrailing}>
-                  {subjectChip}
-                  {headerRight}
-                </View>
+              {subjectChip ? (
+                <View style={styles.labelRowTrailing}>{subjectChip}</View>
               ) : null}
             </View>
             {clickable ? (
@@ -272,6 +272,7 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   card: {
+    position: 'relative',
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -282,6 +283,15 @@ const styles = StyleSheet.create({
       boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
       transition: 'border-color 0.12s ease, box-shadow 0.12s ease',
     }),
+  },
+  cardHeaderMenu: {
+    position: 'absolute',
+    top: 7,
+    right: 10,
+    zIndex: 2,
+  },
+  cardMainWithMenu: {
+    paddingRight: 22,
   },
   cardClickable: {
     ...(Platform.OS === 'web' && {
@@ -310,6 +320,10 @@ const styles = StyleSheet.create({
   },
   cardPressArea: {
     alignSelf: 'stretch',
+    ...(Platform.OS === 'web' && {
+      padding: 0,
+      margin: 0,
+    }),
   },
   labelRow: {
     flexDirection: 'row',

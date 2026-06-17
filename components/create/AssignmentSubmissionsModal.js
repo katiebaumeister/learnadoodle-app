@@ -38,6 +38,7 @@ export default function AssignmentSubmissionsModal({
   visible,
   onClose,
   onReviewed,
+  onEditAssignment,
   familyId,
   familyMembers = [],
   linkedEvent = null,
@@ -317,6 +318,7 @@ export default function AssignmentSubmissionsModal({
           <AssignmentSubmissionsFooter
             onCancel={onClose}
             onReturnForChanges={() => runReview('send_back')}
+            onEditAssignment={onEditAssignment}
             onMarkComplete={() => runReview('approve')}
             onSaveSubmission={() => runReview('save')}
             submitting={submitting}

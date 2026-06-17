@@ -7,14 +7,11 @@ import {
   TextInput,
   StyleSheet,
   Platform,
-  Image,
   ActivityIndicator,
 } from 'react-native';
 import { ArrowLeft, ArrowUp, Calendar, Paperclip, Plus, UserPlus, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { openAssignmentForParent } from '../../lib/openAssignmentWorkflow';
-import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
-import { sourceForChild } from '../ui/ChildAvatarCluster';
 import { createFileMaterial } from '../../lib/services/materialsClient';
 import {
   ASSIGNMENT_SELECT,
@@ -35,6 +32,7 @@ import {
   familyDirectMessagesSupportAttachments,
 } from '../../lib/familyDmClient';
 import DmAttachEventModal from './DmAttachEventModal';
+import DmParticipantAvatar from './DmParticipantAvatar';
 import MessagesPaneCloseButton from './MessagesPaneCloseButton';
 import useSwipeBackGesture from './useSwipeBackGesture';
 
@@ -43,15 +41,19 @@ const LEARNADOODLE_CREATE_BLUE = '#9ECFFB';
 /** @deprecated HMR/back-compat alias */
 const BRAND_SKY_BLUE_TEXT = LEARNADOODLE_CREATE_BLUE;
 
-function avatarSourceForParticipant(participant) {
-  if (!participant) return resolveBundledAvatarSource('prof1');
-  if (participant.type === 'child') {
-    return sourceForChild({
-      avatar: participant.avatar,
-      avatar_url: participant.avatar,
-    });
+function formatGroupInviteBannerText(members) {
+  if (!members?.length) return '';
+  const names = members.map((member) => member.childName).filter(Boolean);
+  if (names.length === 0) {
+    return 'Some members have not joined yet. You can still send messages — they will see this conversation once they accept their invites.';
   }
-  return resolveBundledAvatarSource(participant.avatar || 'prof1');
+  const nameList = names.length === 1
+    ? names[0]
+    : names.length === 2
+      ? `${names[0]} and ${names[1]}`
+      : `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+  const verb = names.length === 1 ? "hasn't" : "haven't";
+  return `${nameList} ${verb} joined yet. You can still send messages — they will see this conversation once they accept their invites.`;
 }
 
 function formatMessageTime(createdAt) {
@@ -149,9 +151,33 @@ export default function FamilyDmChat({
     };
   }, [participant, viewerRole, childInviteSummaries, isMultiRecipient]);
 
-  const openInviteChildModal = useCallback(() => {
+  const groupUnconnectedMembers = useMemo(() => {
+    if (!isMultiRecipient) return [];
+    if (viewerRole !== 'parent' && viewerRole !== 'tutor') return [];
+    const summaries = childInviteSummaries && typeof childInviteSummaries === 'object'
+      ? childInviteSummaries
+      : null;
+    if (!summaries) return [];
+    return (participant?.members || [])
+      .filter((member) => member?.type === 'child' && member?.id != null)
+      .map((member) => {
+        const childId = String(member.id).trim();
+        const status = String(summaries?.[childId]?.invite_status || 'none').trim().toLowerCase();
+        return {
+          childId,
+          childName: String(member.name || '').trim() || 'this child',
+          status: status === 'pending' ? 'pending' : 'none',
+          connected: status === 'accepted' || status === 'connected',
+        };
+      })
+      .filter((member) => !member.connected);
+  }, [isMultiRecipient, participant, viewerRole, childInviteSummaries]);
+
+  const openInviteChildModal = useCallback((childIdOverride) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const childId = String(childInviteGate?.childId || participant?.id || '').trim() || null;
+    const childId = String(
+      childIdOverride || childInviteGate?.childId || participant?.id || '',
+    ).trim() || null;
     window.dispatchEvent(new CustomEvent('openInviteChildModal', {
       detail: { childId },
     }));
@@ -622,11 +648,6 @@ export default function FamilyDmChat({
     }
   }, [childCtx?.childId, openEventAttachment, viewerRole]);
 
-  const avatarSource = useMemo(
-    () => avatarSourceForParticipant(participant),
-    [participant]
-  );
-
   const firstMessageAt = messages[0]?.createdAt || null;
 
   const seenOnMessageId = useMemo(() => {
@@ -695,7 +716,12 @@ export default function FamilyDmChat({
         >
           <ArrowLeft size={20} color="#0F172A" />
         </TouchableOpacity>
-        <Image source={avatarSource} style={styles.headerAvatar} />
+        <DmParticipantAvatar
+          participant={participant}
+          familyChildren={familyChildren}
+          size={32}
+          style={styles.headerAvatar}
+        />
         <Text style={styles.headerName} numberOfLines={1}>{participant?.name}</Text>
         {typeof onClosePane === 'function' ? (
           <MessagesPaneCloseButton onPress={onClosePane} />
@@ -714,7 +740,12 @@ export default function FamilyDmChat({
           onContentSizeChange={handleScrollContentSizeChange}
         >
           <View style={styles.introBlock}>
-            <Image source={avatarSource} style={styles.introAvatar} />
+            <DmParticipantAvatar
+              participant={participant}
+              familyChildren={familyChildren}
+              size={72}
+              style={styles.introAvatar}
+            />
             <Text style={styles.introName}>{participant?.name}</Text>
             {participantType === 'multicast' ? (
               <Text style={styles.introSubtitle}>
@@ -727,6 +758,32 @@ export default function FamilyDmChat({
               </Text>
             ) : null}
           </View>
+
+          {groupUnconnectedMembers.length > 0 ? (
+            <View style={styles.groupInviteBanner}>
+              <Text style={styles.groupInviteBannerText}>
+                {formatGroupInviteBannerText(groupUnconnectedMembers)}
+              </Text>
+              <View style={styles.groupInviteActions}>
+                {groupUnconnectedMembers.map((member) => (
+                  <TouchableOpacity
+                    key={member.childId}
+                    style={styles.groupInviteButton}
+                    onPress={() => openInviteChildModal(member.childId)}
+                    activeOpacity={0.85}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <UserPlus size={14} color="#FFFFFF" strokeWidth={2.25} />
+                    <Text style={styles.groupInviteButtonText}>
+                      {member.status === 'pending'
+                        ? `RESEND ${member.childName.toUpperCase()}`
+                        : `INVITE ${member.childName.toUpperCase()}`}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          ) : null}
 
           {childInviteGate ? (
             <View style={styles.inviteCard}>
@@ -992,9 +1049,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   headerAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    flexShrink: 0,
   },
   headerName: {
     flex: 1,
@@ -1022,9 +1077,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   introAvatar: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    flexShrink: 0,
   },
   introName: {
     fontSize: 16,
@@ -1038,6 +1091,56 @@ const styles = StyleSheet.create({
     color: '#64748B',
     textAlign: 'center',
     paddingHorizontal: 16,
+  },
+  groupInviteBanner: {
+    width: '100%',
+    maxWidth: 360,
+    alignSelf: 'center',
+    marginTop: 4,
+    marginBottom: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: 'rgba(158, 207, 251, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(158, 207, 251, 0.28)',
+  },
+  groupInviteBannerText: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#64748B',
+    lineHeight: 19,
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  groupInviteActions: {
+    marginTop: 12,
+    gap: 8,
+    alignItems: 'center',
+  },
+  groupInviteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    backgroundColor: LEARNADOODLE_CREATE_BLUE,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  groupInviteButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   inviteCard: {
     width: '100%',
