@@ -43,6 +43,7 @@ import { completeEvent, updateEventStatus } from '../../lib/services/attendanceC
 import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
 import SubjectEventsModal from '../subjects/SubjectEventsModal';
 import { DEFAULT_TUTOR_PROFILE, normalizeTutorProfile } from '../../lib/permissions/userPermissionProfiles';
+import { SCHOOL_YEAR_SETTINGS_UI } from '../planner/planningPreferencesUiCopy';
 
 const MAX_FAMILY_PARENTS = 2;
 const MAX_FAMILY_TUTORS = 10;
@@ -132,12 +133,16 @@ const ONBOARDING_GOAL_OPTIONS = [
 ];
 
 const SETTINGS_SIDEBAR_ACCOUNT_KEYS = ['profile', 'appearance', 'notifications'];
+const SETTINGS_SIDEBAR_HOUSEHOLD_KEYS = ['planner-settings', 'members', 'courses'];
 const SETTINGS_SIDEBAR_SUPPORT_KEYS = ['feedback', 'about', 'terms', 'privacy'];
 
 const SETTINGS_SIDEBAR_ITEMS = [
   { key: 'profile', label: 'Profile' },
   { key: 'appearance', label: 'Appearance' },
   { key: 'notifications', label: 'Notifications' },
+  { key: 'planner-settings', label: SCHOOL_YEAR_SETTINGS_UI.navLabel },
+  { key: 'members', label: 'Family' },
+  { key: 'courses', label: 'Subjects' },
   { key: 'subscription', label: 'Billing', requiresSubscription: true },
   { key: 'feedback', label: 'Feedback' },
   { key: 'about', label: 'About' },
@@ -2865,6 +2870,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <PlannerSettingsContent
               familyId={familyId || family?.id}
               initialData={preloadedPlannerData}
+              layoutVariant="settings"
               readOnly={familyUserControls.isRestrictedViewer && !familyUserControls.allowed('planning_preferences')}
               onSave={() => {
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -4195,11 +4201,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
                   return (
                     <React.Fragment key={subject.id}>
-                      {index > 0 && <View style={styles.subjectDivider} />}
+                      {index > 0 && <View style={styles.settingsCoursesSubjectDivider} />}
                       <View 
                         style={[
-                          styles.subjectItem,
-                          isHovered && styles.subjectItemHovered,
+                          styles.settingsCoursesSubjectItem,
+                          isHovered && styles.settingsCoursesSubjectItemHovered,
                         ]}
                         {...(Platform.OS === 'web' && {
                           onMouseEnter: () => setHoveredSubjectId(subject.id),
@@ -4275,8 +4281,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                               <View style={styles.subjectCardActions}>
                                 <TouchableOpacity
                                   style={[
-                                    styles.subjectActionButton,
-                                    isHovered && styles.subjectActionButtonHovered,
+                                    styles.settingsCoursesSubjectActionButton,
+                                    isHovered && styles.settingsCoursesSubjectActionButtonHovered,
                                   ]}
                                   onPress={() => handleEditSubject(subject)}
                                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -5312,7 +5318,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     isChildRestrictedView && styles.mainContentFullWidth,
   ];
 
-  const showSettingsSidebar = !hideInternalSidebar && activeSection !== 'planner-settings';
+  const showSettingsSidebar = !hideInternalSidebar;
 
   const renderSettingsSidebarButton = (key) => {
     const item = settingsItemByKey[key];
@@ -5335,6 +5341,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   };
 
   const hasAccountSidebarItems = SETTINGS_SIDEBAR_ACCOUNT_KEYS.some((key) => visibleSettingsKeys.has(key));
+  const hasHouseholdSidebarItems = SETTINGS_SIDEBAR_HOUSEHOLD_KEYS.some((key) => visibleSettingsKeys.has(key));
   const hasSupportSidebarItems = SETTINGS_SIDEBAR_SUPPORT_KEYS.some((key) => visibleSettingsKeys.has(key));
 
   if (error && !family) {
@@ -5385,6 +5392,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 <View style={styles.sidebarCard}>
                   <Text style={styles.sidebarCardTitle}>Account</Text>
                   {SETTINGS_SIDEBAR_ACCOUNT_KEYS.map((key) => renderSettingsSidebarButton(key))}
+                </View>
+              ) : null}
+
+              {hasHouseholdSidebarItems ? (
+                <View style={styles.sidebarCard}>
+                  <Text style={styles.sidebarCardTitle}>Household</Text>
+                  {SETTINGS_SIDEBAR_HOUSEHOLD_KEYS.map((key) => renderSettingsSidebarButton(key))}
                 </View>
               ) : null}
 
@@ -7849,8 +7863,9 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      minHeight: SettingsLayout.rowHeight,
-      paddingHorizontal: 18,
+      minHeight: 36,
+      minWidth: 148,
+      paddingHorizontal: 16,
       borderRadius: 999,
       borderWidth: 1,
       borderColor: 'rgba(148, 163, 184, 0.24)',
@@ -7863,7 +7878,8 @@ function createStyles(tokens) {
       }),
     },
     profileResetPasswordButtonText: {
-      fontSize: 16,
+      fontSize: 14,
+      lineHeight: 18,
       fontWeight: '600',
       color: '#374151',
       ...(Platform.OS === 'web' && {
@@ -9341,9 +9357,44 @@ function createStyles(tokens) {
       }),
     },
     subjectsList: {
-      paddingTop: 24,
+      paddingTop: 8,
       position: 'relative',
       zIndex: 1,
+      backgroundColor: '#FFFFFF',
+    },
+    settingsCoursesSubjectDivider: {
+      height: 1,
+      backgroundColor: '#e5e7eb',
+    },
+    settingsCoursesSubjectItem: {
+      paddingVertical: 16,
+      paddingHorizontal: 0,
+      minHeight: 64,
+      justifyContent: 'center',
+      backgroundColor: '#FFFFFF',
+      borderRadius: 0,
+      ...(Platform.OS === 'web' && {
+        transition: 'background-color 0.2s ease',
+        cursor: 'default',
+      }),
+    },
+    settingsCoursesSubjectItemHovered: {
+      backgroundColor: '#FFFFFF',
+    },
+    settingsCoursesSubjectActionButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: 'transparent',
+      alignItems: 'center',
+      justifyContent: 'center',
+      ...(Platform.OS === 'web' && {
+        transition: 'opacity 0.2s ease',
+        cursor: 'pointer',
+      }),
+    },
+    settingsCoursesSubjectActionButtonHovered: {
+      opacity: 0.72,
     },
     // Danger Zone (courses) - same pattern as Edit Child
     dangerZone: {

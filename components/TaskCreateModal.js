@@ -7448,12 +7448,16 @@ const styles = StyleSheet.create({
     borderColor: '#60a5fa',
   },
   dropdownOption: {
-    paddingVertical: 6,
+    minHeight: 36,
+    minWidth: 96,
+    paddingVertical: 0,
     paddingHorizontal: 12,
-    borderRadius: 20,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   dropdownOptionActive: {
     borderColor: '#9ECFFB',
@@ -7461,7 +7465,9 @@ const styles = StyleSheet.create({
   },
   dropdownOptionText: {
     color: '#6b7280',
-    fontSize: 12,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '500',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -7476,13 +7482,17 @@ const styles = StyleSheet.create({
   assigneePill: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 6,
     borderRadius: 999,
+    minHeight: 36,
+    minWidth: 96,
     paddingHorizontal: 12,
-    paddingVertical: 5,
+    paddingVertical: 0,
   },
   assigneePillText: {
-    fontSize: 12,
+    fontSize: 14,
+    lineHeight: 18,
     fontWeight: '500',
     color: '#6B7280',
     ...(Platform.OS === 'web' && {

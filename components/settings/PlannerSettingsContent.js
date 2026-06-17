@@ -404,6 +404,7 @@ export default function PlannerSettingsContent({
   pageTitle = null,
   embeddedInFamily = false,
   hidePageTitle = false,
+  layoutVariant = 'default',
 }) {
   const toast = useToast();
   const initialSnapshot = getInitialPlannerSettingsSnapshot({
@@ -1677,6 +1678,7 @@ export default function PlannerSettingsContent({
 
   const useTwoColumnModalLayout = embeddedInModal && hideEmbeddedHeader;
 
+  const usePlainSettingsSections = layoutVariant === 'settings' && !embeddedInModal;
   const sectionStyle = {
     paddingTop: 0,
     paddingBottom: 0,
@@ -1685,27 +1687,53 @@ export default function PlannerSettingsContent({
     borderBottomWidth: 0,
     borderBottomColor: 'transparent',
   };
-  const sectionBucketStyle = {
+  const sectionBucketStyle = usePlainSettingsSections
+    ? {
+        width: '100%',
+        backgroundColor: '#FFFFFF',
+        paddingHorizontal: 0,
+        paddingTop: 24,
+        paddingBottom: 24,
+        marginBottom: 0,
+        borderWidth: 0,
+        borderRadius: 0,
+        overflow: 'visible',
+        ...(Platform.OS === 'web' && !embeddedInModal && {
+          maxWidth: 680,
+          alignSelf: 'flex-start',
+        }),
+      }
+    : {
+        width: '100%',
+        borderWidth: 1,
+        borderColor: '#EEF1F6',
+        borderRadius: 18,
+        backgroundColor: '#F8F9FC',
+        paddingHorizontal: 18,
+        paddingTop: 18,
+        paddingBottom: 18,
+        marginBottom: 8,
+        overflow: 'hidden',
+        ...(Platform.OS === 'web' && !embeddedInModal && {
+          maxWidth: 680,
+          alignSelf: 'flex-start',
+        }),
+        ...(Platform.OS === 'web' && embeddedInModal && {
+          alignSelf: 'stretch',
+        }),
+      };
+  const sectionBucketFirstStyle = {
+    marginTop: 0,
+    ...(usePlainSettingsSections ? { paddingTop: 0 } : {}),
+  };
+  const sectionBucketDividerStyle = {
+    height: 1,
+    backgroundColor: '#e5e7eb',
     width: '100%',
-    borderWidth: 1,
-    borderColor: '#EEF1F6',
-    borderRadius: 18,
-    backgroundColor: '#F8F9FC',
-    paddingHorizontal: 18,
-    paddingTop: 18,
-    paddingBottom: 18,
-    marginBottom: 8,
-    overflow: 'hidden',
     ...(Platform.OS === 'web' && !embeddedInModal && {
       maxWidth: 680,
       alignSelf: 'flex-start',
     }),
-    ...(Platform.OS === 'web' && embeddedInModal && {
-      alignSelf: 'stretch',
-    }),
-  };
-  const sectionBucketFirstStyle = {
-    marginTop: 0,
   };
   const sectionBucketTitleStyle = {
     fontSize: 15,
@@ -1922,20 +1950,24 @@ export default function PlannerSettingsContent({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 30,
-    minWidth: 62,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 20,
+    minHeight: 36,
+    minWidth: 72,
+    paddingVertical: 0,
+    paddingHorizontal: 12,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: active ? '#6BB3E8' : '#e5e7eb',
     backgroundColor: active ? 'rgba(133,196,242,0.2)' : '#FFFFFF',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   });
   const modeToggleButtonTextStyle = (active) => ({
-    fontSize: 12,
+    fontSize: 14,
+    lineHeight: 18,
     color: active ? '#6BB3E8' : '#6b7280',
-    fontWeight: active ? '700' : '500',
+    fontWeight: active ? '600' : '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   });
   const attendanceModeSelectTriggerStyle = {
     minHeight: SettingsLayout.rowHeight,
@@ -1960,20 +1992,11 @@ export default function PlannerSettingsContent({
     }),
   };
   const weekdayDotStyle = (active) => ({
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    backgroundColor: active ? 'rgba(133,196,242,0.2)' : '#FFFFFF',
-    borderWidth: 1,
-    borderColor: active ? '#6BB3E8' : '#e5e7eb',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+    ...modeToggleButtonStyle(active),
+    minWidth: 48,
   });
   const weekdayDotLabelStyle = (active) => ({
-    fontSize: 12,
-    fontWeight: active ? '700' : '500',
-    color: active ? '#6BB3E8' : '#6b7280',
+    ...modeToggleButtonTextStyle(active),
   });
   const embeddedTitleRowStyle = {
     position: 'relative',
@@ -2115,27 +2138,10 @@ export default function PlannerSettingsContent({
     : undefined;
   const modalModeToggleStyle = (active) => ({
     ...modeToggleButtonStyle(active),
-    ...(useTwoColumnModalLayout ? { minHeight: 36, paddingVertical: 7, paddingHorizontal: 12 } : {}),
   });
-  const modalModeToggleTextStyle = (active) => ({
-    ...modeToggleButtonTextStyle(active),
-    ...(useTwoColumnModalLayout ? { fontSize: 13 } : {}),
-  });
-  const modalWeekdayDotStyle = (active) => (
-    useTwoColumnModalLayout
-      ? {
-          ...modeToggleButtonStyle(active),
-          minHeight: 36,
-          paddingVertical: 7,
-          paddingHorizontal: 12,
-        }
-      : weekdayDotStyle(active)
-  );
-  const modalWeekdayDotLabelStyle = (active) => (
-    useTwoColumnModalLayout
-      ? { ...modeToggleButtonTextStyle(active), fontSize: 13 }
-      : weekdayDotLabelStyle(active)
-  );
+  const modalModeToggleTextStyle = (active) => modeToggleButtonTextStyle(active);
+  const modalWeekdayDotStyle = (active) => weekdayDotStyle(active);
+  const modalWeekdayDotLabelStyle = (active) => weekdayDotLabelStyle(active);
   const modalMutedMetaStyle = useTwoColumnModalLayout
     ? assignmentModalStyles.fieldHint
     : mutedMetaTextStyle;
@@ -2352,14 +2358,14 @@ export default function PlannerSettingsContent({
       <Text style={modalFieldLabelStyle}>Tracking mode</Text>
       <View style={chipRowStyle}>
           <TouchableOpacity
-            style={[modalModeToggleStyle(isClassDayAttendanceActive), { minWidth: 104 }]}
+            style={[modalModeToggleStyle(isClassDayAttendanceActive), { minWidth: 132 }]}
             onPress={() => handleAttendanceTrackingModeChange('class_day')}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
             <Text style={modalModeToggleTextStyle(isClassDayAttendanceActive)}>Total class days</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[modalModeToggleStyle(isPerSubjectAttendanceActive), { minWidth: 96 }]}
+            style={[modalModeToggleStyle(isPerSubjectAttendanceActive), { minWidth: 132 }]}
             onPress={() => handleAttendanceTrackingModeChange('subject')}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
@@ -2525,6 +2531,7 @@ export default function PlannerSettingsContent({
         <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.learningDays}</Text>
         {learningDaysForm}
       </View>
+      {usePlainSettingsSections ? <View style={sectionBucketDividerStyle} /> : null}
       <View style={sectionBucketStyle}>
         <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.attendanceTracking}</Text>
         {attendanceForm}

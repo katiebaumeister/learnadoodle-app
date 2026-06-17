@@ -598,8 +598,12 @@ export const createModalStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BORDER,
     borderRadius: 9999,
-    paddingVertical: 8,
+    minHeight: 36,
+    minWidth: 96,
+    paddingVertical: 0,
     paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#ffffff',
   },
   dropdownOptionActive: {

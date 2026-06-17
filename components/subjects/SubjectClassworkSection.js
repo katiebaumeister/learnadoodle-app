@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
-  Alert,
   ScrollView,
 } from 'react-native';
 import {
@@ -38,18 +37,20 @@ import {
   resolveLinkedEventIdFromAssignment,
 } from '../../lib/create/assignmentEditHelpers';
 import {
-  addLessonToSubjectCurriculum,
-  addUnitToSubjectCurriculum,
+  buildDraftWithAddedLesson,
+  buildDraftWithAddedUnit,
   deleteLessonFromSubjectCurriculum,
+  deleteUnitFromSubjectCurriculum,
   moveLessonInSubjectCurriculum,
-  renameLessonInSubjectCurriculum,
+  saveSubjectCurriculumFromUnits,
 } from '../../lib/subjectClassworkLessonActions';
-import { curriculumStructureHasContent } from '../../lib/subjectUnitsEditorDraft';
+import { curriculumStructureHasContent, unitsFromCurriculumDraft } from '../../lib/subjectUnitsEditorDraft';
 import { useToast } from '../Toast';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { WebDragHandle, WebDropView, readWebDragPayload, writeWebDragPayload, isWebDragOfType, LEARNING_DAY_PLACEMENT_DRAG_MIME } from '../ui/webDragDrop';
 import ClassworkPlanningModal from './ClassworkPlanningModal';
 import ScheduleLessonModal from './ScheduleLessonModal';
+import ConfirmDialog from '../ConfirmDialog';
 import { dispatchOpenLearningDayModal } from '../../lib/planner/learningDayModalNavigation';
 import { OPEN_SUBJECT_CLASSWORK_SCHEDULE_ALL } from '../../lib/subjectClassworkActions';
 import {
@@ -64,6 +65,30 @@ import {
 
 const ASSIGNMENT_PLACEMENT_DRAG_MIME = 'application/x-learnadoodle-assignment-placement';
 const CLASSWORK_LESSON_DRAG_MIME = 'application/x-learnadoodle-classwork-lesson-placement';
+
+function countCurriculumStructureItems(unitsList) {
+  const list = Array.isArray(unitsList) ? unitsList : [];
+  const unitCount = list.length;
+  const lessonCount = list.reduce((sum, unit) => sum + (unit?.lessons || []).length, 0);
+  return { unitCount, lessonCount };
+}
+
+function scrollPanelRefToBottom(panelRef) {
+  requestAnimationFrame(() => {
+    const node = panelRef.current;
+    if (!node) return;
+    if (Platform.OS === 'web') {
+      const el = node.getScrollableNode?.() || node._nativeNode || node;
+      if (el?.scrollTo) {
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      } else if (el) {
+        el.scrollTop = el.scrollHeight;
+      }
+    } else {
+      node.scrollToEnd?.({ animated: true });
+    }
+  });
+}
 
 function readAssignmentDragPayload(ev) {
   return readWebDragPayload(
@@ -233,6 +258,7 @@ function ClassworkUnitCard({
   onToggleExpand = null,
   showUnitMenu = false,
   onEditUnits = null,
+  onDeleteUnit = null,
   children,
   dropActive = false,
   dropWebProps = {},
@@ -287,7 +313,7 @@ function ClassworkUnitCard({
               <Text style={styles.unitSubtitle}>{countLabel}</Text>
             ) : null}
           </View>
-          {showUnitMenu && onEditUnits ? (
+          {showUnitMenu && (onEditUnits || onDeleteUnit) ? (
             <View style={styles.menuAnchor}>
               <TouchableOpacity
                 ref={menuBtnRef}
@@ -307,14 +333,27 @@ function ClassworkUnitCard({
                 offset={6}
                 variant="context"
               >
-                <DropdownItem
-                  icon={Pencil}
-                  label="Edit units"
-                  onPress={() => {
-                    setMenuOpen(false);
-                    onEditUnits();
-                  }}
-                />
+                {onEditUnits ? (
+                  <DropdownItem
+                    icon={Pencil}
+                    label="Edit units"
+                    onPress={() => {
+                      setMenuOpen(false);
+                      onEditUnits();
+                    }}
+                  />
+                ) : null}
+                {onDeleteUnit ? (
+                  <DropdownItem
+                    icon={Trash2}
+                    label="Delete unit"
+                    danger
+                    onPress={() => {
+                      setMenuOpen(false);
+                      onDeleteUnit();
+                    }}
+                  />
+                ) : null}
               </Dropdown>
             </View>
           ) : null}
@@ -976,15 +1015,86 @@ export default function SubjectClassworkSection({
     lesson: null,
     unitTitle: '',
   });
+  const [pendingDeleteLesson, setPendingDeleteLesson] = useState(null);
+  const [pendingDeleteUnit, setPendingDeleteUnit] = useState(null);
+  const [pendingDeleteAssignment, setPendingDeleteAssignment] = useState(null);
+  const [deletingLesson, setDeletingLesson] = useState(false);
+  const [deletingUnit, setDeletingUnit] = useState(false);
+  const [deletingAssignment, setDeletingAssignment] = useState(false);
   const lessonRowRefs = useRef({});
   const assignmentRowRefs = useRef({});
+  const panelScrollRef = useRef(null);
   const draggingLearningDayIdRef = useRef(null);
   const movingPlacementRef = useRef(false);
+  const [pendingUnits, setPendingUnits] = useState(null);
+  const pendingUnitsRef = useRef(null);
+  const structureSaveTimerRef = useRef(null);
+  const structureSaveInFlightRef = useRef(false);
+  const effectiveUnits = pendingUnits ?? units;
   const hasUnitsContent = useMemo(
-    () => curriculumStructureHasContent({ units }),
-    [units],
+    () => curriculumStructureHasContent({ units: effectiveUnits }),
+    [effectiveUnits],
   );
   const savingStructureRef = useRef(false);
+
+  const applyPendingUnits = useCallback((nextUnits) => {
+    pendingUnitsRef.current = nextUnits;
+    setPendingUnits(nextUnits);
+  }, []);
+
+  const clearPendingUnits = useCallback(() => {
+    pendingUnitsRef.current = null;
+    setPendingUnits(null);
+  }, []);
+
+  const scrollPanelToBottom = useCallback(() => {
+    scrollPanelRefToBottom(panelScrollRef);
+  }, []);
+
+  const scheduleDebouncedStructureSave = useCallback(() => {
+    if (structureSaveTimerRef.current) {
+      clearTimeout(structureSaveTimerRef.current);
+    }
+    structureSaveTimerRef.current = setTimeout(async () => {
+      structureSaveTimerRef.current = null;
+      if (!familyId || !subjectId || structureSaveInFlightRef.current) return;
+      const snapshot = pendingUnitsRef.current;
+      if (!snapshot) return;
+      structureSaveInFlightRef.current = true;
+      try {
+        await saveSubjectCurriculumFromUnits({
+          familyId,
+          subjectId,
+          subjectName: subjectName || 'Subject',
+          units: snapshot,
+        });
+        onPlacementChanged?.();
+      } catch (err) {
+        clearPendingUnits();
+        toast.push(err?.message || 'Could not update curriculum', 'error');
+      } finally {
+        structureSaveInFlightRef.current = false;
+      }
+    }, 350);
+  }, [familyId, subjectId, subjectName, onPlacementChanged, clearPendingUnits, toast]);
+
+  useEffect(() => {
+    if (!pendingUnits) return;
+    const propCounts = countCurriculumStructureItems(units);
+    const pendingCounts = countCurriculumStructureItems(pendingUnits);
+    if (
+      propCounts.unitCount >= pendingCounts.unitCount
+      && propCounts.lessonCount >= pendingCounts.lessonCount
+    ) {
+      clearPendingUnits();
+    }
+  }, [units, pendingUnits, clearPendingUnits]);
+
+  useEffect(() => () => {
+    if (structureSaveTimerRef.current) {
+      clearTimeout(structureSaveTimerRef.current);
+    }
+  }, []);
 
   const mergedEvents = useMemo(
     () => applyOptimisticPatchesToEvents(events, optimisticEventPatches),
@@ -997,11 +1107,11 @@ export default function SubjectClassworkSection({
 
   const model = useMemo(
     () => buildSubjectClassworkModel({
-      units,
+      units: effectiveUnits,
       assignments: mergedAssignments,
       events: mergedEvents,
     }),
-    [units, mergedAssignments, mergedEvents],
+    [effectiveUnits, mergedAssignments, mergedEvents],
   );
 
   useEffect(() => {
@@ -1212,120 +1322,172 @@ export default function SubjectClassworkSection({
     return () => window.removeEventListener(OPEN_SUBJECT_CLASSWORK_SCHEDULE_ALL, handler);
   }, [subjectId, openScheduleAllModal]);
 
-  const handleAddUnit = useCallback(async () => {
-    if (!familyId || !subjectId || savingStructureRef.current) return;
-    savingStructureRef.current = true;
-    try {
-      await addUnitToSubjectCurriculum({
-        familyId,
-        subjectId,
-        subjectName: subjectName || 'Subject',
-        units,
-      });
-      toast.push('Unit added', 'success');
-      onPlacementChanged?.();
-    } catch (err) {
-      toast.push(err?.message || 'Could not add unit', 'error');
-    } finally {
-      savingStructureRef.current = false;
+  const handleAddUnit = useCallback(() => {
+    if (!familyId || !subjectId) return;
+    const baseUnits = pendingUnitsRef.current ?? units;
+    const { draft, error } = buildDraftWithAddedUnit(baseUnits);
+    if (error) {
+      toast.push(error, 'error');
+      return;
     }
-  }, [familyId, subjectId, subjectName, units, toast, onPlacementChanged]);
-
-  const handleAddLesson = useCallback(async (unit) => {
-    if (!familyId || !subjectId || !unit?.unitId || savingStructureRef.current) return;
-    savingStructureRef.current = true;
-    try {
-      await addLessonToSubjectCurriculum({
-        familyId,
-        subjectId,
-        subjectName: subjectName || 'Subject',
-        units,
-        unitId: unit.unitId,
+    const nextUnits = unitsFromCurriculumDraft(draft);
+    applyPendingUnits(nextUnits);
+    const newUnit = nextUnits[nextUnits.length - 1];
+    if (newUnit?.id) {
+      setExpandedUnits((prev) => {
+        const next = new Set(prev);
+        next.add(String(newUnit.id));
+        return next;
       });
-      toast.push('Lesson added', 'success');
-      onPlacementChanged?.();
-    } catch (err) {
-      toast.push(err?.message || 'Could not add lesson', 'error');
-    } finally {
-      savingStructureRef.current = false;
     }
-  }, [familyId, subjectId, subjectName, units, toast, onPlacementChanged]);
+    scrollPanelToBottom();
+    scheduleDebouncedStructureSave();
+  }, [
+    familyId,
+    subjectId,
+    units,
+    applyPendingUnits,
+    scrollPanelToBottom,
+    scheduleDebouncedStructureSave,
+    toast,
+  ]);
 
-  const handleEditLesson = useCallback(({ lesson }) => {
-    if (!lesson?.lessonId || !familyId || !subjectId) return;
-    const currentTitle = lesson.title || 'Lesson';
-    const runRename = async (nextTitle) => {
-      const trimmed = String(nextTitle || '').trim();
-      if (!trimmed || trimmed === currentTitle || savingStructureRef.current) return;
-      savingStructureRef.current = true;
+  const handleAddLesson = useCallback((unit) => {
+    if (!familyId || !subjectId || !unit?.unitId) return;
+    const baseUnits = pendingUnitsRef.current ?? units;
+    const { draft, error } = buildDraftWithAddedLesson(baseUnits, unit.unitId);
+    if (error) {
+      toast.push(error, 'error');
+      return;
+    }
+    const nextUnits = unitsFromCurriculumDraft(draft);
+    applyPendingUnits(nextUnits);
+    setExpandedUnits((prev) => {
+      const next = new Set(prev);
+      next.add(String(unit.unitId));
+      return next;
+    });
+    scrollPanelToBottom();
+    scheduleDebouncedStructureSave();
+  }, [
+    familyId,
+    subjectId,
+    units,
+    applyPendingUnits,
+    scrollPanelToBottom,
+    scheduleDebouncedStructureSave,
+    toast,
+  ]);
+
+  const handleEditLesson = useCallback(async () => {
+    if (!onManageUnits) return;
+    if (structureSaveTimerRef.current) {
+      clearTimeout(structureSaveTimerRef.current);
+      structureSaveTimerRef.current = null;
+    }
+    const snapshot = pendingUnitsRef.current;
+    if (snapshot && familyId && subjectId && !structureSaveInFlightRef.current) {
+      structureSaveInFlightRef.current = true;
       try {
-        await renameLessonInSubjectCurriculum({
+        await saveSubjectCurriculumFromUnits({
           familyId,
           subjectId,
           subjectName: subjectName || 'Subject',
-          units,
-          lessonId: lesson.lessonId,
-          newTitle: trimmed,
+          units: snapshot,
         });
-        toast.push('Lesson updated', 'success');
-        onPlacementChanged?.();
+        clearPendingUnits();
+        await onPlacementChanged?.();
       } catch (err) {
-        toast.push(err?.message || 'Could not update lesson', 'error');
+        toast.push(err?.message || 'Could not save curriculum', 'error');
+        return;
       } finally {
-        savingStructureRef.current = false;
+        structureSaveInFlightRef.current = false;
       }
-    };
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const next = window.prompt('Lesson title', currentTitle);
-      if (next != null) runRename(next);
-      return;
     }
-    if (typeof Alert.prompt === 'function') {
-      Alert.prompt(
-        'Edit lesson',
-        'Lesson title',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Save', onPress: runRename },
-        ],
-        'plain-text',
-        currentTitle,
-      );
-    }
-  }, [familyId, subjectId, subjectName, units, toast, onPlacementChanged]);
+    onManageUnits();
+  }, [
+    onManageUnits,
+    familyId,
+    subjectId,
+    subjectName,
+    clearPendingUnits,
+    onPlacementChanged,
+    toast,
+  ]);
 
   const handleDeleteLesson = useCallback(({ lesson }) => {
     if (!lesson?.lessonId || !familyId || !subjectId) return;
-    const lessonTitle = lesson.title || 'this lesson';
-    const runDelete = async () => {
-      try {
-        await deleteLessonFromSubjectCurriculum({
-          familyId,
-          subjectId,
-          subjectName: subjectName || 'Subject',
-          units,
-          lessonId: lesson.lessonId,
-        });
-        toast.push('Lesson deleted', 'success');
-        onPlacementChanged?.();
-      } catch (err) {
-        toast.push(err?.message || 'Could not delete lesson', 'error');
-      }
-    };
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const confirmed = window.confirm(`Delete "${lessonTitle}"? This cannot be undone.`);
-      if (confirmed) runDelete();
-      return;
+    setPendingDeleteLesson(lesson);
+  }, [familyId, subjectId]);
+
+  const handleDeleteUnit = useCallback((unit) => {
+    if (!unit?.unitId || !familyId || !subjectId) return;
+    setPendingDeleteUnit(unit);
+  }, [familyId, subjectId]);
+
+  const handleConfirmDeleteUnit = useCallback(async () => {
+    const unit = pendingDeleteUnit;
+    if (!unit?.unitId || !familyId || !subjectId || deletingUnit) return;
+    setDeletingUnit(true);
+    try {
+      await deleteUnitFromSubjectCurriculum({
+        familyId,
+        subjectId,
+        subjectName: subjectName || 'Subject',
+        units: effectiveUnits,
+        unitId: unit.unitId,
+      });
+      toast.push('Unit deleted', 'success');
+      setPendingDeleteUnit(null);
+      clearPendingUnits();
+      onPlacementChanged?.();
+    } catch (err) {
+      toast.push(err?.message || 'Could not delete unit', 'error');
+    } finally {
+      setDeletingUnit(false);
     }
-    Alert.alert(
-      'Delete lesson',
-      `Delete "${lessonTitle}"? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: runDelete },
-      ],
-    );
-  }, [familyId, subjectId, subjectName, units, toast, onPlacementChanged]);
+  }, [
+    pendingDeleteUnit,
+    familyId,
+    subjectId,
+    subjectName,
+    effectiveUnits,
+    deletingUnit,
+    clearPendingUnits,
+    toast,
+    onPlacementChanged,
+  ]);
+
+  const handleConfirmDeleteLesson = useCallback(async () => {
+    const lesson = pendingDeleteLesson;
+    if (!lesson?.lessonId || !familyId || !subjectId || deletingLesson) return;
+    setDeletingLesson(true);
+    try {
+      await deleteLessonFromSubjectCurriculum({
+        familyId,
+        subjectId,
+        subjectName: subjectName || 'Subject',
+        units: effectiveUnits,
+        lessonId: lesson.lessonId,
+      });
+      toast.push('Lesson deleted', 'success');
+      setPendingDeleteLesson(null);
+      onPlacementChanged?.();
+    } catch (err) {
+      toast.push(err?.message || 'Could not delete lesson', 'error');
+    } finally {
+      setDeletingLesson(false);
+    }
+  }, [
+    pendingDeleteLesson,
+    familyId,
+    subjectId,
+    subjectName,
+    effectiveUnits,
+    deletingLesson,
+    toast,
+    onPlacementChanged,
+  ]);
 
   const findAssignmentById = useCallback((assignmentId) => {
     return (assignments || []).find((a) => String(a?.id) === String(assignmentId)) || null;
@@ -1410,30 +1572,37 @@ export default function SubjectClassworkSection({
       toast.push('Could not delete assignment', 'error');
       return;
     }
-    const assignmentTitle = assignment.title || 'this assignment';
-    const runDelete = async () => {
-      try {
-        await deleteAssignmentAndEvent({ eventId, familyId, subjectId });
-        toast.push('Assignment deleted', 'success');
-        onPlacementChanged?.();
-      } catch (err) {
-        toast.push(err?.message || 'Could not delete assignment', 'error');
-      }
-    };
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const confirmed = window.confirm(`Delete "${assignmentTitle}"? This cannot be undone.`);
-      if (confirmed) runDelete();
+    setPendingDeleteAssignment(assignment);
+  }, [familyId, toast]);
+
+  const handleConfirmDeleteAssignment = useCallback(async () => {
+    const assignment = pendingDeleteAssignment;
+    if (!assignment?.id || !familyId || deletingAssignment) return;
+    const eventId = resolveLinkedEventIdFromAssignment(assignment);
+    if (!eventId) {
+      toast.push('Could not delete assignment', 'error');
+      setPendingDeleteAssignment(null);
       return;
     }
-    Alert.alert(
-      'Delete assignment',
-      `Delete "${assignmentTitle}"? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: runDelete },
-      ],
-    );
-  }, [familyId, subjectId, toast, onPlacementChanged]);
+    setDeletingAssignment(true);
+    try {
+      await deleteAssignmentAndEvent({ eventId, familyId, subjectId });
+      toast.push('Assignment deleted', 'success');
+      setPendingDeleteAssignment(null);
+      onPlacementChanged?.();
+    } catch (err) {
+      toast.push(err?.message || 'Could not delete assignment', 'error');
+    } finally {
+      setDeletingAssignment(false);
+    }
+  }, [
+    pendingDeleteAssignment,
+    familyId,
+    subjectId,
+    deletingAssignment,
+    toast,
+    onPlacementChanged,
+  ]);
 
   const handleUnitDrop = useCallback((unitId, unitTitle) => (payload) => {
     if (!payload?.assignmentId) return;
@@ -1553,7 +1722,7 @@ export default function SubjectClassworkSection({
     beforeLessonId = null,
   }) => {
     if (!lessonId || toUnitId == null || movingLesson) return;
-    const fromLoc = (units || []).flatMap((unit, unitIndex) => (
+    const fromLoc = (effectiveUnits || []).flatMap((unit, unitIndex) => (
       (unit?.lessons || []).map((lesson) => ({
         lessonId: lesson?.id,
         unitId: unit?.id != null ? String(unit.id) : `idx-${unitIndex}`,
@@ -1572,7 +1741,7 @@ export default function SubjectClassworkSection({
         familyId,
         subjectId,
         subjectName: subjectName || 'Subject',
-        units,
+        units: effectiveUnits,
         lessonId,
         toUnitId,
         beforeLessonId,
@@ -1590,7 +1759,7 @@ export default function SubjectClassworkSection({
     familyId,
     subjectId,
     subjectName,
-    units,
+    effectiveUnits,
     movingLesson,
     toast,
     onPlacementChanged,
@@ -1704,6 +1873,7 @@ export default function SubjectClassworkSection({
           onSecondaryAction={onCreateAssignment}
         />
         <ScrollView
+          ref={panelScrollRef}
           style={styles.panelScroll}
           contentContainerStyle={styles.wrap}
           showsVerticalScrollIndicator
@@ -1751,6 +1921,54 @@ export default function SubjectClassworkSection({
             onPlacementChanged?.();
           }}
         />
+        <ConfirmDialog
+          visible={!!pendingDeleteLesson}
+          title="Delete lesson?"
+          message={
+            pendingDeleteLesson?.title
+              ? `Delete "${pendingDeleteLesson.title}"? This cannot be undone.`
+              : 'Delete this lesson? This cannot be undone.'
+          }
+          confirmLabel={deletingLesson ? 'Deleting…' : 'Delete'}
+          cancelLabel="Cancel"
+          destructive
+          onConfirm={handleConfirmDeleteLesson}
+          onCancel={() => {
+            if (!deletingLesson) setPendingDeleteLesson(null);
+          }}
+        />
+        <ConfirmDialog
+          visible={!!pendingDeleteUnit}
+          title="Delete unit?"
+          message={
+            pendingDeleteUnit?.title
+              ? `Delete "${pendingDeleteUnit.title}" and all of its lessons? This cannot be undone.`
+              : 'Delete this unit and all of its lessons? This cannot be undone.'
+          }
+          confirmLabel={deletingUnit ? 'Deleting…' : 'Delete unit'}
+          cancelLabel="Cancel"
+          destructive
+          onConfirm={handleConfirmDeleteUnit}
+          onCancel={() => {
+            if (!deletingUnit) setPendingDeleteUnit(null);
+          }}
+        />
+        <ConfirmDialog
+          visible={!!pendingDeleteAssignment}
+          title="Delete assignment?"
+          message={
+            pendingDeleteAssignment?.title
+              ? `Delete "${pendingDeleteAssignment.title}"? This cannot be undone.`
+              : 'Delete this assignment? This cannot be undone.'
+          }
+          confirmLabel={deletingAssignment ? 'Deleting…' : 'Delete'}
+          cancelLabel="Cancel"
+          destructive
+          onConfirm={handleConfirmDeleteAssignment}
+          onCancel={() => {
+            if (!deletingAssignment) setPendingDeleteAssignment(null);
+          }}
+        />
       </View>
     );
   }
@@ -1763,6 +1981,7 @@ export default function SubjectClassworkSection({
         onSecondaryAction={onCreateAssignment}
       />
       <ScrollView
+        ref={panelScrollRef}
         style={styles.panelScroll}
         contentContainerStyle={styles.wrap}
         showsVerticalScrollIndicator
@@ -1843,8 +2062,9 @@ export default function SubjectClassworkSection({
             lessonCount={lessonCount}
             expanded={isExpanded}
             onToggleExpand={() => toggleUnitExpanded(unit.unitId)}
-            showUnitMenu={isParentViewer && !!onManageUnits}
+            showUnitMenu={isParentViewer}
             onEditUnits={onManageUnits}
+            onDeleteUnit={isParentViewer ? () => handleDeleteUnit(unit) : null}
             dropActive={dragOverTarget === dropKey}
             dropWebProps={{
               ...dropTargetWebProps({
@@ -2001,6 +2221,54 @@ export default function SubjectClassworkSection({
         onScheduled={() => {
           closeScheduleLessonModal();
           onPlacementChanged?.();
+        }}
+      />
+      <ConfirmDialog
+        visible={!!pendingDeleteLesson}
+        title="Delete lesson?"
+        message={
+          pendingDeleteLesson?.title
+            ? `Delete "${pendingDeleteLesson.title}"? This cannot be undone.`
+            : 'Delete this lesson? This cannot be undone.'
+        }
+        confirmLabel={deletingLesson ? 'Deleting…' : 'Delete'}
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={handleConfirmDeleteLesson}
+        onCancel={() => {
+          if (!deletingLesson) setPendingDeleteLesson(null);
+        }}
+      />
+      <ConfirmDialog
+        visible={!!pendingDeleteUnit}
+        title="Delete unit?"
+        message={
+          pendingDeleteUnit?.title
+            ? `Delete "${pendingDeleteUnit.title}" and all of its lessons? This cannot be undone.`
+            : 'Delete this unit and all of its lessons? This cannot be undone.'
+        }
+        confirmLabel={deletingUnit ? 'Deleting…' : 'Delete unit'}
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={handleConfirmDeleteUnit}
+        onCancel={() => {
+          if (!deletingUnit) setPendingDeleteUnit(null);
+        }}
+      />
+      <ConfirmDialog
+        visible={!!pendingDeleteAssignment}
+        title="Delete assignment?"
+        message={
+          pendingDeleteAssignment?.title
+            ? `Delete "${pendingDeleteAssignment.title}"? This cannot be undone.`
+            : 'Delete this assignment? This cannot be undone.'
+        }
+        confirmLabel={deletingAssignment ? 'Deleting…' : 'Delete'}
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={handleConfirmDeleteAssignment}
+        onCancel={() => {
+          if (!deletingAssignment) setPendingDeleteAssignment(null);
         }}
       />
     </View>

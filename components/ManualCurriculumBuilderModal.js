@@ -50,6 +50,23 @@ import {
   CLASSWORK_BODY_FONT,
 } from '../lib/classworkPanelTheme';
 
+function scrollPanelRefToBottom(panelRef) {
+  requestAnimationFrame(() => {
+    const node = panelRef.current;
+    if (!node) return;
+    if (Platform.OS === 'web') {
+      const el = node.getScrollableNode?.() || node._nativeNode || node;
+      if (el?.scrollTo) {
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      } else if (el) {
+        el.scrollTop = el.scrollHeight;
+      }
+    } else {
+      node.scrollToEnd?.({ animated: true });
+    }
+  });
+}
+
 const DRAFT_LESSON_DRAG_MIME = 'application/x-learnadoodle-draft-lesson';
 
 const s = (path) => {
@@ -193,6 +210,7 @@ export default function ManualCurriculumBuilderModal({
 }) {
   const toast = useToast();
   const overlayRef = useRef(null);
+  const editorScrollRef = useRef(null);
   useModalStackElevation(overlayRef, visible && !embedded, 10002);
 
   const [draft, setDraft] = useState({ title: null, units: [emptyUnit(1)] });
@@ -337,6 +355,7 @@ export default function ManualCurriculumBuilderModal({
   }, []);
 
   const addUnit = useCallback(() => {
+    const newUnitIdx = draft.units.length;
     patchDraft((prev) => {
       const seq = prev.units.length + 1;
       const unit = emptyUnit(seq);
@@ -348,10 +367,14 @@ export default function ManualCurriculumBuilderModal({
     });
     setExpandedUnits((prev) => {
       const next = new Set(prev);
-      next.add(draft.units.length);
+      next.add(newUnitIdx);
       return next;
     });
-  }, [patchDraft, draft.units.length]);
+    requestAnimationFrame(() => {
+      scrollPanelRefToBottom(editorScrollRef);
+      focusUnitTitleInput(newUnitIdx);
+    });
+  }, [patchDraft, draft.units.length, focusUnitTitleInput]);
 
   const updateUnit = useCallback((unitIndex, field, value) => {
     patchDraft((prev) => {
@@ -400,6 +423,7 @@ export default function ManualCurriculumBuilderModal({
   }, [patchDraft, closeWebDraftUnitMenu]);
 
   const addLesson = useCallback((unitIndex) => {
+    const lessonIndex = draft.units[unitIndex]?.lessons?.length ?? 0;
     patchDraft((prev) => {
       const units = [...prev.units];
       const u = units[unitIndex];
@@ -410,7 +434,16 @@ export default function ManualCurriculumBuilderModal({
       return { ...prev, units };
     });
     closeWebDraftUnitMenu();
-  }, [patchDraft, closeWebDraftUnitMenu]);
+    setExpandedUnits((prev) => {
+      const next = new Set(prev);
+      next.add(unitIndex);
+      return next;
+    });
+    requestAnimationFrame(() => {
+      scrollPanelRefToBottom(editorScrollRef);
+      focusLessonTitleInput(unitIndex, lessonIndex);
+    });
+  }, [patchDraft, closeWebDraftUnitMenu, draft.units, focusLessonTitleInput]);
 
   const updateLesson = useCallback((unitIndex, lessonIndex, field, value) => {
     patchDraft((prev) => {
@@ -898,6 +931,7 @@ export default function ManualCurriculumBuilderModal({
   const editorBody = (
     <>
       <ScrollView
+        ref={editorScrollRef}
         style={[styles.scroll, embedded && styles.embeddedScroll]}
         contentContainerStyle={[styles.scrollContent, embedded && styles.embeddedScrollContent]}
         keyboardShouldPersistTaps="handled"
