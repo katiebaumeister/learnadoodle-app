@@ -3105,6 +3105,11 @@ export default function SubjectsPage({
           onNavigateToPlanner={handleNavigateToPlanner}
           onAddSyllabus={handleAddSyllabus}
           onAddEvent={onAddEvent}
+          onEditSubject={
+            !isChildView && canManageSubjectsActions && typeof onEditSubject === 'function'
+              ? onEditSubject
+              : undefined
+          }
           onConfigureSchedule={
             !isChildView && canManageSubjectsActions ? handleConfigureScheduleForSubject : undefined
           }

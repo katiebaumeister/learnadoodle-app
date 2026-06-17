@@ -45,9 +45,14 @@ import {
   saveSubjectCurriculumFromUnits,
 } from '../../lib/subjectClassworkLessonActions';
 import { curriculumStructureHasContent, unitsFromCurriculumDraft } from '../../lib/subjectUnitsEditorDraft';
+import { isPersistedCurriculumId } from '../../lib/curriculumIds';
+import {
+  fetchSubjectCurriculumEventsStructure,
+  invalidateSubjectCurriculumStructureCache,
+} from '../../lib/services/curriculumClient';
 import { useToast } from '../Toast';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
-import { WebDragHandle, WebDropView, readWebDragPayload, writeWebDragPayload, isWebDragOfType, LEARNING_DAY_PLACEMENT_DRAG_MIME } from '../ui/webDragDrop';
+import { WebDragHandle, WebDropView, readWebDragPayload, writeWebDragPayload, isWebDragOfType, LEARNING_DAY_PLACEMENT_DRAG_MIME, useWebDragAutoScroll } from '../ui/webDragDrop';
 import ClassworkPlanningModal from './ClassworkPlanningModal';
 import ScheduleLessonModal from './ScheduleLessonModal';
 import ConfirmDialog from '../ConfirmDialog';
@@ -135,6 +140,23 @@ function parseLinkedEventIds(raw) {
     } catch (_) {}
   }
   return [];
+}
+
+function findPersistedLessonIdInUnits(units, { unitTitle, lessonTitle, hintLessonId } = {}) {
+  if (isPersistedCurriculumId(hintLessonId)) return String(hintLessonId);
+  const normalizedUnit = String(unitTitle || '').trim();
+  const normalizedLesson = String(lessonTitle || '').trim();
+  for (const unit of units || []) {
+    if (normalizedUnit && String(unit?.title || '').trim() !== normalizedUnit) continue;
+    for (const lesson of unit?.lessons || []) {
+      const id = lesson?.id != null ? String(lesson.id) : '';
+      if (!isPersistedCurriculumId(id)) continue;
+      if (!normalizedLesson || String(lesson?.title || '').trim() === normalizedLesson) {
+        return id;
+      }
+    }
+  }
+  return null;
 }
 
 function buildLessonLinkEventPatch({ lessonId, lessonTitle, unitTitle }) {
@@ -1051,6 +1073,11 @@ export default function SubjectClassworkSection({
     scrollPanelRefToBottom(panelScrollRef);
   }, []);
 
+  const isClassworkDragging = Boolean(
+    draggingAssignmentId || draggingLessonId || draggingLearningDayId,
+  );
+  useWebDragAutoScroll(panelScrollRef, isClassworkDragging);
+
   const scheduleDebouncedStructureSave = useCallback(() => {
     if (structureSaveTimerRef.current) {
       clearTimeout(structureSaveTimerRef.current);
@@ -1077,6 +1104,72 @@ export default function SubjectClassworkSection({
       }
     }, 350);
   }, [familyId, subjectId, subjectName, onPlacementChanged, clearPendingUnits, toast]);
+
+  const flushPendingStructureSave = useCallback(async () => {
+    if (structureSaveTimerRef.current) {
+      clearTimeout(structureSaveTimerRef.current);
+      structureSaveTimerRef.current = null;
+    }
+    const snapshot = pendingUnitsRef.current;
+    if (!snapshot || !familyId || !subjectId) return true;
+    if (structureSaveInFlightRef.current) return false;
+    structureSaveInFlightRef.current = true;
+    try {
+      await saveSubjectCurriculumFromUnits({
+        familyId,
+        subjectId,
+        subjectName: subjectName || 'Subject',
+        units: snapshot,
+      });
+      clearPendingUnits();
+      invalidateSubjectCurriculumStructureCache(familyId, subjectId, null);
+      await onPlacementChanged?.();
+      return true;
+    } catch (err) {
+      toast.push(err?.message || 'Could not save curriculum', 'error');
+      return false;
+    } finally {
+      structureSaveInFlightRef.current = false;
+    }
+  }, [
+    familyId,
+    subjectId,
+    subjectName,
+    clearPendingUnits,
+    onPlacementChanged,
+    toast,
+  ]);
+
+  const resolvePersistedLessonId = useCallback(async (unit, lesson) => {
+    const hintLessonId = lesson?.lessonId || lesson?.id || null;
+    const unitTitle = unit?.title || '';
+    const lessonTitle = lesson?.title || '';
+
+    let resolved = findPersistedLessonIdInUnits(pendingUnitsRef.current ?? units, {
+      unitTitle,
+      lessonTitle,
+      hintLessonId,
+    });
+    if (resolved) return resolved;
+
+    const flushed = await flushPendingStructureSave();
+    if (!flushed) return null;
+
+    resolved = findPersistedLessonIdInUnits(units, {
+      unitTitle,
+      lessonTitle,
+      hintLessonId,
+    });
+    if (resolved) return resolved;
+
+    const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, subjectId, null);
+    if (error) return null;
+    return findPersistedLessonIdInUnits(data?.units, {
+      unitTitle,
+      lessonTitle,
+      hintLessonId,
+    });
+  }, [familyId, subjectId, units, flushPendingStructureSave]);
 
   useEffect(() => {
     if (!pendingUnits) return;
@@ -1618,25 +1711,30 @@ export default function SubjectClassworkSection({
     });
   }, [moveAssignmentPlacement]);
 
-  const handleAssignmentDropOnLesson = useCallback((unit, lesson) => (payload) => {
-    if (!payload?.assignmentId || !lesson?.lessonId) return;
+  const handleAssignmentDropOnLesson = useCallback((unit, lesson) => async (payload) => {
+    if (!payload?.assignmentId || !lesson) return;
     const fromLessonId = payload.fromLessonId != null ? String(payload.fromLessonId) : null;
     const fromUnitId = payload.fromUnitId != null ? String(payload.fromUnitId) : null;
     const targetUnitId = unit?.unitId != null ? String(unit.unitId) : null;
+    const persistedLessonId = await resolvePersistedLessonId(unit, lesson);
+    if (!persistedLessonId) {
+      toast.push('This lesson is still saving. Wait a moment and try again.', 'error');
+      return;
+    }
     if (
-      fromLessonId === String(lesson.lessonId)
+      fromLessonId === persistedLessonId
       && fromUnitId === targetUnitId
     ) {
       return;
     }
     moveAssignmentPlacement({
       assignmentId: payload.assignmentId,
-      unitId: targetUnitId,
-      lessonId: lesson.lessonId,
+      unitId: isPersistedCurriculumId(targetUnitId) ? targetUnitId : null,
+      lessonId: persistedLessonId,
       lessonTitle: lesson.title || '',
       unitTitle: unit?.title || '',
     });
-  }, [moveAssignmentPlacement]);
+  }, [moveAssignmentPlacement, resolvePersistedLessonId, toast]);
 
   const handleAssignmentDragStart = useCallback((assignmentId) => {
     setDraggingAssignmentId(String(assignmentId));
@@ -1658,12 +1756,18 @@ export default function SubjectClassworkSection({
   );
 
   const handleAttachLearningDayToLesson = useCallback(async (unit, lesson, { eventId }) => {
-    if (!eventId || !lesson?.lessonId || !familyId || linkingLearningDayRef.current) return;
+    if (!eventId || !lesson || !familyId || linkingLearningDayRef.current) return;
+
+    const persistedLessonId = await resolvePersistedLessonId(unit, lesson);
+    if (!persistedLessonId) {
+      toast.push('This lesson is still saving. Wait a moment and try again.', 'error');
+      return;
+    }
 
     const eventKey = String(eventId);
-    const lessonIdStr = String(lesson.lessonId);
+    const lessonIdStr = String(persistedLessonId);
     const linkPatch = buildLessonLinkEventPatch({
-      lessonId: lesson.lessonId,
+      lessonId: persistedLessonId,
       unitTitle: unit?.title || '',
       lessonTitle: lesson.title || '',
     });
@@ -1696,7 +1800,7 @@ export default function SubjectClassworkSection({
       await attachLearningDayToLesson({
         eventId,
         familyId,
-        lessonId: lesson.lessonId,
+        lessonId: persistedLessonId,
         unitTitle: unit?.title || '',
         lessonTitle: lesson.title || '',
       });
@@ -1714,7 +1818,7 @@ export default function SubjectClassworkSection({
     } finally {
       linkingLearningDayRef.current = false;
     }
-  }, [events, familyId, toast, onPlacementChanged]);
+  }, [events, familyId, toast, onPlacementChanged, resolvePersistedLessonId]);
 
   const moveLessonPlacement = useCallback(async ({
     lessonId,

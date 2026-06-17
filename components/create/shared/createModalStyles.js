@@ -599,7 +599,6 @@ export const createModalStyles = StyleSheet.create({
     borderColor: BORDER,
     borderRadius: 9999,
     minHeight: 36,
-    minWidth: 96,
     paddingVertical: 0,
     paddingHorizontal: 12,
     alignItems: 'center',
@@ -620,6 +619,23 @@ export const createModalStyles = StyleSheet.create({
   },
   assigneePill: {
     minHeight: 36,
+    minWidth: 80,
+  },
+  /** Small toggles for grade level, weekdays, etc. in subject settings */
+  compactChip: {
+    minHeight: 30,
+    minWidth: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 0,
+  },
+  compactChipEqual: {
+    minWidth: 34,
+    paddingHorizontal: 6,
+  },
+  compactChipText: {
+    fontSize: 13,
+    lineHeight: 16,
+    fontWeight: '500',
   },
   assigneePillText: {
     fontSize: 14,

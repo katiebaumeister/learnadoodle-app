@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Settings } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 
 function getSubjectTermLabel(term) {
@@ -77,7 +77,7 @@ export default function SubjectCardHeader({
                 : {})}
             >
               <TouchableOpacity
-                style={styles.editSubjectButton}
+                style={styles.editSubjectIconButton}
                 onPress={(e) => {
                   e?.stopPropagation?.();
                   onEditSubject?.();
@@ -87,8 +87,7 @@ export default function SubjectCardHeader({
                 accessibilityLabel={`Edit ${subjectName}`}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Settings size={16} color="#334155" strokeWidth={2.25} />
-                <Text style={styles.editSubjectButtonText}>Edit subject</Text>
+                <Pencil size={16} color="#374151" strokeWidth={2} />
               </TouchableOpacity>
             </View>
           ) : null}
@@ -138,27 +137,17 @@ const styles = StyleSheet.create({
     position: 'relative',
     zIndex: 2,
   },
-  editSubjectButton: {
-    flexDirection: 'row',
+  editSubjectIconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 9999,
-    borderWidth: 1,
-    borderColor: '#E6EBF2',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
     flexShrink: 0,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
-    }),
-  },
-  editSubjectButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: 'rgba(15, 23, 42, 0.85)',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      transition: 'opacity 0.2s ease',
     }),
   },
   subjectTitleWithBadge: {

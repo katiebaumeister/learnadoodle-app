@@ -1,4 +1,4 @@
-import React, { useCallback, useLayoutEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { Platform, View } from 'react-native';
 
 export const LEARNING_DAY_PLACEMENT_DRAG_MIME = 'application/x-learnadoodle-learning-day-placement';
@@ -59,6 +59,96 @@ export function readWebDragPayload(ev, mimeType, validate) {
     return activeDragPayload;
   }
   return null;
+}
+
+export function resolveScrollElement(ref) {
+  const node = ref?.current;
+  if (!node) return null;
+  if (typeof node.scrollHeight === 'number' && typeof node.scrollTop === 'number') {
+    return node;
+  }
+  const scrollable = node.getScrollableNode?.();
+  if (scrollable && typeof scrollable.scrollTop === 'number') return scrollable;
+  const dom = resolveWebDomNode(node);
+  if (dom && typeof dom.scrollTop === 'number') return dom;
+  return null;
+}
+
+function applyDragAutoScroll(clientY, primaryScrollEl) {
+  if (typeof window === 'undefined' || !Number.isFinite(clientY)) return;
+
+  const EDGE = 80;
+  const MAX_STEP = 16;
+
+  const stepScroll = (el, rect) => {
+    if (!el || typeof el.scrollTop !== 'number') return;
+    const maxScroll = el.scrollHeight - el.clientHeight;
+    if (maxScroll <= 0) return;
+
+    if (clientY >= rect.bottom - EDGE) {
+      const intensity = Math.min(1, (clientY - (rect.bottom - EDGE)) / EDGE);
+      el.scrollTop = Math.min(maxScroll, el.scrollTop + Math.ceil(MAX_STEP * intensity));
+    } else if (clientY <= rect.top + EDGE) {
+      const intensity = Math.min(1, ((rect.top + EDGE) - clientY) / EDGE);
+      el.scrollTop = Math.max(0, el.scrollTop - Math.ceil(MAX_STEP * intensity));
+    }
+  };
+
+  if (primaryScrollEl) {
+    stepScroll(primaryScrollEl, primaryScrollEl.getBoundingClientRect());
+  }
+
+  if (clientY >= window.innerHeight - EDGE) {
+    window.scrollBy(0, MAX_STEP);
+  } else if (clientY <= EDGE) {
+    window.scrollBy(0, -MAX_STEP);
+  }
+}
+
+/**
+ * Scroll a panel (and page fallback) while HTML5 drag is active near top/bottom edges.
+ */
+export function useWebDragAutoScroll(scrollRef, active) {
+  const scrollRefStable = useRef(scrollRef);
+  scrollRefStable.current = scrollRef;
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined' || !active) return undefined;
+
+    let rafId = null;
+    let lastClientY = null;
+
+    const tick = () => {
+      if (lastClientY != null) {
+        applyDragAutoScroll(lastClientY, resolveScrollElement(scrollRefStable.current));
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+
+    const onDragOver = (ev) => {
+      lastClientY = ev.clientY;
+      if (!rafId) rafId = requestAnimationFrame(tick);
+    };
+
+    const stop = () => {
+      lastClientY = null;
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    };
+
+    document.addEventListener('dragover', onDragOver, true);
+    document.addEventListener('dragend', stop, true);
+    document.addEventListener('drop', stop, true);
+
+    return () => {
+      stop();
+      document.removeEventListener('dragover', onDragOver, true);
+      document.removeEventListener('dragend', stop, true);
+      document.removeEventListener('drop', stop, true);
+    };
+  }, [active]);
 }
 
 function useStableHandlerRef(handlers) {

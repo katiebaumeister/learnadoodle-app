@@ -197,7 +197,7 @@ export default function SubjectScheduleFields({
 
       <View style={styles.formGroup}>
         <Text style={styles.fieldLabel}>Days</Text>
-        <View style={styles.chipRow}>
+        <View style={[styles.chipRow, localStyles.compactChipRow]}>
           {WEEKDAY_OPTIONS.map(({ num, label }) => {
             const active = isWeekdayActive(weekdays, num);
             return (
@@ -206,7 +206,7 @@ export default function SubjectScheduleFields({
                 onPress={() => onWeekdaysChange(toggleWeekday(weekdays, num))}
                 style={[
                   styles.dropdownOption,
-                  styles.assigneePill,
+                  styles.compactChip,
                   active && styles.dropdownOptionActive,
                 ]}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -214,8 +214,8 @@ export default function SubjectScheduleFields({
                 <Text
                   style={[
                     styles.dropdownOptionText,
-                    styles.assigneePillText,
-                    active && [styles.assigneePillTextActive, styles.dropdownOptionTextActive],
+                    styles.compactChipText,
+                    active && styles.dropdownOptionTextActive,
                   ]}
                 >
                   {label}
@@ -260,6 +260,9 @@ export default function SubjectScheduleFields({
 }
 
 const localStyles = StyleSheet.create({
+  compactChipRow: {
+    gap: 6,
+  },
   scopeField: {
     marginBottom: 14,
   },

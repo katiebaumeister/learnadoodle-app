@@ -801,7 +801,8 @@ export default function EditSubjectSettingsModal({
                                 key={gradeOption}
                                 style={[
                                   styles.dropdownOption,
-                                  styles.assigneePill,
+                                  styles.compactChip,
+                                  styles.compactChipEqual,
                                   isSelected && styles.dropdownOptionActive,
                                 ]}
                                 onPress={() => setGrade(gradeOption)}
@@ -810,8 +811,8 @@ export default function EditSubjectSettingsModal({
                                 <Text
                                   style={[
                                     styles.dropdownOptionText,
-                                    styles.assigneePillText,
-                                    isSelected && [styles.assigneePillTextActive, styles.dropdownOptionTextActive],
+                                    styles.compactChipText,
+                                    isSelected && styles.dropdownOptionTextActive,
                                   ]}
                                 >
                                   {gradeOption}

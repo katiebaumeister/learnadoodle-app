@@ -847,7 +847,8 @@ export default function AddSubjectModal({
                             key={gradeOption}
                             style={[
                               sharedStyles.dropdownOption,
-                              sharedStyles.assigneePill,
+                              sharedStyles.compactChip,
+                              sharedStyles.compactChipEqual,
                               isSelected && sharedStyles.dropdownOptionActive,
                             ]}
                             onPress={() => {
@@ -859,8 +860,8 @@ export default function AddSubjectModal({
                             <Text
                               style={[
                                 sharedStyles.dropdownOptionText,
-                                sharedStyles.assigneePillText,
-                                isSelected && [sharedStyles.assigneePillTextActive, sharedStyles.dropdownOptionTextActive],
+                                sharedStyles.compactChipText,
+                                isSelected && sharedStyles.dropdownOptionTextActive,
                               ]}
                             >
                               {gradeOption}

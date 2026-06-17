@@ -8,10 +8,120 @@ import {
   StyleSheet,
   Platform,
   ActivityIndicator,
+  Pressable,
 } from 'react-native';
-import { X } from 'lucide-react';
+import { CalendarDays, ChevronRight } from 'lucide-react';
+import AppModalShell from '../ui/AppModalShell';
+import { createModalStyles as sharedStyles } from '../create/shared/createModalStyles';
+import { LEARNADOODLE_LIGHT_BLUE } from '../../theme/comingSoonModalTheme';
 import { useToast } from '../Toast';
 import { getUnlinkedUpcomingEvents, linkLessonToEvent } from '../../lib/subjectLessonLinking';
+
+const MODAL_MAX_WIDTH = 480;
+const WEB_DIALOG_Z_INDEX = 2147483647;
+const LEAGUE_FONT = '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const SLOT_BG = '#EAF3FF';
+const SLOT_BORDER = 'rgba(107, 179, 232, 0.35)';
+
+function ModalBody({
+  lesson,
+  unitTitle,
+  saving,
+  slots,
+  onSelectSlot,
+}) {
+  if (saving) {
+    return (
+      <View style={styles.loadingRow}>
+        <ActivityIndicator size="small" color={LEARNADOODLE_LIGHT_BLUE} />
+        <Text style={styles.loadingText}>Scheduling lesson…</Text>
+      </View>
+    );
+  }
+
+  if (slots.length === 0) {
+    return (
+      <View style={styles.emptyWrap}>
+        <Text style={styles.emptyTitle}>No open slots</Text>
+        <Text style={styles.emptyText}>
+          Configure your subject schedule in School Year Settings, or add learning days on the planner first.
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.bodyStack}>
+      <View style={styles.lessonMeta}>
+        <Text style={styles.lessonTitle}>{lesson?.title || 'Lesson'}</Text>
+        {unitTitle ? <Text style={styles.unitTitle}>{unitTitle}</Text> : null}
+        <Text style={styles.hint}>Choose a planner slot for this lesson.</Text>
+      </View>
+      <ScrollView
+        style={styles.listScroll}
+        contentContainerStyle={styles.listContent}
+        nestedScrollEnabled
+        showsVerticalScrollIndicator={false}
+      >
+        {slots.map(({ event, dateLabel }) => (
+          <TouchableOpacity
+            key={event.id}
+            style={styles.slotOption}
+            onPress={() => onSelectSlot({ event, dateLabel })}
+            activeOpacity={0.88}
+            accessibilityRole="button"
+            accessibilityLabel={`Schedule on ${dateLabel}`}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <View style={styles.slotIconWrap}>
+              <CalendarDays size={18} color="#6BB3E8" strokeWidth={2.25} />
+            </View>
+            <View style={styles.slotTextWrap}>
+              <Text style={styles.slotDate}>{dateLabel}</Text>
+              <Text style={styles.slotMeta} numberOfLines={1}>
+                {event.title || 'Learning day'}
+              </Text>
+            </View>
+            <ChevronRight size={18} color="#94A3B8" strokeWidth={2.25} />
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+function ModalContent({
+  subjectName,
+  lesson,
+  unitTitle,
+  saving,
+  slots,
+  onSelectSlot,
+  onClose,
+}) {
+  const title = subjectName ? `Available ${subjectName} slots` : 'Available slots';
+
+  return (
+    <AppModalShell
+      title={title}
+      onClose={saving ? undefined : onClose}
+      shellStyle={[sharedStyles.compactShell, styles.shell]}
+      titleRowStyle={sharedStyles.compactTitleRow}
+      contentContainerStyle={sharedStyles.contentContainer}
+      bodyStyle={sharedStyles.shellBody}
+      disableShellScroll
+      maxWidth={MODAL_MAX_WIDTH}
+    >
+      <ModalBody
+        lesson={lesson}
+        unitTitle={unitTitle}
+        saving={saving}
+        slots={slots}
+        onSelectSlot={onSelectSlot}
+      />
+    </AppModalShell>
+  );
+}
 
 export default function ScheduleLessonModal({
   visible,
@@ -53,41 +163,41 @@ export default function ScheduleLessonModal({
 
   if (!visible) return null;
 
+  const content = (
+    <View style={[styles.overlay, Platform.OS === 'web' && styles.overlayWebPortal]}>
+      <Pressable
+        style={styles.backdrop}
+        onPress={saving ? undefined : onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close dialog"
+        {...(Platform.OS === 'web' && { cursor: 'default' })}
+      />
+      <View style={styles.modalWrap}>
+        <ModalContent
+          subjectName={subjectName}
+          lesson={lesson}
+          unitTitle={unitTitle}
+          saving={saving}
+          slots={slots}
+          onSelectSlot={handleSelect}
+          onClose={onClose}
+        />
+      </View>
+    </View>
+  );
+
+  if (Platform.OS === 'web' && typeof document !== 'undefined' && document.body) {
+    try {
+      const ReactDOM = require('react-dom');
+      if (ReactDOM.createPortal) {
+        return ReactDOM.createPortal(content, document.body);
+      }
+    } catch (_) {}
+  }
+
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={styles.card}>
-          <View style={styles.header}>
-            <Text style={styles.title}>
-            {subjectName ? `Available ${subjectName} slots` : 'Available slots'}
-          </Text>
-            <TouchableOpacity onPress={onClose} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <X size={20} color="#64748B" />
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.subtitle}>{lesson?.title || 'Lesson'}</Text>
-          <Text style={styles.hint}>Choose a planner slot for this lesson.</Text>
-          {saving ? (
-            <ActivityIndicator style={{ marginVertical: 24 }} color="#9ECFFB" />
-          ) : slots.length === 0 ? (
-            <Text style={styles.empty}>No open schedule slots found. Configure schedule first.</Text>
-          ) : (
-            <ScrollView style={styles.list}>
-              {slots.map(({ event, dateLabel }) => (
-                <TouchableOpacity
-                  key={event.id}
-                  style={styles.option}
-                  onPress={() => handleSelect({ event, dateLabel })}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={styles.optionText}>{dateLabel}</Text>
-                  <Text style={styles.optionMeta}>{event.title || 'Learning session'}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          )}
-        </View>
-      </View>
+      {content}
     </Modal>
   );
 }
@@ -95,69 +205,140 @@ export default function ScheduleLessonModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    padding: 20,
+    ...(Platform.OS === 'web' && {
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      width: '100vw',
+      height: '100vh',
+      zIndex: 1000000,
+    }),
   },
-  card: {
+  overlayWebPortal: {
+    zIndex: WEB_DIALOG_Z_INDEX,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 0,
+  },
+  modalWrap: {
     width: '100%',
-    maxWidth: 420,
-    maxHeight: '70%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    overflow: 'hidden',
+    maxWidth: MODAL_MAX_WIDTH,
+    zIndex: 1,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+  shell: {
+    maxWidth: MODAL_MAX_WIDTH,
+    minHeight: 0,
+    height: 'auto',
+    ...(Platform.OS === 'web' && {
+      maxHeight: '88vh',
+      boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
+    }),
   },
-  title: {
-    fontSize: 17,
+  bodyStack: {
+    gap: 12,
+  },
+  lessonMeta: {
+    gap: 4,
+  },
+  lessonTitle: {
+    fontSize: 18,
     fontWeight: '700',
     color: '#0F172A',
+    ...(Platform.OS === 'web' && { fontFamily: LEAGUE_FONT }),
   },
-  subtitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#334155',
-    paddingHorizontal: 16,
-    paddingTop: 12,
+  unitTitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#64748B',
+    ...(Platform.OS === 'web' && { fontFamily: LEAGUE_FONT }),
   },
   hint: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#64748B',
+    marginTop: 4,
+    ...(Platform.OS === 'web' && { fontFamily: LEAGUE_FONT }),
+  },
+  listScroll: {
+    maxHeight: Platform.OS === 'web' ? 360 : 320,
+  },
+  listContent: {
+    gap: 8,
+    paddingBottom: 4,
+  },
+  slotOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: SLOT_BORDER,
+    backgroundColor: SLOT_BG,
+    ...(Platform.OS === 'web' && {
+      transition: 'background-color 0.15s ease, border-color 0.15s ease',
+      cursor: 'pointer',
+    }),
+  },
+  slotIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(107, 179, 232, 0.18)',
+    flexShrink: 0,
+  },
+  slotTextWrap: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  slotDate: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A',
+    ...(Platform.OS === 'web' && { fontFamily: LEAGUE_FONT }),
+  },
+  slotMeta: {
     fontSize: 13,
     color: '#64748B',
-    paddingHorizontal: 16,
-    paddingTop: 6,
-    paddingBottom: 8,
+    ...(Platform.OS === 'web' && { fontFamily: LEAGUE_FONT }),
   },
-  empty: {
-    fontSize: 14,
-    color: '#64748B',
-    padding: 16,
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 24,
+    justifyContent: 'center',
   },
-  list: {
-    padding: 8,
-  },
-  option: {
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  optionText: {
+  loadingText: {
     fontSize: 15,
-    fontWeight: '600',
-    color: '#0F172A',
+    color: '#475569',
+    ...(Platform.OS === 'web' && { fontFamily: LEAGUE_FONT }),
   },
-  optionMeta: {
-    fontSize: 12,
+  emptyWrap: {
+    paddingVertical: 12,
+    gap: 8,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+    ...(Platform.OS === 'web' && { fontFamily: LEAGUE_FONT }),
+  },
+  emptyText: {
+    fontSize: 14,
+    lineHeight: 20,
     color: '#64748B',
-    marginTop: 2,
+    ...(Platform.OS === 'web' && { fontFamily: LEAGUE_FONT }),
   },
 });
