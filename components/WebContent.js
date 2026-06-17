@@ -45,10 +45,7 @@ import {
 import {
   enrichLearningDayEvent,
   dispatchOpenLearningDayModal,
-  OPEN_LEARNING_DAY_MODAL_EVENT,
-  learningDayEventSelectFields,
 } from '../lib/planner/learningDayModalNavigation'
-import LearningDayModal from './planner/LearningDayModal'
 
 /** Lucide paths — same as MaterialsLibrary context menu (visual parity). */
 const PLANNER_CTX_ICON_PATHS = {
@@ -5378,10 +5375,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     event: null,
     options: {},
   })
-  const [learningDayModalState, setLearningDayModalState] = useState({
-    visible: false,
-    event: null,
-  })
   const dispatchOpenEventModal = useCallback((ev, options = {}) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !ev?.id) return;
     const detail = {
@@ -5392,45 +5385,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
     window.dispatchEvent(new CustomEvent('openEventModal', { detail }));
   }, []);
-  const closeLearningDayModal = useCallback(() => {
-    setLearningDayModalState({ visible: false, event: null });
-  }, []);
-  const handleLearningDaySaved = useCallback(({ event: savedEvent } = {}) => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
-    const subjectId = resolveEventSubjectId(savedEvent);
-    if (subjectId) {
-      window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId } }));
-    }
-  }, []);
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
-
-    const handleOpenLearningDayModal = async (event) => {
-      const detail = event.detail || {};
-      let row = detail.event || null;
-      const eventId = detail.eventId || row?.id || null;
-      if (!row && eventId && familyId) {
-        try {
-          let query = supabase
-            .from('events')
-            .select(learningDayEventSelectFields())
-            .eq('id', String(eventId));
-          query = query.eq('family_id', familyId);
-          const { data: fetched, error } = await query.maybeSingle();
-          if (!error && fetched) row = fetched;
-        } catch (_) {}
-      }
-      if (!row?.id) return;
-      const enriched = await enrichLearningDayEvent({ supabase, familyId, event: row });
-      setLearningDayModalState({ visible: true, event: enriched });
-    };
-
-    window.addEventListener(OPEN_LEARNING_DAY_MODAL_EVENT, handleOpenLearningDayModal);
-    return () => {
-      window.removeEventListener(OPEN_LEARNING_DAY_MODAL_EVENT, handleOpenLearningDayModal);
-    };
-  }, [familyId]);
   const openEventEditorWithScopePrompt = useCallback(async (ev, options = {}) => {
     if (!ev?.id) return;
     if (isDayOffOrHolidayEvent(ev)) {
@@ -6306,7 +6260,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             iconKey: 'edit2',
             action: async () => {
               const enriched = await enrichLearningDayEvent({ supabase, familyId, event: ev });
-              dispatchOpenLearningDayModal({ event: enriched, eventId: enriched?.id });
+              dispatchOpenLearningDayModal({
+                event: enriched,
+                eventId: enriched?.id,
+                skipSummary: true,
+              });
             },
           });
         } else if (isSeriesGroup) {
@@ -6314,14 +6272,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             text: 'Edit This Event',
             iconKey: 'edit2',
             action: () => {
-              dispatchOpenEventModal(ev, { editScope: 'single' });
+              dispatchOpenEventModal(ev, { editScope: 'single', skipSummary: true });
             },
           });
           menuItems.push({
             text: 'Edit Series',
             iconKey: 'edit2',
             action: () => {
-              dispatchOpenEventModal(ev, { editScope: 'series' });
+              dispatchOpenEventModal(ev, { editScope: 'series', skipSummary: true });
             },
           });
         } else {
@@ -6329,7 +6287,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             text: 'Edit Event',
             iconKey: 'edit2',
             action: () => {
-              dispatchOpenEventModal(ev, { editScope: 'single' });
+              dispatchOpenEventModal(ev, { editScope: 'single', skipSummary: true });
             },
           });
         }
@@ -11123,7 +11081,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                   const next = seriesEditScopePrompt.event;
                   const opts = seriesEditScopePrompt.options || {};
                   setSeriesEditScopePrompt({ visible: false, event: null, options: {} });
-                  if (next) dispatchOpenEventModal(next, { ...opts, editScope: 'single' });
+                  if (next) dispatchOpenEventModal(next, { ...opts, editScope: 'single', skipSummary: true });
                 }}
                 style={{
                   flex: 1,
@@ -11155,7 +11113,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                   const next = seriesEditScopePrompt.event;
                   const opts = seriesEditScopePrompt.options || {};
                   setSeriesEditScopePrompt({ visible: false, event: null, options: {} });
-                  if (next) dispatchOpenEventModal(next, { ...opts, editScope: 'series' });
+                  if (next) dispatchOpenEventModal(next, { ...opts, editScope: 'series', skipSummary: true });
                 }}
                 style={{
                   flex: 1,
@@ -11205,23 +11163,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
-      <LearningDayModal
-        visible={learningDayModalState.visible}
-        event={learningDayModalState.event}
-        familyId={familyId}
-        subjects={propFullSubjects || []}
-        children={children || []}
-        onClose={closeLearningDayModal}
-        onSaved={(detail) => {
-          handleLearningDaySaved(detail);
-          if (detail?.event) {
-            setLearningDayModalState((prev) => {
-              if (!prev.visible || String(prev.event?.id) !== String(detail.event?.id)) return prev;
-              return { ...prev, event: { ...prev.event, ...detail.event } };
-            });
-          }
-        }}
-      />
+
       <ConfirmDialog
         visible={confirmDialog.visible}
         title={confirmDialog.title}

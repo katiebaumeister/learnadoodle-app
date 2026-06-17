@@ -5,6 +5,7 @@ import {
   Text,
   TouchableOpacity,
   Platform,
+  StyleSheet,
 } from 'react-native';
 import { CalendarDays, CalendarPlus } from 'lucide-react';
 import CreateModalShell from '../create/shared/CreateModalShell';
@@ -52,9 +53,10 @@ export default function LearningDaySetupChoiceModal({
         title={subjectName}
         onClose={onClose}
         maxWidth={460}
-        shellStyle={styles.compactShell}
+        shellStyle={[styles.compactShell, localStyles.choiceModalShell]}
         titleRowStyle={styles.compactTitleRow}
-        bodyStyle={styles.shellBody}
+        bodyStyle={[styles.shellBody, localStyles.choiceModalBody]}
+        footerStyle={localStyles.choiceModalFooter}
       >
         <View style={choiceStyles.list}>
           <ChoiceCard
@@ -75,6 +77,18 @@ export default function LearningDaySetupChoiceModal({
     </Modal>
   );
 }
+
+const localStyles = StyleSheet.create({
+  choiceModalShell: {
+    minHeight: 0,
+  },
+  choiceModalBody: {
+    paddingBottom: 4,
+  },
+  choiceModalFooter: {
+    paddingTop: 4,
+  },
+});
 
 const choiceStyles = {
   list: {

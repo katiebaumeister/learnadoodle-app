@@ -18,6 +18,8 @@ export default function CreateModalShell({
   disableShellScroll = false,
   bodyStyle = null,
   shellStyle = null,
+  footerStyle = null,
+  titleRowStyle = null,
 }) {
   return (
     <View style={shellStyles.overlay}>
@@ -34,10 +36,11 @@ export default function CreateModalShell({
           onClose={onClose}
           maxWidth={maxWidth}
           shellStyle={[styles.compactShell, shellStyle]}
-          titleRowStyle={styles.compactTitleRow}
+          titleRowStyle={[styles.compactTitleRow, titleRowStyle]}
           contentContainerStyle={styles.contentContainer}
           bodyStyle={[styles.shellBody, bodyStyle]}
           disableShellScroll={disableShellScroll}
+          footerStyle={footerStyle}
           footer={footer ?? (
             <ModalFooter
               mode="edit"

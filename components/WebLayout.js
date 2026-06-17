@@ -47,6 +47,16 @@ import {
   isWorkAssignmentEditEvent,
   resolveLinkedEventIdFromAssignment,
 } from '../lib/create/assignmentEditHelpers';
+import PlannerItemSummaryModal from './planner/PlannerItemSummaryModal';
+import LearningDayModal from './planner/LearningDayModal';
+import {
+  OPEN_LEARNING_DAY_MODAL_EVENT,
+  enrichLearningDayEvent,
+  learningDayEventSelectFields,
+} from '../lib/planner/learningDayModalNavigation';
+import { getPlannerEventCategory } from '../lib/planner/plannerEventCategories';
+import { shouldSkipPlannerItemSummary } from '../lib/planner/plannerItemSummaryModel';
+import { resolveEventSubjectId } from '../lib/planner/plannerEventSubject';
 import {
   isDayOffOrHolidayEvent,
   shouldUseLegacyEventModal,
@@ -271,6 +281,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [directReviewAssignment, setDirectReviewAssignment] = useState(null);
   const [showAssignmentEditModal, setShowAssignmentEditModal] = useState(false);
   const [assignmentEditContext, setAssignmentEditContext] = useState(null);
+  const [plannerSummaryContext, setPlannerSummaryContext] = useState(null);
+  const [learningDayModalState, setLearningDayModalState] = useState({
+    visible: false,
+    event: null,
+  });
   const [showCalendarEventEditModal, setShowCalendarEventEditModal] = useState(false);
   const [calendarEventEditContext, setCalendarEventEditContext] = useState(null);
   const [eventModalEventId, setEventModalEventId] = useState(null);
@@ -347,6 +362,46 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       };
     });
   }, [children, family?.members, family?.child_invite_summaries]);
+
+  const closeLearningDayModal = useCallback(() => {
+    setLearningDayModalState({ visible: false, event: null });
+  }, []);
+
+  const handlePlannerLearningDaySaved = useCallback(({ event: savedEvent } = {}) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
+    const subjectId = resolveEventSubjectId(savedEvent);
+    if (subjectId) {
+      window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId } }));
+    }
+  }, []);
+
+  const openFocusedPlannerEdit = useCallback((eventRow, assignment = null, view = 'edit') => {
+    if (!eventRow) return;
+    if (isWorkAssignmentEditEvent(eventRow?.event_type)) {
+      setAssignmentEditContext({
+        assignment,
+        linkedEvent: eventRow,
+        view,
+      });
+      setShowAssignmentEditModal(true);
+      return;
+    }
+    setCalendarEventEditContext({ event: eventRow });
+    setShowCalendarEventEditModal(true);
+  }, []);
+
+  const openEditFromPlannerSummary = useCallback(() => {
+    const ctx = plannerSummaryContext;
+    if (!ctx?.event) return;
+    const { event, assignment, category } = ctx;
+    setPlannerSummaryContext(null);
+    if (category === 'Learning day') {
+      setLearningDayModalState({ visible: true, event });
+      return;
+    }
+    openFocusedPlannerEdit(event, assignment, 'edit');
+  }, [plannerSummaryContext, openFocusedPlannerEdit]);
 
   const resetCreateModalState = useCallback(() => {
     setCreateModalKind(null);
@@ -2513,17 +2568,37 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 })
                 : null;
 
-              setAssignmentEditContext({
+              if (shouldSkipPlannerItemSummary(detail)) {
+                setAssignmentEditContext({
+                  assignment,
+                  linkedEvent: eventRow,
+                  view: detail.assignmentView === 'submissions' ? 'submissions' : 'edit',
+                });
+                setShowAssignmentEditModal(true);
+                return;
+              }
+
+              setPlannerSummaryContext({
+                event: eventRow,
                 assignment,
-                linkedEvent: eventRow,
-                view: detail.assignmentView === 'submissions' ? 'submissions' : 'edit',
+                category: 'Assignment',
+                readOnly: false,
               });
-              setShowAssignmentEditModal(true);
               return;
             }
 
-            setCalendarEventEditContext({ event: eventRow });
-            setShowCalendarEventEditModal(true);
+            if (shouldSkipPlannerItemSummary(detail)) {
+              setCalendarEventEditContext({ event: eventRow });
+              setShowCalendarEventEditModal(true);
+              return;
+            }
+
+            setPlannerSummaryContext({
+              event: eventRow,
+              assignment: null,
+              category: getPlannerEventCategory(eventRow),
+              readOnly: false,
+            });
           } catch (err) {
             console.warn('[WebLayout] focused event modal redirect failed:', err);
             if (
@@ -2645,6 +2720,51 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       window.removeEventListener('openEditAssignment', handleOpenEditAssignment);
     };
   }, [activeTab, denyFamilyEventEdit, familyId]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+
+    const handleOpenLearningDayModal = async (event) => {
+      const detail = event.detail || {};
+      let row = detail.event || null;
+      const eventId = detail.eventId || row?.id || null;
+      const resolvedFamilyId = familyId || sessionRef.current?.family_id || null;
+      if (!row && eventId && resolvedFamilyId) {
+        try {
+          let query = supabase
+            .from('events')
+            .select(learningDayEventSelectFields())
+            .eq('id', String(eventId))
+            .eq('family_id', resolvedFamilyId);
+          const { data: fetched, error } = await query.maybeSingle();
+          if (!error && fetched) row = fetched;
+        } catch (_) {}
+      }
+      if (!row?.id) return;
+      const enriched = await enrichLearningDayEvent({
+        supabase,
+        familyId: resolvedFamilyId,
+        event: row,
+      });
+
+      if (detail.skipSummary) {
+        setLearningDayModalState({ visible: true, event: enriched });
+        return;
+      }
+
+      setPlannerSummaryContext({
+        event: enriched,
+        assignment: null,
+        category: 'Learning day',
+        readOnly: false,
+      });
+    };
+
+    window.addEventListener(OPEN_LEARNING_DAY_MODAL_EVENT, handleOpenLearningDayModal);
+    return () => {
+      window.removeEventListener(OPEN_LEARNING_DAY_MODAL_EVENT, handleOpenLearningDayModal);
+    };
+  }, [familyId]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -4836,6 +4956,40 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             setCalendarEventEditContext(null);
             if (Platform.OS === 'web' && typeof window !== 'undefined') {
               window.dispatchEvent(new CustomEvent('refreshCalendar'));
+            }
+          }}
+        />
+      ) : null}
+
+      {plannerSummaryContext ? (
+        <PlannerItemSummaryModal
+          visible
+          event={plannerSummaryContext.event}
+          assignment={plannerSummaryContext.assignment}
+          category={plannerSummaryContext.category}
+          children={children}
+          subjects={fullSubjects}
+          readOnly={plannerSummaryContext.readOnly}
+          onClose={() => setPlannerSummaryContext(null)}
+          onEdit={openEditFromPlannerSummary}
+        />
+      ) : null}
+
+      {learningDayModalState.visible && learningDayModalState.event ? (
+        <LearningDayModal
+          visible
+          event={learningDayModalState.event}
+          familyId={familyId}
+          subjects={fullSubjects}
+          children={children}
+          onClose={closeLearningDayModal}
+          onSaved={(detail) => {
+            handlePlannerLearningDaySaved(detail);
+            if (detail?.event) {
+              setLearningDayModalState((prev) => {
+                if (!prev.visible || String(prev.event?.id) !== String(detail.event?.id)) return prev;
+                return { ...prev, event: { ...prev.event, ...detail.event } };
+              });
             }
           }}
         />

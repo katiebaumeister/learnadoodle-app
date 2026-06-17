@@ -35,9 +35,12 @@ export function ModalFooter({
           disabled={loading}
           style={[cancelStyle, loading && styles.buttonDisabled]}
           activeOpacity={0.9}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel"
           {...(Platform.OS === 'web' && { cursor: loading ? 'not-allowed' : 'pointer' })}
         >
-          <Text style={cancelTextStyle}>Cancel</Text>
+          <X size={16} color="#374151" />
+          <Text style={[cancelTextStyle, loading && styles.buttonTextDisabled]}>Cancel</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => {
@@ -51,7 +54,10 @@ export function ModalFooter({
           disabled={loading}
           style={[
             primaryStyle,
-            { backgroundColor: loading ? '#B7BFCD' : accent },
+            {
+              backgroundColor: loading ? '#B7BFCD' : accent,
+              borderColor: loading ? '#B7BFCD' : accent,
+            },
           ]}
           activeOpacity={0.9}
           {...(Platform.OS === 'web' && { cursor: loading ? 'not-allowed' : 'pointer' })}
@@ -132,7 +138,10 @@ export function ModalFooter({
           disabled={loading}
           style={[
             primaryStyle,
-            { backgroundColor: loading ? '#B7BFCD' : accent },
+            {
+              backgroundColor: loading ? '#B7BFCD' : accent,
+              borderColor: loading ? '#B7BFCD' : accent,
+            },
             loading && styles.buttonDisabled,
           ]}
           activeOpacity={0.9}
@@ -208,6 +217,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    borderWidth: 1,
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   primaryText: {
@@ -227,37 +237,43 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   cancelButtonCompact: {
-    minHeight: 40,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    backgroundColor: 'transparent',
-    borderWidth: 0,
+    minHeight: 50,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   cancelButtonTextCompact: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '700',
-    color: '#2563EB',
+    color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   primaryCompact: {
-    minHeight: 40,
-    borderRadius: 8,
-    paddingHorizontal: 16,
+    minHeight: 50,
+    borderRadius: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#9ECFFB',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   primaryTextCompact: {
-    color: '#FFF',
-    fontSize: 14,
-    fontWeight: '700',
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
