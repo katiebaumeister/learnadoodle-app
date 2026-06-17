@@ -530,20 +530,38 @@ function ClassworkPanelHeader({
   actionLabel,
   onAction,
   showAction = false,
+  secondaryActionLabel,
+  onSecondaryAction,
+  showSecondaryAction = false,
 }) {
   return (
     <View style={styles.panelToolbar}>
       <Text style={styles.panelTitle}>Classwork</Text>
-      {showAction ? (
-        <TouchableOpacity
-          style={styles.panelActionBtn}
-          onPress={onAction}
-          accessibilityLabel={actionLabel}
-          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-        >
-          <Plus size={18} color="#334155" strokeWidth={2.25} />
-          <Text style={styles.panelActionBtnText}>{actionLabel}</Text>
-        </TouchableOpacity>
+      {(showAction || showSecondaryAction) ? (
+        <View style={styles.panelActions}>
+          {showAction ? (
+            <TouchableOpacity
+              style={styles.panelActionBtn}
+              onPress={onAction}
+              accessibilityLabel={actionLabel}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.panelActionBtnText}>{actionLabel}</Text>
+            </TouchableOpacity>
+          ) : null}
+          {showSecondaryAction ? (
+            <TouchableOpacity
+              style={styles.panelActionBtn}
+              onPress={onSecondaryAction}
+              accessibilityLabel={secondaryActionLabel}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.panelActionBtnText}>{secondaryActionLabel}</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
@@ -594,6 +612,7 @@ export default function SubjectClassworkSection({
   onOpenAssignment,
   onManageUnits,
   unitsActionLabel = 'Add units',
+  onCreateAssignment = null,
   onPlacementChanged,
   highlightLessonId = null,
   highlightAssignmentId = null,
@@ -1243,6 +1262,9 @@ export default function SubjectClassworkSection({
           showAction={isParentViewer && !!onManageUnits}
           actionLabel={unitsActionLabel}
           onAction={onManageUnits}
+          showSecondaryAction={isParentViewer && !!onCreateAssignment}
+          secondaryActionLabel="Add assignment"
+          onSecondaryAction={onCreateAssignment}
         />
         <ScrollView
           style={styles.panelScroll}
@@ -1299,6 +1321,9 @@ export default function SubjectClassworkSection({
         showAction={isParentViewer && !!onManageUnits}
         actionLabel={unitsActionLabel}
         onAction={onManageUnits}
+        showSecondaryAction={isParentViewer && !!onCreateAssignment}
+        secondaryActionLabel="Add assignment"
+        onSecondaryAction={onCreateAssignment}
       />
       <ScrollView
         style={styles.panelScroll}
@@ -1566,6 +1591,14 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     ...CLASSWORK_LEAGUE_FONT,
+  },
+  panelActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexShrink: 0,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
   },
   panelActionBtn: {
     flexDirection: 'row',

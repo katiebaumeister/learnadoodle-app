@@ -2,7 +2,7 @@
  * Materials Library Page
  * Main page for viewing and managing family materials
  */
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { Search, X, ExternalLink, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload } from 'lucide-react';
+import { Search, X, ExternalLink, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload, Plus } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
 import { useSession } from '../../contexts/SessionContext';
@@ -84,6 +84,8 @@ export default function MaterialsLibrary({
   lockedSubjectId = null,
   lockedSubjectName = null,
   hideSubjectFilter = false,
+  hideChildrenFilter = false,
+  scopedChildIds = null,
   embedded = false,
 }) {
   const subjectLocked = Boolean(lockedSubjectId);
@@ -97,6 +99,23 @@ export default function MaterialsLibrary({
     session?.role_flags?.isChild === true || viewerRole === 'child' || viewerRole === 'student';
   const isSelfManagedStudentViewer =
     isChildViewer && familyUserControls?.isSelfManagedStudent === true;
+
+  const scopedChildIdSet = useMemo(() => {
+    if (!Array.isArray(scopedChildIds) || scopedChildIds.length === 0) return null;
+    return new Set(
+      scopedChildIds.map((id) => String(id || '').trim()).filter(Boolean),
+    );
+  }, [scopedChildIds]);
+
+  const materialMatchesScopedChildren = useCallback((material) => {
+    if (!scopedChildIdSet) return true;
+    const links = Array.isArray(material?.material_children) ? material.material_children : [];
+    if (links.length === 0) return true;
+    return links.some((mc) => scopedChildIdSet.has(String(mc?.child_id)));
+  }, [scopedChildIdSet]);
+
+  const showChildrenFilterRow = !hideChildrenFilter && !embedded && !isChildViewer;
+
   const forcedChildId = useMemo(() => {
     if (!isChildViewer) return null;
     if (currentChildId) return currentChildId;
@@ -313,7 +332,11 @@ export default function MaterialsLibrary({
   }, [familyId, children]);
 
   // Use localChildren instead of children prop
-  const effectiveChildren = localChildren.length > 0 ? localChildren : children;
+  const effectiveChildren = useMemo(() => {
+    const base = localChildren.length > 0 ? localChildren : children;
+    if (!scopedChildIdSet) return base;
+    return base.filter((child) => child?.id != null && scopedChildIdSet.has(String(child.id)));
+  }, [localChildren, children, scopedChildIdSet]);
 
   // Load subjects
   useEffect(() => {
@@ -957,32 +980,55 @@ export default function MaterialsLibrary({
 
   // All items are now materials, but we still need to normalize them correctly
   // Materials with storage_path should use normalizeUpload logic, others use normalizeMaterial
-  const visibleMaterials = materials;
+  const visibleMaterials = useMemo(
+    () => (scopedChildIdSet ? materials.filter(materialMatchesScopedChildren) : materials),
+    [materials, scopedChildIdSet, materialMatchesScopedChildren],
+  );
 
   const hasNoMaterials = libraryReady && (subjectLocked ? visibleMaterials.length === 0 : allMaterials.length === 0);
   const nothingVisible = visibleMaterials.length === 0;
 
-  /** Dashed light-blue CTA — matches Subjects empty-state “Add” button. */
-  const renderUploadMaterialButton = ({ withTopMargin = false } = {}) => (
-    <TouchableOpacity
-      style={[styles.dashedActionButton, withTopMargin && styles.dashedActionButtonSpaced]}
-      onPress={handleOpenAddMaterialModal}
-      activeOpacity={0.85}
-      accessibilityRole="button"
-      accessibilityLabel="Upload material"
-      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-    >
-      <Upload size={16} color="#5AAEF2" strokeWidth={2.25} />
-      <Text style={styles.dashedActionButtonText}>Upload material</Text>
-    </TouchableOpacity>
-  );
+  /** Dashed light-blue CTA on standalone Materials page; pill outline on embedded subject detail. */
+  const renderUploadMaterialButton = ({ withTopMargin = false } = {}) => {
+    if (embedded) {
+      return (
+        <TouchableOpacity
+          style={[styles.embeddedPanelActionBtn, withTopMargin && styles.dashedActionButtonSpaced]}
+          onPress={handleOpenAddMaterialModal}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Add material"
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Plus size={18} color="#334155" strokeWidth={2.25} />
+          <Text style={styles.embeddedPanelActionBtnText}>Add material</Text>
+        </TouchableOpacity>
+      );
+    }
+
+    return (
+      <TouchableOpacity
+        style={[styles.dashedActionButton, withTopMargin && styles.dashedActionButtonSpaced]}
+        onPress={handleOpenAddMaterialModal}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="Upload material"
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <Upload size={16} color="#5AAEF2" strokeWidth={2.25} />
+        <Text style={styles.dashedActionButtonText}>Upload material</Text>
+      </TouchableOpacity>
+    );
+  };
 
   const renderMaterialsToolbar = () => (
-    <View style={styles.materialsToolbar}>
-      <Text style={styles.totalFilesText}>
-        {subjectLocked
-          ? `Materials (${libraryReady ? visibleMaterials.length : '—'})`
-          : `Total Materials (${libraryReady ? allMaterials.length : '—'})`}
+    <View style={[styles.materialsToolbar, embedded && styles.embeddedPanelToolbar]}>
+      <Text style={[styles.totalFilesText, embedded && styles.embeddedPanelTitle]}>
+        {embedded
+          ? 'Materials'
+          : subjectLocked
+            ? `Materials (${libraryReady ? visibleMaterials.length : '—'})`
+            : `Total Materials (${libraryReady ? allMaterials.length : '—'})`}
       </Text>
       {renderUploadMaterialButton()}
     </View>
@@ -990,7 +1036,7 @@ export default function MaterialsLibrary({
 
   const renderMaterialFilterChipRows = () => (
     <>
-      {!isChildViewer ? (
+      {showChildrenFilterRow ? (
         <View style={styles.childrenFilterRow}>
           <Text style={styles.childrenLabelText}>Children</Text>
           {effectiveChildren.length > 0 ? (
@@ -1362,7 +1408,7 @@ export default function MaterialsLibrary({
                 ? `Upload materials to connect artifacts to ${lockedSubjectName}.`
                 : 'Upload materials to connect artifacts to learning.'}
             </Text>
-            {renderUploadMaterialButton({ withTopMargin: true })}
+            {!embedded && renderUploadMaterialButton({ withTopMargin: true })}
           </View>
         </>
       ) : (
@@ -1791,8 +1837,8 @@ const styles = StyleSheet.create({
     minHeight: '100%',
   },
   containerEmbedded: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingHorizontal: 0,
+    paddingTop: 0,
     paddingBottom: 12,
     minHeight: 0,
   },
@@ -2870,6 +2916,46 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
     ...(Platform.OS === 'web' && {
       boxSizing: 'border-box',
+    }),
+  },
+  embeddedPanelToolbar: {
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 4,
+    gap: 12,
+  },
+  embeddedPanelTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1e293b',
+    letterSpacing: -0.2,
+    flex: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  embeddedPanelActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 9999,
+    borderWidth: 1,
+    borderColor: '#E6EBF2',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  embeddedPanelActionBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'rgba(15,23,42,0.85)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   dashedActionButton: {

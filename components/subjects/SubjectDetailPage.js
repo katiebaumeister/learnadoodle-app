@@ -508,7 +508,7 @@ export default function SubjectDetailPage({
   const [attendanceViewMode, setAttendanceViewMode] = useState('list');
   const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
   const [showAttendanceGapSuggestion, setShowAttendanceGapSuggestion] = useState(false);
-  const [classroomTab, setClassroomTab] = useState('classwork');
+  const [classroomTab, setClassroomTab] = useState('bulletin');
   const [highlightLessonId, setHighlightLessonId] = useState(null);
   const [highlightAssignmentId, setHighlightAssignmentId] = useState(null);
   const [showAttendanceSuggestionConfirmModal, setShowAttendanceSuggestionConfirmModal] = useState(false);
@@ -531,6 +531,11 @@ export default function SubjectDetailPage({
   });
   const gapPreviewRef = useRef(null);
   const pendingScheduleAllRef = useRef(false);
+
+  useEffect(() => {
+    setClassroomTab('bulletin');
+  }, [subjectId]);
+
   const [showEditUnitsModal, setShowEditUnitsModal] = useState(false);
   const [editUnitsInitialDraft, setEditUnitsInitialDraft] = useState(null);
   const [learningGoalsUnits, setLearningGoalsUnits] = useState(
@@ -3646,15 +3651,6 @@ export default function SubjectDetailPage({
                   <Edit2 size={18} color="#334155" strokeWidth={2.25} />
                   <Text style={styles.headerTopActionText}>Edit subject</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.headerTopActionBtn}
-                  onPress={handleCreateAssignment}
-                  accessibilityLabel="Add assignment"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Plus size={18} color="#334155" strokeWidth={2.25} />
-                  <Text style={styles.headerTopActionText}>Add assignment</Text>
-                </TouchableOpacity>
               </View>
             ) : null}
           </View>
@@ -3687,6 +3683,7 @@ export default function SubjectDetailPage({
               onOpenAssignment={openAssignedWorkItem}
               onManageUnits={openUnitsEditor}
               unitsActionLabel={unitsEditorLabel}
+              onCreateAssignment={handleCreateAssignment}
               onPlacementChanged={handleClassworkPlacementChanged}
               inlineUnitsEditing={isParentViewer}
               highlightLessonId={highlightLessonId}
@@ -3700,12 +3697,18 @@ export default function SubjectDetailPage({
           <View style={styles.bulletinBoardSection}>
             <MaterialsLibrary
               familyId={familyId}
-              children={children}
+              children={
+                assignedChildren.length > 0
+                  ? (children || []).filter((child) => assignedChildren.includes(String(child?.id)))
+                  : children
+              }
               preloadedSubjects={subject ? [subject] : []}
               preloadedMaterials={materials}
               lockedSubjectId={subject?.id || null}
               lockedSubjectName={subject?.name || null}
               hideSubjectFilter
+              hideChildrenFilter
+              scopedChildIds={assignedChildren}
               embedded
               sessionOverride={session}
               onMaterialsUpdate={() => {

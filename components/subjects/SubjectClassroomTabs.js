@@ -13,7 +13,7 @@ const LEAGUE_FONT = Platform.OS === 'web'
   : {};
 
 export default function SubjectClassroomTabs({
-  activeTab = 'classwork',
+  activeTab = 'bulletin',
   onChange,
 }) {
   return (
