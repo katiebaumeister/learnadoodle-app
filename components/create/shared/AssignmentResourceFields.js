@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, Platform } from 'react-native';
 import { FileText, X } from 'lucide-react';
 import EventAttachmentsField from './EventAttachmentsField';
+import MaterialDocViewerModal, { resolveMaterialDocViewerUrl } from '../../materials/MaterialDocViewerModal';
 import { getMaterials } from '../../../lib/services/materialsClient';
+import { useToast } from '../../Toast';
 import { createModalStyles as styles } from './createModalStyles';
 
 function normalizeIds(ids) {
@@ -17,7 +19,15 @@ export default function AssignmentResourceFields({
   onAddMaterial,
   hideLabel = false,
 }) {
+  const toast = useToast();
   const [materials, setMaterials] = useState([]);
+  const [openingMaterialId, setOpeningMaterialId] = useState(null);
+  const [viewerState, setViewerState] = useState({
+    visible: false,
+    url: '',
+    title: '',
+    kind: 'pdf',
+  });
   const selectedIds = useMemo(() => normalizeIds(materialIds), [materialIds]);
 
   useEffect(() => {
@@ -62,6 +72,34 @@ export default function AssignmentResourceFields({
     onMaterialIdsChange?.(selectedIds.filter((id) => String(id) !== String(materialId)));
   };
 
+  const closeMaterialViewer = useCallback(() => {
+    setViewerState({ visible: false, url: '', title: '', kind: 'pdf' });
+  }, []);
+
+  const openMaterialViewer = useCallback(async (materialId, fallbackTitle) => {
+    if (!materialId || openingMaterialId) return;
+    setOpeningMaterialId(String(materialId));
+    try {
+      const { url, title, error, viewerKind } = await resolveMaterialDocViewerUrl(materialId);
+      if (error || !url) {
+        const isInfo = error
+          && /cannot be viewed|does not have a viewable|isn’t available|isn't available|Preview isn’t/i.test(error);
+        toast.push(error || 'Could not open this attachment.', isInfo ? 'info' : 'error');
+        return;
+      }
+      setViewerState({
+        visible: true,
+        url,
+        title: title || fallbackTitle || 'Attachment',
+        kind: viewerKind || 'pdf',
+      });
+    } catch (_) {
+      toast.push('Failed to load attachment. Please try again.', 'error');
+    } finally {
+      setOpeningMaterialId(null);
+    }
+  }, [openingMaterialId, toast]);
+
   if (!familyId) return null;
 
   return (
@@ -79,23 +117,46 @@ export default function AssignmentResourceFields({
       {attachedMaterials.length > 0 ? (
         <View style={styles.attachmentChipList}>
           {attachedMaterials.map((material) => (
-            <View key={material.id} style={styles.attachmentChip}>
+            <TouchableOpacity
+              key={material.id}
+              style={[
+                styles.attachmentChip,
+                openingMaterialId === String(material.id) && styles.attachmentChipOpening,
+              ]}
+              onPress={() => openMaterialViewer(material.id, material.title)}
+              accessibilityRole="button"
+              accessibilityLabel={`View ${material.title}`}
+              activeOpacity={0.85}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
               <FileText size={14} color="#6BB3E8" />
               <Text style={styles.attachmentChipText} numberOfLines={1}>
                 {material.title}
               </Text>
               <TouchableOpacity
-                onPress={() => removeMaterial(material.id)}
+                onPress={(ev) => {
+                  if (ev?.stopPropagation) ev.stopPropagation();
+                  removeMaterial(material.id);
+                }}
                 accessibilityLabel={`Remove ${material.title}`}
                 accessibilityRole="button"
+                hitSlop={8}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
                 <X size={14} color="#94A3B8" />
               </TouchableOpacity>
-            </View>
+            </TouchableOpacity>
           ))}
         </View>
       ) : null}
+
+      <MaterialDocViewerModal
+        visible={viewerState.visible && !!viewerState.url}
+        onClose={closeMaterialViewer}
+        url={viewerState.url}
+        title={viewerState.title}
+        viewerKind={viewerState.kind}
+      />
     </View>
   );
 }

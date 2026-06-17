@@ -1937,7 +1937,7 @@ def _materialize_plan_year_curriculum_events(
 def _validate_manual_draft(draft: ManualDraftPayload) -> None:
     """Raise ValueError if draft is invalid."""
     if not draft.units:
-        raise ValueError("At least one unit is required.")
+        return
     for i, u in enumerate(draft.units):
         if not (u.title or "").strip():
             raise ValueError(f"Unit {i + 1} must have a title.")

@@ -1024,6 +1024,13 @@ export const createModalStyles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.18)',
+    ...(Platform.OS === 'web' ? {
+      transitionProperty: 'background-color, border-color',
+      transitionDuration: '120ms',
+    } : {}),
+  },
+  attachmentChipOpening: {
+    opacity: 0.7,
   },
   attachmentChipText: {
     flex: 1,

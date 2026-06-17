@@ -10,7 +10,7 @@ import React, {
 import { View, Text, TextInput, TouchableOpacity, Platform } from 'react-native';
 import { Bold, Italic, Underline, List } from 'lucide-react';
 import { createModalStyles as styles, PLACEHOLDER, ACCENT_TEXT, FG } from './createModalStyles';
-import { htmlToMarkdown, markdownToHtml } from '../../../lib/instructionTextFormat';
+import { cleanInstructionMarkdown, htmlToMarkdown, markdownToHtml } from '../../../lib/instructionTextFormat';
 
 const FORMAT_MODES = {
   bold: { wrapper: '**', emptyMarker: '****' },
@@ -263,7 +263,7 @@ function WebInstructionsEditor({
 
   const emitMarkdown = useCallback((el) => {
     if (!el) return '';
-    const markdown = htmlToMarkdown(el).replace(/\u200B/g, '');
+    const markdown = cleanInstructionMarkdown(htmlToMarkdown(el).replace(/\u200B/g, ''));
     syncPlaceholder(el);
     onChangeText?.(markdown);
     return markdown;
@@ -273,7 +273,7 @@ function WebInstructionsEditor({
     getMarkdown: () => {
       const el = editableRef.current;
       if (!el) return String(value ?? '');
-      return htmlToMarkdown(el).replace(/\u200B/g, '');
+      return cleanInstructionMarkdown(htmlToMarkdown(el).replace(/\u200B/g, ''));
     },
   }), [value]);
 

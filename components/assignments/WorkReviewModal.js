@@ -13,9 +13,10 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { X, Check, RotateCcw, Award, Link, Upload, Paperclip } from 'lucide-react';
+import { X, Check, RotateCcw, Save, Link, Upload, Paperclip } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { assignmentIsSubmittedLifecycle } from '../../lib/assignmentLifecycle';
 import { reviewAssignmentWork } from '../../lib/workAssignmentClient';
 import {
   extractStudentSubmissionText,
@@ -25,6 +26,7 @@ import {
   resolveQuizAnswerRows,
 } from '../../lib/workEventHelpers';
 import { createFileMaterial } from '../../lib/services/materialsClient';
+import FormattedInstructionText from '../create/shared/FormattedInstructionText';
 import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
 import AssignmentCommentsPanel from './AssignmentCommentsPanel';
 import { modalButtonStyles, MODAL_ACCENT_TEXT } from '../ui/modalButtonStyles';
@@ -281,7 +283,7 @@ export default function WorkReviewModal({
           <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>Instructions</Text>
-              <Text style={styles.bodyText}>{instructions}</Text>
+              <FormattedInstructionText text={instructions} style={styles.bodyText} />
             </View>
 
             {eventType === 'Project' && progressPercent != null ? (
@@ -442,15 +444,17 @@ export default function WorkReviewModal({
           </ScrollView>
 
           <View style={styles.footer}>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.sendBackButton]}
-              onPress={() => runReview('send_back')}
-              disabled={submitting}
-              {...(Platform.OS === 'web' && { cursor: submitting ? 'default' : 'pointer' })}
-            >
-              <RotateCcw size={15} color="#B45309" />
-              <Text style={styles.sendBackText}>Return for changes</Text>
-            </TouchableOpacity>
+            {assignmentIsSubmittedLifecycle(assignment) ? (
+              <TouchableOpacity
+                style={[styles.actionButton, styles.sendBackButton]}
+                onPress={() => runReview('send_back')}
+                disabled={submitting}
+                {...(Platform.OS === 'web' && { cursor: submitting ? 'default' : 'pointer' })}
+              >
+                <RotateCcw size={15} color="#B45309" />
+                <Text style={styles.sendBackText}>Return for changes</Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity
               style={[styles.actionButton, styles.approveButton]}
               onPress={() => runReview('approve')}
@@ -460,17 +464,15 @@ export default function WorkReviewModal({
               <Check size={15} color="#15803D" />
               <Text style={styles.approveText}>Mark complete</Text>
             </TouchableOpacity>
-            {workSpec?.graded !== false ? (
-              <TouchableOpacity
-                style={[styles.actionButton, modalButtonStyles.secondaryButtonCompact]}
-                onPress={() => runReview('grade')}
-                disabled={submitting}
-                {...(Platform.OS === 'web' && { cursor: submitting ? 'default' : 'pointer' })}
-              >
-                <Award size={15} color={MODAL_ACCENT_TEXT} />
-                <Text style={modalButtonStyles.secondaryButtonCompactText}>Grade</Text>
-              </TouchableOpacity>
-            ) : null}
+            <TouchableOpacity
+              style={[styles.actionButton, modalButtonStyles.secondaryButtonCompact]}
+              onPress={() => runReview('save')}
+              disabled={submitting}
+              {...(Platform.OS === 'web' && { cursor: submitting ? 'default' : 'pointer' })}
+            >
+              <Save size={15} color={MODAL_ACCENT_TEXT} />
+              <Text style={modalButtonStyles.secondaryButtonCompactText}>Save submission</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>

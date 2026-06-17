@@ -207,6 +207,8 @@ export default function ManualCurriculumBuilderModal({
   const [draftBuilderMovePickKey, setDraftBuilderMovePickKey] = useState(null);
   const [webDraftUnitMenuLayout, setWebDraftUnitMenuLayout] = useState(null);
   const [webDraftLessonMenuLayout, setWebDraftLessonMenuLayout] = useState(null);
+  const unitTitleInputRefs = useRef({});
+  const lessonTitleInputRefs = useRef({});
 
   const closeWebDraftUnitMenu = useCallback(() => {
     setWebDraftUnitMenuLayout(null);
@@ -218,6 +220,39 @@ export default function ManualCurriculumBuilderModal({
     setDraftBuilderLessonMenuKey(null);
     setDraftBuilderMovePickKey(null);
   }, []);
+
+  const focusUnitTitleInput = useCallback((unitIdx) => {
+    closeWebDraftUnitMenu();
+    setExpandedUnits((prev) => {
+      const next = new Set(prev);
+      next.add(unitIdx);
+      return next;
+    });
+    requestAnimationFrame(() => {
+      const node = unitTitleInputRefs.current[unitIdx];
+      node?.focus?.();
+      if (Platform.OS === 'web' && node?.select) {
+        node.select();
+      }
+    });
+  }, [closeWebDraftUnitMenu]);
+
+  const focusLessonTitleInput = useCallback((unitIdx, lessonIdx) => {
+    closeWebDraftLessonMenu();
+    setExpandedUnits((prev) => {
+      const next = new Set(prev);
+      next.add(unitIdx);
+      return next;
+    });
+    const key = `${unitIdx}-${lessonIdx}`;
+    requestAnimationFrame(() => {
+      const node = lessonTitleInputRefs.current[key];
+      node?.focus?.();
+      if (Platform.OS === 'web' && node?.select) {
+        node.select();
+      }
+    });
+  }, [closeWebDraftLessonMenu]);
 
   const resetDraft = useCallback(() => {
     setDraft({ title: null, units: [emptyUnit(1)] });
@@ -328,7 +363,6 @@ export default function ManualCurriculumBuilderModal({
 
   const deleteUnit = useCallback((unitIndex) => {
     patchDraft((prev) => {
-      if (prev.units.length <= 1) return prev;
       const units = resequenceDraftUnits(prev.units.filter((_, i) => i !== unitIndex));
       return { ...prev, units };
     });
@@ -339,7 +373,6 @@ export default function ManualCurriculumBuilderModal({
         if (idx > unitIndex) next.add(idx - 1);
         else next.add(idx);
       });
-      if (next.size === 0) next.add(0);
       return next;
     });
     closeWebDraftUnitMenu();
@@ -622,6 +655,13 @@ export default function ManualCurriculumBuilderModal({
           {...(Platform.OS === 'web' && { cursor: 'default' })}
         />
         <View style={[styles.menuPanel, { top: webDraftUnitMenuLayout.top, right: webDraftUnitMenuLayout.right }]}>
+          <TouchableOpacity
+            onPress={() => focusUnitTitleInput(unitIdx)}
+            style={styles.menuItem}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={styles.menuItemText}>{s('planMyYear.multiSubjectUnits.draftEditUnit')}</Text>
+          </TouchableOpacity>
           {unitIdx > 0 ? (
             <TouchableOpacity
               onPress={() => moveUnitFixed(unitIdx, -1)}
@@ -671,6 +711,15 @@ export default function ManualCurriculumBuilderModal({
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
             <Text style={styles.menuItemText}>{s('planMyYear.multiSubjectUnits.draftUnitAddUnitBelow')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => deleteUnit(unitIdx)}
+            style={styles.menuItem}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={[styles.menuItemText, { color: ERROR }]}>
+              {s('planMyYear.multiSubjectUnits.draftDeleteUnit')}
+            </Text>
           </TouchableOpacity>
         </View>
       </>,
@@ -733,6 +782,13 @@ export default function ManualCurriculumBuilderModal({
             </>
           ) : (
             <>
+              <TouchableOpacity
+                onPress={() => focusLessonTitleInput(unitIdx, lessonIdx)}
+                style={styles.menuItem}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.menuItemText}>{s('planMyYear.multiSubjectUnits.draftEditLesson')}</Text>
+              </TouchableOpacity>
               {lessonIdx > 0 ? (
                 <TouchableOpacity
                   onPress={() => moveLesson(unitIdx, lessonIdx, -1)}
@@ -937,7 +993,6 @@ export default function ManualCurriculumBuilderModal({
                   onDragLeave={onAssignmentDragLeave}
                   onDrop={Platform.OS === 'web' ? handleUnitEndDrop : undefined}
                   shouldAcceptDrag={Platform.OS === 'web' ? rejectLearningDayDrag : undefined}
-                  debugLabel={`draft-unit-${unitIdx}`}
                   {...restUnitDropProps}
                 >
                       <View style={styles.unitHeaderRow}>
@@ -958,6 +1013,10 @@ export default function ManualCurriculumBuilderModal({
                         </TouchableOpacity>
                         <View style={{ flex: 1, minWidth: 0 }}>
                           <TextInput
+                            ref={(node) => {
+                              if (node) unitTitleInputRefs.current[unitIdx] = node;
+                              else delete unitTitleInputRefs.current[unitIdx];
+                            }}
                             style={styles.unitTitleInput}
                             value={unit.title || ''}
                             onChangeText={(v) => updateUnit(unitIdx, 'title', v)}
@@ -981,6 +1040,9 @@ export default function ManualCurriculumBuilderModal({
                           </TouchableOpacity>
                           {draftBuilderUnitMenuKey === unitIdx && Platform.OS !== 'web' ? (
                             <View style={styles.inlineMenu}>
+                              <TouchableOpacity onPress={() => focusUnitTitleInput(unitIdx)} style={styles.menuItem}>
+                                <Text style={styles.menuItemText}>{s('planMyYear.multiSubjectUnits.draftEditUnit')}</Text>
+                              </TouchableOpacity>
                               {unitIdx > 0 ? (
                                 <TouchableOpacity onPress={() => moveUnitFixed(unitIdx, -1)} style={styles.menuItem}>
                                   <Text style={styles.menuItemText}>{s('courseStructure.manualBuilder.moveUp')}</Text>
@@ -997,13 +1059,19 @@ export default function ManualCurriculumBuilderModal({
                               <TouchableOpacity onPress={() => addDraftUnitBelowIndex(unitIdx)} style={styles.menuItem}>
                                 <Text style={styles.menuItemText}>{s('planMyYear.multiSubjectUnits.draftUnitAddUnitBelow')}</Text>
                               </TouchableOpacity>
+                              <TouchableOpacity onPress={() => deleteUnit(unitIdx)} style={styles.menuItem}>
+                                <Text style={[styles.menuItemText, { color: ERROR }]}>
+                                  {s('planMyYear.multiSubjectUnits.draftDeleteUnit')}
+                                </Text>
+                              </TouchableOpacity>
                             </View>
                           ) : null}
                         </View>
-                        {units.length > 1 ? (
+                        {units.length > 0 ? (
                           <TouchableOpacity
                             onPress={() => deleteUnit(unitIdx)}
                             style={{ padding: 4 }}
+                            accessibilityLabel={s('planMyYear.multiSubjectUnits.draftDeleteUnit')}
                             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                           >
                             <Trash2 size={16} color={ERROR} />
@@ -1032,7 +1100,6 @@ export default function ManualCurriculumBuilderModal({
                                   onDrop={Platform.OS === 'web' ? (ev) => handleLessonRowDrop(ev, lessonIdx) : undefined}
                                   shouldAcceptDrag={Platform.OS === 'web' ? lessonRowShouldAcceptDrag : undefined}
                                   dropCapture
-                                  debugLabel={`draft-lesson-${unitIdx}-${lessonIdx}`}
                                 >
                                   <View style={styles.lessonRowInner}>
                                     {Platform.OS === 'web' ? (
@@ -1077,6 +1144,11 @@ export default function ManualCurriculumBuilderModal({
                                     <Text style={styles.lessonBullet}>•</Text>
                                     <View style={styles.lessonTitleFieldWrap}>
                                       <TextInput
+                                        ref={(node) => {
+                                          const key = `${unitIdx}-${lessonIdx}`;
+                                          if (node) lessonTitleInputRefs.current[key] = node;
+                                          else delete lessonTitleInputRefs.current[key];
+                                        }}
                                         style={styles.lessonTitleInput}
                                         value={lesson.title || ''}
                                         onChangeText={(v) => updateLesson(unitIdx, lessonIdx, 'title', v)}
@@ -1102,6 +1174,14 @@ export default function ManualCurriculumBuilderModal({
                                       </TouchableOpacity>
                                       {lessonMenuOpen && Platform.OS !== 'web' ? (
                                         <View style={[styles.inlineMenu, { minWidth: 200 }]}>
+                                          <TouchableOpacity
+                                            onPress={() => focusLessonTitleInput(unitIdx, lessonIdx)}
+                                            style={styles.menuItem}
+                                          >
+                                            <Text style={styles.menuItemText}>
+                                              {s('planMyYear.multiSubjectUnits.draftEditLesson')}
+                                            </Text>
+                                          </TouchableOpacity>
                                           {lessonIdx > 0 ? (
                                             <TouchableOpacity onPress={() => moveLesson(unitIdx, lessonIdx, -1)} style={styles.menuItem}>
                                               <Text style={styles.menuItemText}>{s('courseStructure.manualBuilder.moveUp')}</Text>

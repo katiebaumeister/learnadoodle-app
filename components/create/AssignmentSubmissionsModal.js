@@ -16,6 +16,7 @@ import { Link, Upload, Paperclip } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { reviewAssignmentWork } from '../../lib/workAssignmentClient';
+import { assignmentIsSubmittedLifecycle } from '../../lib/assignmentLifecycle';
 import {
   extractStudentSubmissionText,
   getWorkStatusLabel,
@@ -30,6 +31,7 @@ import FamilyMemberPicker from './shared/FamilyMemberPicker';
 import { SectionHeading } from './shared/assignmentFormParts';
 import AssignmentSubmissionsFooter from './assignment/AssignmentSubmissionsFooter';
 import AssignmentCommentsPanel from '../assignments/AssignmentCommentsPanel';
+import FormattedInstructionText from './shared/FormattedInstructionText';
 import { createModalStyles as styles, CREATE_ASSIGNMENT_MODAL_MAX_WIDTH, PLACEHOLDER } from './shared/createModalStyles';
 
 export default function AssignmentSubmissionsModal({
@@ -132,6 +134,7 @@ export default function AssignmentSubmissionsModal({
     () => resolveQuizAnswerRows(workSpec, activeAssignment?.description),
     [workSpec, activeAssignment?.description],
   );
+  const showReturnForChanges = assignmentIsSubmittedLifecycle(activeAssignment);
 
   useEffect(() => {
     setFeedback(String(activeAssignment?.review_feedback || ''));
@@ -312,11 +315,12 @@ export default function AssignmentSubmissionsModal({
         disableShellScroll
         footer={(
           <AssignmentSubmissionsFooter
+            onCancel={onClose}
             onReturnForChanges={() => runReview('send_back')}
             onMarkComplete={() => runReview('approve')}
-            onGrade={() => runReview('grade')}
+            onSaveSubmission={() => runReview('save')}
             submitting={submitting}
-            showGrade={workSpec?.graded !== false}
+            showReturnForChanges={showReturnForChanges}
           />
         )}
       >
@@ -342,7 +346,10 @@ export default function AssignmentSubmissionsModal({
 
                   <View style={styles.assignmentPanelFormGroup}>
                     <SectionHeading>Instructions</SectionHeading>
-                    <Text style={submissionStyles.bodyText}>{instructions}</Text>
+                    <FormattedInstructionText
+                      text={instructions}
+                      style={submissionStyles.bodyText}
+                    />
                   </View>
 
                   <View style={styles.assignmentPanelFormGroup}>

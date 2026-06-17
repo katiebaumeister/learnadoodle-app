@@ -94,36 +94,8 @@ export default function AssignmentCommentsPanel({
   return (
     <View style={styles.wrap}>
       <Text style={styles.hint}>
-        Ask a question about this assignment. This thread is separate from direct messages.
+        Parents and students can comment here. This thread is only about this assignment—not direct messages.
       </Text>
-
-      {loading ? (
-        <ActivityIndicator size="small" color={colors.primary || '#887DEE'} style={styles.loader} />
-      ) : (
-        <ScrollView style={styles.thread} nestedScrollEnabled>
-          {messages.length === 0 ? (
-            <Text style={styles.emptyText}>No comments yet. Ask a question to get started.</Text>
-          ) : (
-            messages.map((msg) => {
-              const isMine =
-                (isParentViewer && msg.senderRole === 'parent')
-                || (!isParentViewer && msg.senderRole === 'child');
-              return (
-                <View
-                  key={msg.id}
-                  style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}
-                >
-                  <Text style={styles.bubbleRole}>
-                    {msg.senderRole === 'parent' ? 'Parent' : 'Student'}
-                    {msg.createdAt ? ` · ${formatWhen(msg.createdAt)}` : ''}
-                  </Text>
-                  <Text style={styles.bubbleBody}>{msg.body}</Text>
-                </View>
-              );
-            })
-          )}
-        </ScrollView>
-      )}
 
       {!readOnly && assignmentId ? (
         <View style={styles.composer}>
@@ -131,7 +103,7 @@ export default function AssignmentCommentsPanel({
             style={styles.input}
             value={draft}
             onChangeText={setDraft}
-            placeholder={isParentViewer ? 'Reply to student…' : 'Ask a question…'}
+            placeholder="Comment on this assignment…"
             placeholderTextColor={colors.muted || '#94A3B8'}
             multiline
             textAlignVertical="top"
@@ -140,6 +112,8 @@ export default function AssignmentCommentsPanel({
             style={[styles.sendBtn, (!draft.trim() || sending) && styles.sendBtnDisabled]}
             onPress={handleSend}
             disabled={!draft.trim() || sending}
+            accessibilityRole="button"
+            accessibilityLabel="Send comment"
             {...(Platform.OS === 'web' && { cursor: !draft.trim() || sending ? 'not-allowed' : 'pointer' })}
           >
             {sending ? (
@@ -151,6 +125,30 @@ export default function AssignmentCommentsPanel({
         </View>
       ) : null}
 
+      {loading ? (
+        <ActivityIndicator size="small" color={colors.primary || '#887DEE'} style={styles.loader} />
+      ) : messages.length > 0 ? (
+        <ScrollView style={styles.thread} nestedScrollEnabled>
+          {messages.map((msg) => {
+            const isMine =
+              (isParentViewer && msg.senderRole === 'parent')
+              || (!isParentViewer && msg.senderRole === 'child');
+            return (
+              <View
+                key={msg.id}
+                style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}
+              >
+                <Text style={styles.bubbleRole}>
+                  {msg.senderRole === 'parent' ? 'Parent' : 'Student'}
+                  {msg.createdAt ? ` · ${formatWhen(msg.createdAt)}` : ''}
+                </Text>
+                <Text style={styles.bubbleBody}>{msg.body}</Text>
+              </View>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+
       {error ? <Text style={styles.err}>{error}</Text> : null}
     </View>
   );
@@ -159,7 +157,6 @@ export default function AssignmentCommentsPanel({
 const styles = StyleSheet.create({
   wrap: {
     gap: 10,
-    minHeight: 200,
   },
   hint: {
     fontSize: 13,
@@ -215,9 +212,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-    paddingTop: 10,
   },
   input: {
     flex: 1,
