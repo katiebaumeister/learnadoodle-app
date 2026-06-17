@@ -11,7 +11,6 @@ import { Plus, ChevronLeft, ChevronRight, Users, CalendarDays } from 'lucide-rea
 import SubjectOverviewCard from '../subjects/SubjectOverviewCard';
 import { colors } from '../../theme/colors';
 
-const BRAND_SKY_BLUE = '#81C1E1';
 const BRAND_SKY_BLUE_TEXT = '#5AAEF2';
 
 export default function LearningSubjectsListView({
@@ -143,8 +142,15 @@ export default function LearningSubjectsListView({
           <Text style={styles.emptyTitle}>{emptyTitle}</Text>
           <Text style={styles.emptyText}>{emptyText}</Text>
           {canManageSubjects ? (
-            <TouchableOpacity style={[styles.addBtn, styles.emptyBtn]} onPress={onAddSubject}>
-              <Plus size={16} color={BRAND_SKY_BLUE_TEXT} />
+            <TouchableOpacity
+              style={[styles.addBtn, styles.emptyBtn]}
+              onPress={onAddSubject}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Add subject"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={16} color={BRAND_SKY_BLUE_TEXT} strokeWidth={2.25} />
               <Text style={styles.addBtnText}>Add subject</Text>
             </TouchableOpacity>
           ) : null}
@@ -242,14 +248,18 @@ const styles = StyleSheet.create({
   addBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
+    gap: 10,
+    minHeight: 42,
+    paddingHorizontal: 18,
+    borderRadius: 999,
     borderWidth: 1,
     borderStyle: 'dashed',
-    borderColor: BRAND_SKY_BLUE,
-    backgroundColor: 'rgba(255, 255, 255, 0.35)',
+    borderColor: '#9ED3FF',
+    backgroundColor: '#F8FCFF',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
   },
   addBtnText: {
     fontSize: 14,
@@ -325,15 +335,22 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#0F172A',
+    fontWeight: '600',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   emptyText: {
     fontSize: 14,
-    color: '#64748B',
+    color: '#6B7280',
     textAlign: 'center',
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   emptyBtn: {
-    marginTop: 12,
+    marginTop: 20,
   },
 });

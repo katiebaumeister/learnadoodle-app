@@ -521,6 +521,49 @@ export const createModalStyles = StyleSheet.create({
   fieldInputError: {
     borderBottomColor: '#ef4444',
   },
+  fieldInputReadOnly: {
+    opacity: 0.72,
+    color: MUTED,
+  },
+  skipSessionLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingVertical: 6,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  skipSessionLinkText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#B91C1C',
+  },
+  restoreSessionLinkText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#2563EB',
+  },
+  learningDaySummaryTitle: {
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '700',
+    color: FG,
+  },
+  learningDaySummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 6,
+  },
+  learningDaySummaryNames: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: MUTED,
+  },
   errorTextSmall: {
     color: '#ef4444',
     fontSize: 12,
@@ -531,6 +574,9 @@ export const createModalStyles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 16,
     marginTop: 6,
+  },
+  fieldLabelNoWrap: {
+    ...(Platform.OS === 'web' && { whiteSpace: 'nowrap' }),
   },
   validationBannerContainer: {
     backgroundColor: '#FEF2F2',
@@ -643,6 +689,40 @@ export const createModalStyles = StyleSheet.create({
       : {
           width: '48%',
           maxWidth: '48%',
+        }),
+  },
+  /** Learning day row: fixed-width start time (narrower than flex column). */
+  scheduleColumnLearningDayTime: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    minWidth: 0,
+    ...(Platform.OS === 'web'
+      ? {
+          width: 'calc((100% - 36px) / 5)',
+          maxWidth: 'calc((100% - 36px) / 5)',
+        }
+      : {
+          width: '22%',
+          maxWidth: '22%',
+        }),
+  },
+  /** Learning day row: duration column (wider than trailingColumn default). */
+  scheduleColumnLearningDayDuration: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    minWidth: 0,
+    ...(Platform.OS === 'web'
+      ? {
+          width: 'calc((100% - 36px) / 4)',
+          maxWidth: 'calc((100% - 36px) / 4)',
+          minWidth: 112,
+        }
+      : {
+          width: '30%',
+          maxWidth: '30%',
+          minWidth: 112,
         }),
   },
   scheduleColumnCompact: {

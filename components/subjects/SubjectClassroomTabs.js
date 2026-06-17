@@ -2,8 +2,9 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 
 const TABS = [
-  { id: 'classwork', label: 'Learning Schedule' },
   { id: 'bulletin', label: 'Bulletin Board' },
+  { id: 'classwork', label: 'Classwork' },
+  { id: 'materials', label: 'Materials' },
   { id: 'grades', label: 'Grades' },
 ];
 

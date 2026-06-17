@@ -47,7 +47,7 @@ import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { WebDragHandle, WebDropView, readWebDragPayload, writeWebDragPayload } from '../ui/webDragDrop';
 import ClassworkPlanningModal from './ClassworkPlanningModal';
 import ScheduleLessonModal from './ScheduleLessonModal';
-import { dispatchOpenLearningDayChoiceModal } from '../../lib/planner/learningDayModalNavigation';
+import { dispatchOpenLearningDayModal } from '../../lib/planner/learningDayModalNavigation';
 import { OPEN_SUBJECT_CLASSWORK_SCHEDULE_ALL } from '../../lib/subjectClassworkActions';
 import {
   CLASSWORK_FG,
@@ -533,7 +533,7 @@ function ClassworkPanelHeader({
 }) {
   return (
     <View style={styles.panelToolbar}>
-      <Text style={styles.panelTitle}>Learning Schedule</Text>
+      <Text style={styles.panelTitle}>Classwork</Text>
       {showAction ? (
         <TouchableOpacity
           style={styles.panelActionBtn}
@@ -661,7 +661,7 @@ export default function SubjectClassworkSection({
 
   const handleOpenLearningDay = useCallback((event) => {
     if (!event?.id) return;
-    dispatchOpenLearningDayChoiceModal({ event, eventId: event.id });
+    dispatchOpenLearningDayModal({ event, eventId: event.id });
   }, []);
 
   const handleScheduleLesson = useCallback(({ lesson, unit }) => {

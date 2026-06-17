@@ -108,7 +108,6 @@ import FamilyCreatePane from './create/FamilyCreatePane';
 import PlannerCreateMenu from './create/PlannerCreateMenu';
 import SubjectPickerModal from './create/SubjectPickerModal';
 import LearningDaySetupChoiceModal from './planner/LearningDaySetupChoiceModal';
-import { dispatchOpenSubjectClasswork, dispatchOpenSubjectSettings } from '../lib/subjectClassworkNavigation';
 import { PLANNER_EVENT_CATEGORIES } from '../lib/planner/plannerEventCategories';
 import { defaultPlannerExportColumnSelection, PLANNER_EXPORT_OPTIONAL_COLUMN_DEFS } from '../lib/plannerExportOptionalColumns';
 import { useHoverDropdown } from './ui/useHoverDropdown';
@@ -3161,6 +3160,51 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     setLearningDaySetupChoice({ visible: false, subject: null });
   }, []);
 
+  const resolveSubjectChildIds = useCallback((subject) => {
+    if (!subject) return [];
+    const ids = []
+      .concat(
+        Array.isArray(subject?.assignedChildren) ? subject.assignedChildren : [],
+        Array.isArray(subject?.assigned_children) ? subject.assigned_children : [],
+        Array.isArray(subject?.child_ids) ? subject.child_ids : [],
+        Array.isArray(subject?.childIds) ? subject.childIds : [],
+      )
+      .map((childId) => String(childId || '').trim())
+      .filter(Boolean);
+    if (subject?.child_id) {
+      ids.push(String(subject.child_id));
+    }
+    return [...new Set(ids)];
+  }, []);
+
+  const handleLearningDayOneOffEvent = useCallback(() => {
+    const subject = learningDaySetupChoice.subject;
+    closeLearningDaySetupChoice();
+    if (!subject?.id) return;
+    const childIds = resolveSubjectChildIds(subject);
+    openCreateModal('lesson', {
+      date: currentMonth,
+      subjectId: subject.id,
+      childIds,
+      title: subject.name,
+    });
+  }, [
+    closeLearningDaySetupChoice,
+    currentMonth,
+    learningDaySetupChoice.subject,
+    openCreateModal,
+    resolveSubjectChildIds,
+  ]);
+
+  const handleLearningDayEditSubjectSchedule = useCallback(() => {
+    const subject = learningDaySetupChoice.subject;
+    closeLearningDaySetupChoice();
+    if (!subject) return;
+    setEditingSubject(subject);
+    setEditSubjectSettingsInitialTab('schedule');
+    setShowEditSubjectSettingsModal(true);
+  }, [closeLearningDaySetupChoice, learningDaySetupChoice.subject]);
+
   const handleLearningDayCreateSubject = useCallback(() => {
     setShowLearningDaySubjectPicker(false);
     setEditingSubject(null);
@@ -4590,7 +4634,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         subjects={fullSubjects.length > 0 ? fullSubjects : subjects}
         children={children}
         title="Choose a subject"
-        subtitle="Pick the subject whose learning schedule you want to configure."
+        subtitle="Pick the subject you want to add learning days for."
         emptyMessage="No subjects yet. Create one to add learning days."
         onSelect={handleLearningDaySubjectSelect}
         onCreateNew={
@@ -4604,23 +4648,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         visible={learningDaySetupChoice.visible}
         subjectName={learningDaySetupChoice.subject?.name || 'Subject'}
         onClose={closeLearningDaySetupChoice}
-        onEditSchedule={() => {
-          const subject = learningDaySetupChoice.subject;
-          closeLearningDaySetupChoice();
-          if (!subject) return;
-          setEditingSubject(subject);
-          setEditSubjectSettingsInitialTab('schedule');
-          setShowEditSubjectSettingsModal(true);
-        }}
-        onOpenLearningSchedule={() => {
-          const subject = learningDaySetupChoice.subject;
-          closeLearningDaySetupChoice();
-          if (!subject?.id) return;
-          dispatchOpenSubjectClasswork({
-            subjectId: subject.id,
-            tab: 'classwork',
-          });
-        }}
+        onOneOffLearningEvent={handleLearningDayOneOffEvent}
+        onEditSubjectSchedule={handleLearningDayEditSubjectSchedule}
       />
 
       <SubjectUnitsEditorHost familyId={familyId} />

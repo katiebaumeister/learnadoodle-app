@@ -81,6 +81,7 @@ import EditSubjectUnitsModal from './EditSubjectUnitsModal';
 import { draftFromCurriculumStructure } from '../../lib/subjectUnitsEditorDraft';
 import SubjectClassroomTabs from './SubjectClassroomTabs';
 import SubjectClassworkSection from './SubjectClassworkSection';
+import MaterialsLibrary from '../materials/MaterialsLibrary';
 import SubjectClassworkSmartActions from './SubjectClassworkSmartActions';
 import SubjectGradesPanel from './SubjectGradesPanel';
 import SubjectGapAnalysisModal from './SubjectGapAnalysisModal';
@@ -1050,8 +1051,11 @@ export default function SubjectDetailPage({
       materialHighlightTimeoutRef.current = null;
     }, 2200);
     if (!SHOW_SUBJECT_MATERIALS_SECTION) {
-      handleMaterialChipPress(matched);
-      return undefined;
+      setClassroomTab('materials');
+      const t = setTimeout(() => {
+        handleMaterialChipPress(matched);
+      }, 260);
+      return () => clearTimeout(t);
     }
     scrollToSection('materials-section');
     const t = setTimeout(() => {
@@ -3537,6 +3541,7 @@ export default function SubjectDetailPage({
 
   const isFixedTabLayout = classroomTab === 'bulletin'
     || classroomTab === 'classwork'
+    || classroomTab === 'materials'
     || classroomTab === 'grades';
   const PageScroll = isFixedTabLayout ? View : ScrollView;
 
@@ -3687,6 +3692,25 @@ export default function SubjectDetailPage({
               highlightLessonId={highlightLessonId}
               highlightAssignmentId={highlightAssignmentId}
               onSchedulingAllChange={setClassworkSchedulingAll}
+            />
+          </View>
+        ) : null}
+
+        {classroomTab === 'materials' ? (
+          <View style={styles.bulletinBoardSection}>
+            <MaterialsLibrary
+              familyId={familyId}
+              children={children}
+              preloadedSubjects={subject ? [subject] : []}
+              preloadedMaterials={materials}
+              lockedSubjectId={subject?.id || null}
+              lockedSubjectName={subject?.name || null}
+              hideSubjectFilter
+              embedded
+              sessionOverride={session}
+              onMaterialsUpdate={() => {
+                loadSubjectDetail({ silent: true });
+              }}
             />
           </View>
         ) : null}

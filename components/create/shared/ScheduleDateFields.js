@@ -16,6 +16,7 @@ export default function ScheduleDateFields({
   endTime = '',
   onEndTimeChange = null,
   showTimes = true,
+  showEndTime = true,
   onOpenStartDatePicker = null,
   onOpenEndDatePicker = null,
   startDateError = null,
@@ -23,6 +24,8 @@ export default function ScheduleDateFields({
   timeError = null,
   trailingContent = null,
   matchEventModalDateWidth = false,
+  timeColumnStyle = null,
+  trailingColumnStyle = null,
   endDateRequired = false,
 }) {
   const handleStartPrev = () => onStartDateChange?.(addDays(startDate, -1));
@@ -30,6 +33,8 @@ export default function ScheduleDateFields({
   const dateColumnStyle = matchEventModalDateWidth
     ? styles.scheduleColumnEventDate
     : styles.scheduleColumn;
+  const startTimeColumnStyle = timeColumnStyle || styles.scheduleColumn;
+  const trailingWrapStyle = trailingColumnStyle || styles.scheduleTrailingColumn;
 
   return (
     <View style={styles.formGroup}>
@@ -86,9 +91,9 @@ export default function ScheduleDateFields({
           </View>
         ) : null}
 
-        {showTimes && onStartTimeChange && onEndTimeChange ? (
+        {showTimes && onStartTimeChange && (showEndTime ? onEndTimeChange : true) ? (
           <>
-            <View style={styles.scheduleColumn}>
+            <View style={startTimeColumnStyle}>
               <Text style={styles.fieldLabel}>Start time</Text>
               <MaskedTimeInput
                 value={startTime}
@@ -99,22 +104,24 @@ export default function ScheduleDateFields({
                 hasError={!!timeError}
               />
             </View>
-            <View style={styles.scheduleColumn}>
-              <Text style={styles.fieldLabel}>End time</Text>
-              <MaskedTimeInput
-                value={endTime}
-                onChangeText={onEndTimeChange}
-                placeholder="Optional"
-                placeholderTextColor={PLACEHOLDER}
-                wrapStyle={styles.scheduleTimeInputWrap}
-                hasError={!!timeError}
-              />
-            </View>
+            {showEndTime && onEndTimeChange ? (
+              <View style={styles.scheduleColumn}>
+                <Text style={styles.fieldLabel}>End time</Text>
+                <MaskedTimeInput
+                  value={endTime}
+                  onChangeText={onEndTimeChange}
+                  placeholder="Optional"
+                  placeholderTextColor={PLACEHOLDER}
+                  wrapStyle={styles.scheduleTimeInputWrap}
+                  hasError={!!timeError}
+                />
+              </View>
+            ) : null}
           </>
         ) : null}
 
         {trailingContent ? (
-          <View style={styles.scheduleTrailingColumn}>
+          <View style={trailingWrapStyle}>
             {trailingContent}
           </View>
         ) : null}

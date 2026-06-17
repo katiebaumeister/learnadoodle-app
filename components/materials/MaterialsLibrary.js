@@ -81,7 +81,14 @@ export default function MaterialsLibrary({
   sessionOverride = null,
   currentChildId = null,
   viewerRole = null,
+  lockedSubjectId = null,
+  lockedSubjectName = null,
+  hideSubjectFilter = false,
+  embedded = false,
 }) {
+  const subjectLocked = Boolean(lockedSubjectId);
+  const showSubjectFilterRow = !hideSubjectFilter && !subjectLocked;
+
   const toast = useToast();
   const sessionFromContext = useSession();
   const session = sessionOverride || sessionFromContext;
@@ -155,7 +162,7 @@ export default function MaterialsLibrary({
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedChildId, setSelectedChildId] = useState(''); // '' = all
-  const [selectedSubjectId, setSelectedSubjectId] = useState(null);
+  const [selectedSubjectId, setSelectedSubjectId] = useState(lockedSubjectId || null);
   const [subjects, setSubjects] = useState(preloadedSubjects || []); // Deduplicated for filter display
   const [allSubjectsForModal, setAllSubjectsForModal] = useState([]); // Full list with child_id for AddMaterialModal
   const [sortBy, setSortBy] = useState('date'); // 'date' | 'alphabetical'
@@ -173,6 +180,13 @@ export default function MaterialsLibrary({
     if (!isChildViewer || !forcedChildId) return;
     setSelectedChildId((prev) => (prev === forcedChildId ? prev : forcedChildId));
   }, [isChildViewer, forcedChildId]);
+
+  useEffect(() => {
+    if (!lockedSubjectId) return;
+    setSelectedSubjectId((prev) => (
+      String(prev || '') === String(lockedSubjectId) ? prev : lockedSubjectId
+    ));
+  }, [lockedSubjectId]);
 
   // Keep provider awareness for Import Drive + AddMaterialModal props,
   // even though the visible Connections filter row was removed.
@@ -395,6 +409,8 @@ export default function MaterialsLibrary({
                        allSubjectsForModal.find(s => s.id === selectedSubjectId);
         if (subject) {
           filters.subject_key = subject.name;
+        } else if (subjectLocked && lockedSubjectName) {
+          filters.subject_key = lockedSubjectName;
         }
       }
 
@@ -943,28 +959,30 @@ export default function MaterialsLibrary({
   // Materials with storage_path should use normalizeUpload logic, others use normalizeMaterial
   const visibleMaterials = materials;
 
-  const hasNoMaterials = libraryReady && allMaterials.length === 0;
+  const hasNoMaterials = libraryReady && (subjectLocked ? visibleMaterials.length === 0 : allMaterials.length === 0);
   const nothingVisible = visibleMaterials.length === 0;
 
-  /** Children / Subjects filter rows — shared by empty library hero and file list. */
-  const renderUploadMaterialButton = () => (
+  /** Dashed light-blue CTA — matches Subjects empty-state “Add” button. */
+  const renderUploadMaterialButton = ({ withTopMargin = false } = {}) => (
     <TouchableOpacity
-      style={styles.uploadMaterialButton}
+      style={[styles.dashedActionButton, withTopMargin && styles.dashedActionButtonSpaced]}
       onPress={handleOpenAddMaterialModal}
       activeOpacity={0.85}
       accessibilityRole="button"
       accessibilityLabel="Upload material"
       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
     >
-      <Upload size={18} color="#334155" strokeWidth={2.25} />
-      <Text style={styles.uploadMaterialButtonText}>Upload material</Text>
+      <Upload size={16} color="#5AAEF2" strokeWidth={2.25} />
+      <Text style={styles.dashedActionButtonText}>Upload material</Text>
     </TouchableOpacity>
   );
 
   const renderMaterialsToolbar = () => (
     <View style={styles.materialsToolbar}>
       <Text style={styles.totalFilesText}>
-        Total Materials ({libraryReady ? allMaterials.length : '—'})
+        {subjectLocked
+          ? `Materials (${libraryReady ? visibleMaterials.length : '—'})`
+          : `Total Materials (${libraryReady ? allMaterials.length : '—'})`}
       </Text>
       {renderUploadMaterialButton()}
     </View>
@@ -987,7 +1005,7 @@ export default function MaterialsLibrary({
                   style={[styles.childrenFilterChip, !selectedChildId && styles.childrenFilterChipActive]}
                   onPress={() => {
                     setSelectedChildId('');
-                    setSelectedSubjectId(null);
+                    if (!subjectLocked) setSelectedSubjectId(null);
                   }}
                 >
                   <Text style={[styles.childrenFilterChipText, !selectedChildId && styles.childrenFilterChipTextActive]}>
@@ -1003,7 +1021,7 @@ export default function MaterialsLibrary({
                       style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
                       onPress={() => {
                         setSelectedChildId(isActive ? '' : child.id);
-                        setSelectedSubjectId(null);
+                        if (!subjectLocked) setSelectedSubjectId(null);
                       }}
                     >
                       <View style={styles.childrenFilterChipAvatarWrap}>
@@ -1027,53 +1045,55 @@ export default function MaterialsLibrary({
         </View>
       ) : null}
 
-      <View
-        style={[
-          styles.subjectsFilterRow,
-          isSelfManagedStudentViewer && styles.subjectsFilterRowSelfManaged,
-        ]}
-      >
-        <Text style={styles.subjectsLabelText}>Subjects</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.subjectsFilterScroll}
-          contentContainerStyle={styles.subjectsFilterScrollContent}
+      {showSubjectFilterRow ? (
+        <View
+          style={[
+            styles.subjectsFilterRow,
+            isSelfManagedStudentViewer && styles.subjectsFilterRowSelfManaged,
+          ]}
         >
-          <TouchableOpacity
-            style={[styles.childrenFilterChip, !selectedSubjectId && styles.childrenFilterChipActive]}
-            onPress={() => {
-              setSelectedSubjectId(null);
-            }}
+          <Text style={styles.subjectsLabelText}>Subjects</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.subjectsFilterScroll}
+            contentContainerStyle={styles.subjectsFilterScrollContent}
           >
-            <Text style={[styles.childrenFilterChipText, !selectedSubjectId && styles.childrenFilterChipTextActive]}>
-              All Subjects
-            </Text>
-          </TouchableOpacity>
-          {subjects
-            .filter((s) => {
-              if (!selectedChildId) return true;
-              const subjectChildIds = parseChildIds(s.child_id || '');
-              return subjectChildIds.length === 0 || subjectChildIds.includes(selectedChildId);
-            })
-            .map((subject) => {
-              const isActive = selectedSubjectId === subject.id;
-              return (
-                <TouchableOpacity
-                  key={subject.id}
-                  style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
-                  onPress={() => {
-                    setSelectedSubjectId(isActive ? null : subject.id);
-                  }}
-                >
-                  <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
-                    {subject.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-        </ScrollView>
-      </View>
+            <TouchableOpacity
+              style={[styles.childrenFilterChip, !selectedSubjectId && styles.childrenFilterChipActive]}
+              onPress={() => {
+                setSelectedSubjectId(null);
+              }}
+            >
+              <Text style={[styles.childrenFilterChipText, !selectedSubjectId && styles.childrenFilterChipTextActive]}>
+                All Subjects
+              </Text>
+            </TouchableOpacity>
+            {subjects
+              .filter((s) => {
+                if (!selectedChildId) return true;
+                const subjectChildIds = parseChildIds(s.child_id || '');
+                return subjectChildIds.length === 0 || subjectChildIds.includes(selectedChildId);
+              })
+              .map((subject) => {
+                const isActive = selectedSubjectId === subject.id;
+                return (
+                  <TouchableOpacity
+                    key={subject.id}
+                    style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
+                    onPress={() => {
+                      setSelectedSubjectId(isActive ? null : subject.id);
+                    }}
+                  >
+                    <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
+                      {subject.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+          </ScrollView>
+        </View>
+      ) : null}
 
     </>
   );
@@ -1239,7 +1259,7 @@ export default function MaterialsLibrary({
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, embedded && styles.containerEmbedded]}>
       <View style={styles.mainContent}>
 
       {/* Deleted (trash) bin */}
@@ -1338,17 +1358,11 @@ export default function MaterialsLibrary({
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyTitle}>No materials yet</Text>
             <Text style={styles.emptyText}>
-              Upload materials to connect artifacts to learning.
+              {subjectLocked && lockedSubjectName
+                ? `Upload materials to connect artifacts to ${lockedSubjectName}.`
+                : 'Upload materials to connect artifacts to learning.'}
             </Text>
-            <TouchableOpacity
-              style={[styles.uploadMaterialButton, styles.emptyUploadButton]}
-              onPress={handleOpenAddMaterialModal}
-              activeOpacity={0.85}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Upload size={18} color="#334155" strokeWidth={2.25} />
-              <Text style={styles.uploadMaterialButtonText}>Upload material</Text>
-            </TouchableOpacity>
+            {renderUploadMaterialButton({ withTopMargin: true })}
           </View>
         </>
       ) : (
@@ -1625,6 +1639,8 @@ export default function MaterialsLibrary({
         defaultChildId={isChildViewer ? forcedChildId : null}
         allSubjects={allSubjectsForModal}
         defaultRole={addModalDefaultRole}
+        defaultSubjectId={lockedSubjectId || null}
+        defaultSubjectName={lockedSubjectName || null}
         connectedProviderIds={resolvedConnectedAccountProviders}
       />
 
@@ -1773,6 +1789,12 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 24,
     minHeight: '100%',
+  },
+  containerEmbedded: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
+    minHeight: 0,
   },
   mainContent: {
     flex: 1,
@@ -2850,25 +2872,29 @@ const styles = StyleSheet.create({
       boxSizing: 'border-box',
     }),
   },
-  uploadMaterialButton: {
+  dashedActionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 9999,
+    gap: 10,
+    minHeight: 42,
+    paddingHorizontal: 18,
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#E6EBF2',
+    borderStyle: 'dashed',
+    borderColor: '#9ED3FF',
+    backgroundColor: '#F8FCFF',
     flexShrink: 0,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
   },
-  uploadMaterialButtonText: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: 'rgba(15,23,42,0.85)',
+  dashedActionButtonSpaced: {
+    marginTop: 20,
+  },
+  dashedActionButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#5AAEF2',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -3473,7 +3499,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 60,
-    paddingHorizontal: 0,
+    paddingHorizontal: 24,
   },
   emptyTitle: {
     fontSize: 18,
@@ -3491,33 +3517,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 900,
     lineHeight: 20,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  emptyUploadButton: {
-    marginTop: 28,
-  },
-  emptyButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 20,
-    minHeight: 42,
-    paddingHorizontal: 18,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: '#9ED3FF',
-    backgroundColor: '#F8FCFF',
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  emptyButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#5AAEF2',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

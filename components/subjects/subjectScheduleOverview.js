@@ -204,3 +204,9 @@ export function buildSubjectScheduleOverview({ planData, subjectId, subjectEvent
     nextScheduledEvent: nextEntry?.event || null,
   };
 }
+
+export function formatSubjectScheduleSummaryLine(planData, subjectId) {
+  if (!planData || !subjectId) return null;
+  const { daysLabel, timeLine } = buildSubjectScheduleOverview({ planData, subjectId });
+  return [daysLabel, timeLine].filter(Boolean).join(' · ') || null;
+}

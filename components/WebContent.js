@@ -44,12 +44,10 @@ import {
 } from '../lib/subjectClassworkNavigation'
 import {
   enrichLearningDayEvent,
-  dispatchOpenLearningDayChoiceModal,
+  dispatchOpenLearningDayModal,
   OPEN_LEARNING_DAY_MODAL_EVENT,
-  OPEN_LEARNING_DAY_CHOICE_EVENT,
   learningDayEventSelectFields,
 } from '../lib/planner/learningDayModalNavigation'
-import LearningDayChoiceModal from './planner/LearningDayChoiceModal'
 import LearningDayModal from './planner/LearningDayModal'
 
 /** Lucide paths — same as MaterialsLibrary context menu (visual parity). */
@@ -5380,11 +5378,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     event: null,
     options: {},
   })
-  const [learningDayChoicePrompt, setLearningDayChoicePrompt] = useState({
-    visible: false,
-    event: null,
-    options: {},
-  })
   const [learningDayModalState, setLearningDayModalState] = useState({
     visible: false,
     event: null,
@@ -5399,15 +5392,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
     window.dispatchEvent(new CustomEvent('openEventModal', { detail }));
   }, []);
-  const closeLearningDayChoicePrompt = useCallback(() => {
-    setLearningDayChoicePrompt({ visible: false, event: null, options: {} });
-  }, []);
   const closeLearningDayModal = useCallback(() => {
     setLearningDayModalState({ visible: false, event: null });
-  }, []);
-  const openLearningDayModal = useCallback((event) => {
-    if (!event?.id) return;
-    setLearningDayModalState({ visible: true, event });
   }, []);
   const handleLearningDaySaved = useCallback(({ event: savedEvent } = {}) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -5440,35 +5426,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       setLearningDayModalState({ visible: true, event: enriched });
     };
 
-    const handleOpenLearningDayChoice = async (event) => {
-      const detail = event.detail || {};
-      let row = detail.event || null;
-      const eventId = detail.eventId || row?.id || null;
-      if (!row && eventId && familyId) {
-        try {
-          let query = supabase
-            .from('events')
-            .select(learningDayEventSelectFields())
-            .eq('id', String(eventId));
-          query = query.eq('family_id', familyId);
-          const { data: fetched, error } = await query.maybeSingle();
-          if (!error && fetched) row = fetched;
-        } catch (_) {}
-      }
-      if (!row?.id) return;
-      const enriched = await enrichLearningDayEvent({ supabase, familyId, event: row });
-      setLearningDayChoicePrompt({
-        visible: true,
-        event: enriched,
-        options: {},
-      });
-    };
-
     window.addEventListener(OPEN_LEARNING_DAY_MODAL_EVENT, handleOpenLearningDayModal);
-    window.addEventListener(OPEN_LEARNING_DAY_CHOICE_EVENT, handleOpenLearningDayChoice);
     return () => {
       window.removeEventListener(OPEN_LEARNING_DAY_MODAL_EVENT, handleOpenLearningDayModal);
-      window.removeEventListener(OPEN_LEARNING_DAY_CHOICE_EVENT, handleOpenLearningDayChoice);
     };
   }, [familyId]);
   const openEventEditorWithScopePrompt = useCallback(async (ev, options = {}) => {
@@ -5478,7 +5438,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       return;
     }
     if (getPlannerEventCategory(ev) === 'Learning day') {
-      dispatchOpenLearningDayChoiceModal({ event: ev, eventId: ev.id });
+      dispatchOpenLearningDayModal({ event: ev, eventId: ev.id });
       return;
     }
     const cleanId = cleanPlannerEventId(String(ev.id || ''));
@@ -6328,6 +6288,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       };
       const schoolworkEvent = isSchoolWorkEventType(ev?.event_type || ev?.type || '');
       const isSeriesGroup = isDeletableSeriesGroup(ev);
+      const isLearningDay = getPlannerEventCategory(ev) === 'Learning day';
       if (isChildViewer && isRestrictedChild) {
         if (schoolworkEvent) {
           if (!hideChildHelpAndSubmissionActions) {
@@ -6339,7 +6300,16 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           }
         }
       } else {
-        if (isSeriesGroup) {
+        if (isLearningDay) {
+          menuItems.push({
+            text: 'Edit learning day',
+            iconKey: 'edit2',
+            action: async () => {
+              const enriched = await enrichLearningDayEvent({ supabase, familyId, event: ev });
+              dispatchOpenLearningDayModal({ event: enriched, eventId: enriched?.id });
+            },
+          });
+        } else if (isSeriesGroup) {
           menuItems.push({
             text: 'Edit This Event',
             iconKey: 'edit2',
@@ -6376,7 +6346,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
         if (isSeriesGroup) {
           menuItems.push({
-            text: 'Delete This Event',
+            text: isLearningDay ? 'Delete this learning day' : 'Delete This Event',
             isDelete: true,
             iconKey: 'trash2',
             action: () => {
@@ -6385,8 +6355,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               const cleanId = cleanPlannerEventId(eventId || '');
               setConfirm({
                 visible: true,
-                title: 'Delete this occurrence?',
-                message: 'Are you sure you want to delete only this occurrence?',
+                title: isLearningDay ? 'Delete this learning day?' : 'Delete this occurrence?',
+                message: isLearningDay
+                  ? 'Remove only this session from the calendar?'
+                  : 'Are you sure you want to delete only this occurrence?',
                 confirmLabel: 'Delete',
                 cancelLabel: 'Cancel',
                 destructive: true,
@@ -6419,7 +6391,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             },
           });
           menuItems.push({
-            text: 'Delete Series',
+            text: isLearningDay ? 'Delete all sessions' : 'Delete Series',
             isDelete: true,
             iconKey: 'trash2',
             action: () => {
@@ -6428,9 +6400,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               const cleanId = cleanPlannerEventId(eventId || '');
               setConfirm({
                 visible: true,
-                title: 'Delete all in series?',
-                message: 'Are you sure you want to delete all occurrences in this series?',
-                confirmLabel: 'Delete series',
+                title: isLearningDay ? 'Delete all sessions?' : 'Delete all in series?',
+                message: isLearningDay
+                  ? 'Remove every session generated from this subject schedule?'
+                  : 'Are you sure you want to delete all occurrences in this series?',
+                confirmLabel: isLearningDay ? 'Delete all sessions' : 'Delete series',
                 cancelLabel: 'Cancel',
                 destructive: true,
                 onConfirm: async () => {
@@ -6462,7 +6436,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           });
         } else {
           menuItems.push({
-            text: 'Delete Event',
+            text: isLearningDay ? 'Delete this learning day' : 'Delete Event',
             isDelete: true,
             iconKey: 'trash2',
             action: () => {
@@ -6471,8 +6445,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               const cleanId = cleanPlannerEventId(eventId || '');
               setConfirm({
                 visible: true,
-                title: 'Delete event?',
-                message: 'Are you sure you want to delete this event?',
+                title: isLearningDay ? 'Delete this learning day?' : 'Delete event?',
+                message: isLearningDay
+                  ? 'Remove this session from the calendar?'
+                  : 'Are you sure you want to delete this event?',
                 confirmLabel: 'Delete',
                 cancelLabel: 'Cancel',
                 destructive: true,
@@ -11229,39 +11205,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
-      <LearningDayChoiceModal
-        visible={learningDayChoicePrompt.visible}
-        event={learningDayChoicePrompt.event}
-        subjects={propFullSubjects || []}
-        onClose={closeLearningDayChoicePrompt}
-        onEditSchedule={() => {
-          const event = learningDayChoicePrompt.event;
-          closeLearningDayChoicePrompt();
-          const subjectId = resolveEventSubjectId(event);
-          if (!subjectId) return;
-          const subjectRow = (propFullSubjects || []).find((row) => String(row?.id) === String(subjectId))
-            || {
-              id: subjectId,
-              name: event?.title || event?.subject_name || event?.subjectName || 'Subject',
-            };
-          dispatchOpenSubjectSettings({ subject: subjectRow, initialTab: 'schedule' });
-        }}
-        onEditLearningDay={() => {
-          const event = learningDayChoicePrompt.event;
-          closeLearningDayChoicePrompt();
-          openLearningDayModal(event);
-        }}
-        onViewClasswork={() => {
-          const event = learningDayChoicePrompt.event;
-          closeLearningDayChoicePrompt();
-          const subjectId = resolveEventSubjectId(event);
-          if (!subjectId) return;
-          dispatchOpenSubjectClasswork({
-            subjectId,
-            lessonId: event?.curriculum_lesson_id != null ? String(event.curriculum_lesson_id) : null,
-          });
-        }}
-      />
       <LearningDayModal
         visible={learningDayModalState.visible}
         event={learningDayModalState.event}

@@ -4,12 +4,14 @@ import {
   View,
   Text,
   TouchableOpacity,
-  StyleSheet,
   Platform,
 } from 'react-native';
-import { BookOpen, Calendar, X } from 'lucide-react';
+import { CalendarDays, CalendarPlus } from 'lucide-react';
+import CreateModalShell from '../create/shared/CreateModalShell';
+import { ModalFooter } from '../ui/ModalFooter';
+import { createModalStyles as styles, FG, MUTED } from '../create/shared/createModalStyles';
 
-function ActionRow({
+function ChoiceCard({
   icon: Icon,
   label,
   subtitle,
@@ -19,18 +21,18 @@ function ActionRow({
   return (
     <TouchableOpacity
       onPress={onPress}
-      style={[styles.actionRow, primary ? styles.actionRowPrimary : styles.actionRowSecondary]}
-      activeOpacity={0.85}
+      style={[choiceStyles.card, primary ? choiceStyles.cardPrimary : choiceStyles.cardSecondary]}
+      activeOpacity={0.88}
       accessibilityRole="button"
       accessibilityLabel={label}
-      {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
+      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
     >
-      <View style={[styles.actionIconWrap, primary ? styles.actionIconPrimary : styles.actionIconSecondary]}>
-        <Icon size={18} color={primary ? '#1D4ED8' : '#475569'} />
+      <View style={[choiceStyles.iconWrap, primary ? choiceStyles.iconWrapPrimary : choiceStyles.iconWrapSecondary]}>
+        <Icon size={18} color={primary ? '#2563EB' : FG} strokeWidth={2.1} />
       </View>
-      <View style={styles.actionTextWrap}>
-        <Text style={[styles.actionLabel, primary && styles.actionLabelPrimary]}>{label}</Text>
-        {subtitle ? <Text style={styles.actionSubtitle}>{subtitle}</Text> : null}
+      <View style={choiceStyles.textWrap}>
+        <Text style={[choiceStyles.label, primary && choiceStyles.labelPrimary]}>{label}</Text>
+        {subtitle ? <Text style={choiceStyles.subtitle}>{subtitle}</Text> : null}
       </View>
     </TouchableOpacity>
   );
@@ -40,168 +42,128 @@ export default function LearningDaySetupChoiceModal({
   visible,
   subjectName = 'Subject',
   onClose,
-  onEditSchedule,
-  onOpenLearningSchedule,
+  onOneOffLearningEvent,
+  onEditSubjectSchedule,
 }) {
   if (!visible) return null;
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={(e) => e?.stopPropagation?.()}
-          style={styles.card}
-        >
-          <View style={styles.headerRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.title}>{subjectName}</Text>
-              <Text style={styles.subtitle}>Add learning days</Text>
-            </View>
-            <TouchableOpacity
-              onPress={onClose}
-              style={styles.closeBtn}
-              accessibilityLabel="Close"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <X size={20} color="#64748B" />
-            </TouchableOpacity>
-          </View>
+      <CreateModalShell
+        title={subjectName}
+        onClose={onClose}
+        maxWidth={460}
+        shellStyle={styles.compactShell}
+        titleRowStyle={styles.compactTitleRow}
+        bodyStyle={styles.shellBody}
+        footer={(
+          <ModalFooter
+            mode="edit"
+            primaryLabel="Close"
+            onCancel={onClose}
+            onPrimary={onClose}
+            accent="#9ECFFB"
+          />
+        )}
+      >
+        <Text style={styles.fieldHint}>Add learning days</Text>
+        <Text style={choiceStyles.prompt}>
+          Add a single session on any date, or set up the recurring class schedule for this subject.
+        </Text>
 
-          <Text style={styles.prompt}>
-            Set up the recurring class schedule, or plan lessons on sessions that already exist.
-          </Text>
-
-          <View style={styles.actions}>
-            <ActionRow
-              icon={Calendar}
-              label="Edit subject schedule"
-              subtitle="Set days, times, and date range for recurring sessions"
-              onPress={onEditSchedule}
-              primary
-            />
-            <ActionRow
-              icon={BookOpen}
-              label="Open Learning Schedule"
-              subtitle="Plan lessons on scheduled class days"
-              onPress={onOpenLearningSchedule}
-            />
-          </View>
-
-          <TouchableOpacity
-            onPress={onClose}
-            style={styles.cancelBtn}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Text style={styles.cancelText}>Cancel</Text>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </TouchableOpacity>
+        <View style={choiceStyles.list}>
+          <ChoiceCard
+            icon={CalendarPlus}
+            label="One-off learning event"
+            subtitle="Add one session on any date, outside the recurring schedule"
+            onPress={onOneOffLearningEvent}
+            primary
+          />
+          <ChoiceCard
+            icon={CalendarDays}
+            label="Add/Edit subject schedule"
+            subtitle="Set recurring days, times, and date range for this subject"
+            onPress={onEditSubjectSchedule}
+          />
+        </View>
+      </CreateModalShell>
     </Modal>
   );
 }
 
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.45)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  card: {
-    width: '100%',
-    maxWidth: 420,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.08)',
-    padding: 18,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 14px 32px rgba(15, 23, 42, 0.14)' } : {}),
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  subtitle: {
-    marginTop: 4,
-    fontSize: 14,
-    color: '#64748B',
-  },
-  closeBtn: {
-    padding: 4,
-  },
+const choiceStyles = {
   prompt: {
-    marginTop: 14,
+    marginTop: 4,
+    marginBottom: 14,
     fontSize: 14,
-    color: '#64748B',
     lineHeight: 20,
+    color: MUTED,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
-  actions: {
-    marginTop: 16,
+  list: {
     gap: 10,
   },
-  actionRow: {
+  card: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
-    padding: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'border-color 0.15s ease, background-color 0.15s ease',
+    }),
   },
-  actionRowPrimary: {
+  cardPrimary: {
     borderColor: '#BFDBFE',
     backgroundColor: '#EFF6FF',
   },
-  actionRowSecondary: {
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
+  cardSecondary: {
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
   },
-  actionIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+  iconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
-  actionIconPrimary: {
+  iconWrapPrimary: {
     backgroundColor: '#DBEAFE',
   },
-  actionIconSecondary: {
-    backgroundColor: '#E2E8F0',
+  iconWrapSecondary: {
+    backgroundColor: '#F3F4F6',
   },
-  actionTextWrap: {
+  textWrap: {
     flex: 1,
+    minWidth: 0,
+    paddingTop: 1,
   },
-  actionLabel: {
+  label: {
     fontSize: 15,
+    lineHeight: 20,
     fontWeight: '700',
-    color: '#0F172A',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
-  actionLabelPrimary: {
+  labelPrimary: {
     color: '#1D4ED8',
   },
-  actionSubtitle: {
-    marginTop: 2,
+  subtitle: {
+    marginTop: 3,
     fontSize: 13,
-    color: '#64748B',
     lineHeight: 18,
+    color: MUTED,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
-  cancelBtn: {
-    marginTop: 14,
-    alignSelf: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  cancelText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#64748B',
-  },
-});
+};
