@@ -21,6 +21,12 @@ import {
 } from '../../lib/services/assignmentCommentsClient';
 import { parseAssignmentCommentLog } from '../../lib/assignmentLifecycle';
 
+const INPUT_LINE_HEIGHT = 20;
+const INPUT_MIN_HEIGHT = 40;
+const INPUT_MAX_HEIGHT = 120;
+const LEAGUE_SPARTAN =
+  '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+
 function formatWhen(ts) {
   if (!ts) return '';
   const d = new Date(ts);
@@ -37,6 +43,7 @@ export default function AssignmentCommentsPanel({
 }) {
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState('');
+  const [inputHeight, setInputHeight] = useState(INPUT_MIN_HEIGHT);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
@@ -62,6 +69,22 @@ export default function AssignmentCommentsPanel({
   useEffect(() => {
     loadComments();
   }, [loadComments]);
+
+  const handleInputContentSizeChange = useCallback((event) => {
+    const contentHeight = event?.nativeEvent?.contentSize?.height;
+    if (!Number.isFinite(contentHeight)) return;
+    const nextHeight = Math.min(
+      INPUT_MAX_HEIGHT,
+      Math.max(INPUT_MIN_HEIGHT, Math.ceil(contentHeight)),
+    );
+    setInputHeight((prev) => (prev === nextHeight ? prev : nextHeight));
+  }, []);
+
+  useEffect(() => {
+    if (!draft) {
+      setInputHeight(INPUT_MIN_HEIGHT);
+    }
+  }, [draft]);
 
   const handleSend = async () => {
     const body = draft.trim();
@@ -93,19 +116,17 @@ export default function AssignmentCommentsPanel({
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.hint}>
-        Parents and students can comment here. This thread is only about this assignment—not direct messages.
-      </Text>
-
       {!readOnly && assignmentId ? (
         <View style={styles.composer}>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { height: inputHeight }]}
             value={draft}
             onChangeText={setDraft}
             placeholder="Comment on this assignment…"
             placeholderTextColor={colors.muted || '#94A3B8'}
             multiline
+            scrollEnabled={inputHeight >= INPUT_MAX_HEIGHT}
+            onContentSizeChange={handleInputContentSizeChange}
             textAlignVertical="top"
           />
           <TouchableOpacity
@@ -157,11 +178,6 @@ export default function AssignmentCommentsPanel({
 const styles = StyleSheet.create({
   wrap: {
     gap: 10,
-  },
-  hint: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: '#64748B',
   },
   loader: {
     marginVertical: 16,
@@ -215,16 +231,21 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    minHeight: 44,
-    maxHeight: 120,
     borderWidth: 1,
     borderColor: '#E5E7EB',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
+    lineHeight: INPUT_LINE_HEIGHT,
     color: '#0F172A',
     backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: LEAGUE_SPARTAN,
+      outlineStyle: 'none',
+      resize: 'none',
+      overflow: 'hidden',
+    }),
   },
   sendBtn: {
     width: 40,

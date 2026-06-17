@@ -1808,7 +1808,7 @@ export default function SubjectClassworkSection({
                 );
               })}
             </View>
-            {Platform.OS === 'web' && lessonCount > 0 ? (
+            {Platform.OS === 'web' && lessonCount > 0 && draggingLessonId ? (
               (() => {
                 const lessonEndDropHandlers = lessonDropTargetWebProps({
                   onDrop: handleLessonDropEnd(unit),

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Check, RotateCcw, Save, X } from 'lucide-react';
-import { modalButtonStyles, MODAL_ACCENT_TEXT } from '../../ui/modalButtonStyles';
+import { modalButtonStyles } from '../../ui/modalButtonStyles';
 
 export default function AssignmentSubmissionsFooter({
   onCancel,
@@ -60,7 +60,7 @@ export default function AssignmentSubmissionsFooter({
           disabled={submitting}
           style={[
             styles.actionButton,
-            modalButtonStyles.secondaryButton,
+            modalButtonStyles.primaryButton,
             submitting && modalButtonStyles.buttonDisabled,
           ]}
           activeOpacity={0.9}
@@ -68,8 +68,8 @@ export default function AssignmentSubmissionsFooter({
           accessibilityLabel="Save submission"
           {...(Platform.OS === 'web' && { cursor: submitting ? 'not-allowed' : 'pointer' })}
         >
-          <Save size={16} color={MODAL_ACCENT_TEXT} />
-          <Text style={modalButtonStyles.secondaryButtonText}>Save submission</Text>
+          <Save size={16} color="#FFFFFF" />
+          <Text style={modalButtonStyles.primaryButtonText}>Save submission</Text>
         </TouchableOpacity>
       </View>
     </View>

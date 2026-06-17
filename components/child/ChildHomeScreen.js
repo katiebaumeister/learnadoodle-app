@@ -594,11 +594,10 @@ const styles = StyleSheet.create({
     }),
   },
   sectionLabel: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: '#1e293b',
     letterSpacing: -0.2,
-    textTransform: 'none',
     marginTop: 0,
     flexShrink: 1,
     ...(Platform.OS === 'web' && {

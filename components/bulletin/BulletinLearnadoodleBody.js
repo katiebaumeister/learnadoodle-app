@@ -2,14 +2,20 @@
  * Formatted bulletin post body (bullets + inline bold/italic/underline).
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Platform } from 'react-native';
 import FormattedInstructionText from '../create/shared/FormattedInstructionText';
+import { normalizeSubjectGettingStartedBulletinBody } from '../../lib/subjectGettingStartedBulletin';
 
 export default function BulletinLearnadoodleBody({ body, textStyle = null }) {
+  const displayBody = useMemo(
+    () => normalizeSubjectGettingStartedBulletinBody(body),
+    [body],
+  );
+
   return (
     <FormattedInstructionText
-      text={body}
+      text={displayBody}
       style={textStyle || styles.bodyText}
       wrapStyle={styles.wrap}
     />

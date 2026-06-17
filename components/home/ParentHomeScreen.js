@@ -1095,13 +1095,12 @@ const styles = StyleSheet.create({
       cursor: 'pointer',
     }),
   },
-  /** Section title — slightly heavier than body, below page hero */
+  /** Section title — matches Bulletin Board feedTitle */
   sectionLabel: {
-    fontSize: 21,
+    fontSize: 17,
     fontWeight: '700',
     color: '#1e293b',
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
+    letterSpacing: -0.2,
     marginTop: 0,
     flexShrink: 1,
     ...(Platform.OS === 'web' && {

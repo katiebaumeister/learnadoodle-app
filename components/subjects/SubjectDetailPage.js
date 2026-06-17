@@ -68,6 +68,10 @@ import {
   isWorkProducingEventType,
   normalizeWorkEventType,
 } from '../../lib/workEventHelpers';
+import {
+  bulletinActivityOpensSubmissions,
+  fetchAssignment,
+} from '../../lib/bulletinFeedNavigation';
 import { openAssignmentForParent } from '../../lib/openAssignmentWorkflow';
 import AssignmentMessageModal from './AssignmentMessageModal';
 import AssignmentSubmittalRequestModal from './AssignmentSubmittalRequestModal';
@@ -2359,13 +2363,21 @@ export default function SubjectDetailPage({
     }, 3200);
   }, []);
 
-  const handleAssignmentActivityPress = useCallback((item) => {
+  const handleAssignmentActivityPress = useCallback(async (item) => {
     if (!item?.assignmentId) return;
     const match = subjectAssignments.find(
       (a) => String(a.id) === String(item.assignmentId),
     );
-    if (match) openAssignedWorkItem(match);
-  }, [subjectAssignments, openAssignedWorkItem]);
+    const assignment = match || await fetchAssignment(item.assignmentId);
+    if (!assignment) return;
+
+    const view = bulletinActivityOpensSubmissions(item.activityType) ? 'submissions' : 'edit';
+    if (isParentViewer && Platform.OS === 'web' && typeof window !== 'undefined') {
+      openAssignmentForParent(assignment, { view });
+      return;
+    }
+    openAssignedWorkItem(assignment);
+  }, [subjectAssignments, openAssignedWorkItem, isParentViewer]);
 
   const handleClassworkPlacementChanged = useCallback(async () => {
     learningGoalsFetchCooldownUntilRef.current = 0;

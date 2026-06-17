@@ -29,7 +29,7 @@ import GoogleDriveImportModal from '../settings/GoogleDriveImportModal';
 import { calculateReusePotential } from '../../lib/utils/materialReuseLogic';
 import { supabase } from '../../lib/supabase';
 import { shouldSuppressError } from '../../lib/apiClient';
-import { normalizeMaterial, normalizeUpload } from '../../lib/docs/roles';
+import { normalizeMaterial, normalizeUpload, compareLibraryMaterialItems } from '../../lib/docs/roles';
 import { useToast } from '../Toast';
 import { parseChildIds } from '../../lib/services/subjectsClient';
 import ConfirmDialog from '../ConfirmDialog';
@@ -985,6 +985,21 @@ export default function MaterialsLibrary({
     [materials, scopedChildIdSet, materialMatchesScopedChildren],
   );
 
+  const libraryMaterialItems = useMemo(
+    () => visibleMaterials
+      .map((m) => {
+        const isFileBased = m.storage_path;
+        const normalized = isFileBased ? normalizeUpload(m) : normalizeMaterial(m);
+        return { kind: isFileBased ? 'upload' : 'material', data: m, normalized };
+      })
+      .sort((a, b) => compareLibraryMaterialItems(a, b, {
+        sortBy,
+        sortDirection,
+        pinSubjectRoles: subjectLocked,
+      })),
+    [visibleMaterials, sortBy, sortDirection, subjectLocked],
+  );
+
   const hasNoMaterials = libraryReady && (subjectLocked ? visibleMaterials.length === 0 : allMaterials.length === 0);
   const nothingVisible = visibleMaterials.length === 0;
 
@@ -1529,27 +1544,7 @@ export default function MaterialsLibrary({
                   contentContainerStyle={embedded ? styles.embeddedListContent : styles.listContent}
                 >
                 {/* Unified materials list (includes both purchased materials and uploaded files) */}
-                {visibleMaterials
-                .map(m => {
-              // Determine kind based on whether it has storage_path (file-based) or not
-              const isFileBased = m.storage_path;
-                  const normalized = isFileBased ? normalizeUpload(m) : normalizeMaterial(m);
-                  return { kind: isFileBased ? 'upload' : 'material', data: m, normalized };
-                })
-                .sort((a, b) => {
-              if (sortBy === 'alphabetical') {
-                const titleA = (a.normalized.title || '').toLowerCase();
-                const titleB = (b.normalized.title || '').toLowerCase();
-                const comparison = titleA.localeCompare(titleB);
-                return sortDirection === 'asc' ? comparison : -comparison;
-              } else {
-                // Sort by date
-                const dateA = new Date(a.data.created_at || 0);
-                const dateB = new Date(b.data.created_at || 0);
-                const comparison = dateB - dateA;
-                return sortDirection === 'desc' ? comparison : -comparison;
-              }
-            })
+                {libraryMaterialItems
               .map((item, index, arr) => {
               const { kind, data, normalized } = item;
               

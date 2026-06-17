@@ -29,7 +29,7 @@ import { createFileMaterial } from '../../lib/services/materialsClient';
 import FormattedInstructionText from '../create/shared/FormattedInstructionText';
 import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
 import AssignmentCommentsPanel from './AssignmentCommentsPanel';
-import { modalButtonStyles, MODAL_ACCENT_TEXT } from '../ui/modalButtonStyles';
+import { modalButtonStyles } from '../ui/modalButtonStyles';
 
 function resolveLinkedEventId(assignment) {
   const raw = assignment?.linked_event_ids;
@@ -465,13 +465,13 @@ export default function WorkReviewModal({
               <Text style={styles.approveText}>Mark complete</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.actionButton, modalButtonStyles.secondaryButtonCompact]}
+              style={[styles.actionButton, modalButtonStyles.primaryButtonCompact]}
               onPress={() => runReview('save')}
               disabled={submitting}
               {...(Platform.OS === 'web' && { cursor: submitting ? 'default' : 'pointer' })}
             >
-              <Save size={15} color={MODAL_ACCENT_TEXT} />
-              <Text style={modalButtonStyles.secondaryButtonCompactText}>Save submission</Text>
+              <Save size={15} color="#FFFFFF" />
+              <Text style={modalButtonStyles.primaryButtonCompactText}>Save submission</Text>
             </TouchableOpacity>
           </View>
         </View>
