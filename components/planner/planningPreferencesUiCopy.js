@@ -5,7 +5,7 @@
 export const SCHOOL_YEAR_SETTINGS_UI = {
   pageTitle: 'School Year Settings',
   embeddedTitle: 'School Year Settings',
-  navLabel: 'School Year Settings',
+  navLabel: 'School Year',
   toolbarLabel: 'School Year Settings',
   openCta: 'Open School Year Settings',
   sections: {

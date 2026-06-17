@@ -42,7 +42,6 @@ import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
 import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
 import SubjectEventsModal from '../subjects/SubjectEventsModal';
-import { DEFAULT_TUTOR_PROFILE, normalizeTutorProfile } from '../../lib/permissions/userPermissionProfiles';
 import { SCHOOL_YEAR_SETTINGS_UI } from '../planner/planningPreferencesUiCopy';
 
 const MAX_FAMILY_PARENTS = 2;
@@ -134,7 +133,8 @@ const ONBOARDING_GOAL_OPTIONS = [
 
 const SETTINGS_SIDEBAR_ACCOUNT_KEYS = ['profile', 'appearance', 'notifications'];
 const SETTINGS_SIDEBAR_HOUSEHOLD_KEYS = ['planner-settings', 'members', 'courses'];
-const SETTINGS_SIDEBAR_SUPPORT_KEYS = ['feedback', 'about', 'terms', 'privacy'];
+const SETTINGS_SIDEBAR_SUPPORT_KEYS = ['feedback'];
+const SETTINGS_SIDEBAR_LEGAL_KEYS = ['about', 'terms', 'privacy'];
 
 const SETTINGS_SIDEBAR_ITEMS = [
   { key: 'profile', label: 'Profile' },
@@ -154,12 +154,6 @@ const SETTINGS_SIDEBAR_ITEMS = [
 const SHOW_BILLING_TAB = false;
 
 const SHOW_DANGER_ZONE = true;
-
-const TUTOR_PERMISSION_OPTIONS = [
-  { id: 'viewer', label: 'Viewer Tutor' },
-  { id: 'teaching', label: 'Teaching Tutor' },
-  { id: 'manager', label: 'Lead Tutor' },
-];
 
 function getOnboardingGoalLabel(goalId) {
   return ONBOARDING_GOAL_OPTIONS.find((opt) => opt.id === goalId)?.label || '—';
@@ -259,7 +253,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [editingTutor, setEditingTutor] = useState(null);
   const [showEditTutorModal, setShowEditTutorModal] = useState(false);
   const [familyId, setFamilyId] = useState(propFamilyId);
-  const [hoveredChildId, setHoveredChildId] = useState(null);
   const [hoveredTutorId, setHoveredTutorId] = useState(null);
   const [familyNameRowHovered, setFamilyNameRowHovered] = useState(false);
   const [openMemberMenuKey, setOpenMemberMenuKey] = useState(null);
@@ -563,12 +556,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [editingFamilyNameValue, setEditingFamilyNameValue] = useState('');
   const [savingFamilyName, setSavingFamilyName] = useState(false);
   
-  // Tutor invite state
-  const [showTutorInviteModal, setShowTutorInviteModal] = useState(false);
-  const [tutorInviteEmail, setTutorInviteEmail] = useState('');
-  const [tutorInviteChildIds, setTutorInviteChildIds] = useState([]);
-  const [tutorInvitePermissionProfile, setTutorInvitePermissionProfile] = useState(DEFAULT_TUTOR_PROFILE);
-  const [invitingTutor, setInvitingTutor] = useState(false);
+  // Tutor invite state (legacy inline form — prefer EditTutorModal)
   
   const [updatingTutorId, setUpdatingTutorId] = useState(null);
   const [copiedUrl, setCopiedUrl] = useState(null);
@@ -1712,66 +1700,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
-  const handleInviteTutorFromModal = async () => {
-    if (!tutorInviteEmail.trim()) {
-      setError('Please enter an email for the tutor.');
-      return;
-    }
-    if (!Array.isArray(tutorInviteChildIds) || tutorInviteChildIds.length === 0) {
-      setError('Please select at least one child to share.');
-      return;
-    }
-    const currentTutors = (family?.members || []).filter(
-      (m) => (m.member_role || m.role) === 'tutor'
-    ).length;
-    const pendingTutorCount = Array.isArray(family?.pending_tutor_invites)
-      ? family.pending_tutor_invites.length
-      : 0;
-    if (currentTutors + pendingTutorCount >= MAX_FAMILY_TUTORS) {
-      setError(`Maximum of ${MAX_FAMILY_TUTORS} tutors allowed per family.`);
-      toast.push(`Maximum of ${MAX_FAMILY_TUTORS} tutors allowed per family`, 'error');
-      return;
-    }
-
-    setInvitingTutor(true);
-    setError(null);
-    try {
-      const { data, error: err } = await inviteTutor({
-        email: tutorInviteEmail.trim(),
-        role: 'tutor',
-        child_ids: tutorInviteChildIds,
-        tutor_permission_profile: normalizeTutorProfile(tutorInvitePermissionProfile),
-      });
-      if (err) throw err;
-      setTutorInviteEmail('');
-      setTutorInviteChildIds(children.map((c) => String(c.id || '').trim()).filter(Boolean));
-      setTutorInvitePermissionProfile(DEFAULT_TUTOR_PROFILE);
-      toast.push('Tutor invite sent successfully!', 'success');
-      if (data?.invite_url) {
-        showInviteSuccessModal(data.invite_url, 'tutor');
-      }
-      setShowTutorInviteModal(false);
-      if (onFamilyUpdate) onFamilyUpdate();
-    } catch (err) {
-      setError(err.message || 'Failed to invite tutor');
-      toast.push('Failed to invite tutor', 'error');
-    } finally {
-      setInvitingTutor(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!showTutorInviteModal) return;
-    const inviteChildren = childrenFromDb != null ? childrenFromDb : family?.children || [];
-    const nextIds = inviteChildren.map((c) => String(c?.id || '').trim()).filter(Boolean);
-    setTutorInviteChildIds((prev) => {
-      const prevKey = (Array.isArray(prev) ? prev : []).join('|');
-      const nextKey = nextIds.join('|');
-      return prevKey === nextKey ? prev : nextIds;
-    });
-    setTutorInvitePermissionProfile(DEFAULT_TUTOR_PROFILE);
-  }, [showTutorInviteModal, childrenFromDb, family?.children]);
-
 
   const handleOpenChildInviteModal = (prefillChildId = null) => {
     if (children.length === 0) {
@@ -2012,26 +1940,33 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const canAddAnotherParent = canManageChildInvites && parentSlotCount < MAX_FAMILY_PARENTS;
   const canAddAnotherTutor = canManageChildInvites && tutorSlotCount < MAX_FAMILY_TUTORS;
 
-  const openParentInviteModal = useCallback((mode = 'invite') => {
+  const openParentInviteModal = useCallback((mode = 'invite', prefillEmail = '') => {
     if (!canAddAnotherParent) {
       toast.push(`Maximum of ${MAX_FAMILY_PARENTS} parents allowed per family`, 'error');
       return;
     }
     setParentInviteModalMode(mode);
     setShowParentInviteModal(true);
-    setParentInviteEmail('');
+    setParentInviteEmail(prefillEmail || '');
     setError(null);
   }, [canAddAnotherParent, toast]);
 
-  const openTutorInviteModal = useCallback(() => {
-    if (!canAddAnotherTutor) {
-      toast.push(`Maximum of ${MAX_FAMILY_TUTORS} tutors allowed per family`, 'error');
-      return;
-    }
-    setShowTutorInviteModal(true);
-    setTutorInviteEmail('');
+  const openPendingTutorInviteEdit = useCallback((invite) => {
+    setEditingTutor({
+      id: String(invite.id),
+      name: invite.name || invite.email || 'Tutor invite',
+      display_name:
+        invite.name && invite.email && invite.name !== invite.email
+          ? invite.name
+          : null,
+      email: invite.email || '',
+      child_scope: Array.isArray(invite.child_scope) ? invite.child_scope : [],
+      invite_status: 'pending',
+      sent_at: invite.sent_at || null,
+    });
+    setShowEditTutorModal(true);
     setError(null);
-  }, [canAddAnotherTutor, toast]);
+  }, []);
 
   const openAddTutorModal = useCallback(() => {
     if (!canAddAnotherTutor) {
@@ -3560,30 +3495,16 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 {isChildRestrictedView ? 'Your Parents' : 'Parents'}
               </Text>
               {!isChildRestrictedView && canAddAnotherParent ? (
-                <View style={{ flexDirection: 'row', gap: embeddedInModal ? 12 : 8, alignItems: 'center' }}>
-                  <TouchableOpacity
-                    style={embeddedInModal ? styles.membersSectionLinkButton : styles.membersInviteButton}
-                    onPress={() => openParentInviteModal('add')}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    {!embeddedInModal ? <Plus size={16} color="#374151" /> : null}
-                    <Text style={embeddedInModal ? styles.membersSectionLinkButtonText : styles.membersInviteButtonText}>
-                      {embeddedInModal ? '+ ' : ''}{isSelfManagedStudent ? 'Request Parent' : 'Add Parent'}
-                    </Text>
-                  </TouchableOpacity>
-                  {!isSelfManagedStudent ? (
-                    <TouchableOpacity
-                      style={embeddedInModal ? styles.membersSectionLinkButton : styles.membersInviteButton}
-                      onPress={() => openParentInviteModal('invite')}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      {!embeddedInModal ? <Plus size={16} color="#374151" /> : null}
-                      <Text style={embeddedInModal ? styles.membersSectionLinkButtonText : styles.membersInviteButtonText}>
-                        {embeddedInModal ? '+ ' : ''}Invite Parent
-                      </Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
+                <TouchableOpacity
+                  style={embeddedInModal ? styles.membersSectionLinkButton : styles.membersInviteButton}
+                  onPress={() => openParentInviteModal('add')}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  {!embeddedInModal ? <Plus size={16} color="#374151" /> : null}
+                  <Text style={embeddedInModal ? styles.membersSectionLinkButtonText : styles.membersInviteButtonText}>
+                    {embeddedInModal ? '+ ' : ''}{isSelfManagedStudent ? 'Request Parent' : 'Add Parent'}
+                  </Text>
+                </TouchableOpacity>
               ) : null}
             </View>
             {!embeddedInModal ? <View style={styles.subsectionDivider} /> : null}
@@ -3668,6 +3589,16 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                               setIsEditingFamilyName(true);
                             },
                           },
+                          ...(canAddAnotherParent && !isSelfManagedStudent
+                            ? [{
+                              icon: Send,
+                              label: latestPendingParentInvite ? 'Resend parent invite' : 'Invite parent',
+                              onPress: () => openParentInviteModal(
+                                'invite',
+                                latestPendingParentInvite?.email || ''
+                              ),
+                            }]
+                            : []),
                           {
                             icon: CreditCard,
                             label: 'Generate ID',
@@ -3680,7 +3611,57 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 )}
               </View>
             ) : null}
-            {parents.length === 0 && (
+            {!isSelfManagedStudent && !isChildRestrictedView
+              ? pendingParentInvites.map((invite) => {
+                  const lastSentRel = invite?.sent_at ? formatInviteLastSent(invite.sent_at) : null;
+                  return (
+                    <View key={`pending-parent-${invite.id || invite.email}`} style={styles.memberRow}>
+                      <View style={styles.memberRowChildTextCol}>
+                        <View style={styles.memberRowChildNameRow}>
+                          <Text style={styles.memberRowName} numberOfLines={1}>
+                            {invite.name || invite.email || 'Parent invite'}
+                          </Text>
+                          <View style={[styles.childStatusPill, styles.childStatusPillAmber]}>
+                            <Text style={[styles.childStatusPillText, styles.childStatusPillTextAmber]}>
+                              Pending invite
+                            </Text>
+                          </View>
+                        </View>
+                        {invite.email ? (
+                          <Text style={styles.memberRowChildEmailMuted} numberOfLines={1}>
+                            {invite.email}
+                          </Text>
+                        ) : null}
+                        {lastSentRel ? (
+                          <Text style={styles.memberRowChildPendingMeta} numberOfLines={1}>
+                            Last sent · {lastSentRel}
+                          </Text>
+                        ) : null}
+                        <Text style={styles.memberRowChildPendingWait}>Waiting for acceptance</Text>
+                      </View>
+                      <MemberRowActionsMenu
+                        menuKey={`pending-parent-${invite.id || invite.email}`}
+                        openMenuKey={openMemberMenuKey}
+                        setOpenMenuKey={setOpenMemberMenuKey}
+                        actionButtonStyle={styles.memberRowActionButton}
+                        items={[
+                          {
+                            icon: Pencil,
+                            label: 'Edit',
+                            onPress: () => openParentInviteModal('invite', invite.email || ''),
+                          },
+                          {
+                            icon: Send,
+                            label: 'Resend invite',
+                            onPress: () => openParentInviteModal('invite', invite.email || ''),
+                          },
+                        ]}
+                      />
+                    </View>
+                  );
+                })
+              : null}
+            {parents.length === 0 && pendingParentInvites.length === 0 && (
               <Text style={[styles.membersEmptyText, { marginTop: 8 }]}>
                 {isSelfManagedStudent ? 'No parents yet' : (profile?.role === 'parent' ? 'No other parents yet' : 'No parents found')}
               </Text>
@@ -3702,28 +3683,16 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 {isChildRestrictedView ? 'Your Family' : 'Children'}
               </Text>
               {!isChildRestrictedView && canManageChildInvites ? (
-                <View style={{ flexDirection: 'row', gap: embeddedInModal ? 12 : 8, alignItems: 'center' }}>
-                  <TouchableOpacity
-                    style={embeddedInModal ? styles.membersSectionLinkButton : styles.membersInviteButton}
-                    onPress={() => setShowAddChildModal(true)}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    {!embeddedInModal ? <Plus size={16} color="#374151" /> : null}
-                    <Text style={embeddedInModal ? styles.membersSectionLinkButtonText : styles.membersInviteButtonText}>
-                      {embeddedInModal ? '+ ' : ''}Add Child
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={embeddedInModal ? styles.membersSectionLinkButton : styles.membersInviteButton}
-                    onPress={() => handleOpenChildInviteModal(null)}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    {!embeddedInModal ? <Plus size={16} color="#374151" /> : null}
-                    <Text style={embeddedInModal ? styles.membersSectionLinkButtonText : styles.membersInviteButtonText}>
-                      {embeddedInModal ? '+ ' : ''}Invite Child
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                <TouchableOpacity
+                  style={embeddedInModal ? styles.membersSectionLinkButton : styles.membersInviteButton}
+                  onPress={() => setShowAddChildModal(true)}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  {!embeddedInModal ? <Plus size={16} color="#374151" /> : null}
+                  <Text style={embeddedInModal ? styles.membersSectionLinkButtonText : styles.membersInviteButtonText}>
+                    {embeddedInModal ? '+ ' : ''}Add Child
+                  </Text>
+                </TouchableOpacity>
               ) : null}
             </View>
             {!embeddedInModal ? <View style={styles.subsectionDivider} /> : null}
@@ -3736,7 +3705,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 (currentChildId != null && String(currentChildId) === String(child.id))
                 || (viewingAsChildId != null && String(viewingAsChildId) === String(child.id))
               );
-              const isHovered = hoveredChildId === child.id;
               const gradeLabel =
                 child.grade ?? child.grade_level ?? child.grade_label ?? null;
               const gradePart =
@@ -3767,10 +3735,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 <View 
                   key={child.id} 
                   style={styles.memberRow}
-                  {...(Platform.OS === 'web' && {
-                    onMouseEnter: () => setHoveredChildId(child.id),
-                    onMouseLeave: () => setHoveredChildId(null),
-                  })}
                 >
                   <View style={styles.memberRowChildMain}>
                     <View style={styles.memberRowChildAvatarWrap}>
@@ -3837,33 +3801,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   </View>
                   {!isChildRestrictedView && (
                     <View style={styles.memberRowActions}>
-                      {propUserRole === 'parent' && typeof onViewAsChild === 'function' && !child.archived ? (
-                        <TouchableOpacity
-                          style={[
-                            styles.viewAsChildButton,
-                            viewingAsChildId != null && String(viewingAsChildId) === String(child.id)
-                              && styles.viewAsChildButtonActive,
-                            isHovered && styles.viewAsChildButtonHovered,
-                          ]}
-                          onPress={() => {
-                            if (viewingAsChildId != null && String(viewingAsChildId) === String(child.id)) {
-                              return;
-                            }
-                            onViewAsChild(child.id);
-                          }}
-                          disabled={
-                            viewingAsChildId != null && String(viewingAsChildId) === String(child.id)
-                          }
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Eye size={14} color="#374151" />
-                          <Text style={styles.viewAsChildButtonText}>
-                            {viewingAsChildId != null && String(viewingAsChildId) === String(child.id)
-                              ? 'Viewing'
-                              : 'View as'}
-                          </Text>
-                        </TouchableOpacity>
-                      ) : null}
                       <MemberRowActionsMenu
                         menuKey={`child-${child.id}`}
                         openMenuKey={openMemberMenuKey}
@@ -3878,6 +3815,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                               setShowEditChildModal(true);
                             },
                           },
+                          ...(propUserRole === 'parent' && typeof onViewAsChild === 'function' && !child.archived
+                            && !(viewingAsChildId != null && String(viewingAsChildId) === String(child.id))
+                            ? [{
+                              icon: Eye,
+                              label: 'View as',
+                              onPress: () => onViewAsChild(child.id),
+                            }]
+                            : []),
                           {
                             icon: Send,
                             label: invSt === 'pending' ? 'Resend invite' : 'Invite',
@@ -3904,28 +3849,16 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 {isChildRestrictedView ? 'Your Tutors' : 'Tutors'}
               </Text>
               {!isChildRestrictedView && canAddAnotherTutor ? (
-                <View style={{ flexDirection: 'row', gap: embeddedInModal ? 12 : 8, alignItems: 'center' }}>
-                  <TouchableOpacity
-                    style={embeddedInModal ? styles.membersSectionLinkButton : styles.membersInviteButton}
-                    onPress={openAddTutorModal}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    {!embeddedInModal ? <Plus size={16} color="#374151" /> : null}
-                    <Text style={embeddedInModal ? styles.membersSectionLinkButtonText : styles.membersInviteButtonText}>
-                      {embeddedInModal ? '+ ' : ''}Add Tutor
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={embeddedInModal ? styles.membersSectionLinkButton : styles.membersInviteButton}
-                    onPress={openTutorInviteModal}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    {!embeddedInModal ? <Plus size={16} color="#374151" /> : null}
-                    <Text style={embeddedInModal ? styles.membersSectionLinkButtonText : styles.membersInviteButtonText}>
-                      {embeddedInModal ? '+ ' : ''}Invite Tutor
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                <TouchableOpacity
+                  style={embeddedInModal ? styles.membersSectionLinkButton : styles.membersInviteButton}
+                  onPress={openAddTutorModal}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  {!embeddedInModal ? <Plus size={16} color="#374151" /> : null}
+                  <Text style={embeddedInModal ? styles.membersSectionLinkButtonText : styles.membersInviteButtonText}>
+                    {embeddedInModal ? '+ ' : ''}Add Tutor
+                  </Text>
+                </TouchableOpacity>
               ) : null}
             </View>
             {!embeddedInModal ? <View style={styles.subsectionDivider} /> : null}
@@ -4006,11 +3939,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                             <Text style={styles.memberRowChildPendingWait}>Waiting for acceptance</Text>
                             <TouchableOpacity
                               style={styles.memberRowResend}
-                              onPress={() => {
-                                setTutorInviteEmail(invite.email || '');
-                                setShowTutorInviteModal(true);
-                                setError(null);
-                              }}
+                              onPress={() => openPendingTutorInviteEdit(invite)}
                               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                             >
                               <RotateCw size={12} color="#6366F1" />
@@ -4026,31 +3955,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                               {
                                 icon: Pencil,
                                 label: 'Edit',
-                                onPress: () => {
-                                  setEditingTutor({
-                                    id: String(invite.id),
-                                    name: invite.name || invite.email || 'Tutor invite',
-                                    display_name:
-                                      invite.name && invite.email && invite.name !== invite.email
-                                        ? invite.name
-                                        : null,
-                                    email: invite.email || '',
-                                    child_scope: Array.isArray(invite.child_scope) ? invite.child_scope : [],
-                                    invite_status: 'pending',
-                                    sent_at: invite.sent_at || null,
-                                  });
-                                  setShowEditTutorModal(true);
-                                  setError(null);
-                                },
+                                onPress: () => openPendingTutorInviteEdit(invite),
                               },
                               {
                                 icon: Send,
                                 label: 'Resend invite',
-                                onPress: () => {
-                                  setTutorInviteEmail(invite.email || '');
-                                  setShowTutorInviteModal(true);
-                                  setError(null);
-                                },
+                                onPress: () => openPendingTutorInviteEdit(invite),
                               },
                             ]}
                           />
@@ -5343,6 +5253,27 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const hasAccountSidebarItems = SETTINGS_SIDEBAR_ACCOUNT_KEYS.some((key) => visibleSettingsKeys.has(key));
   const hasHouseholdSidebarItems = SETTINGS_SIDEBAR_HOUSEHOLD_KEYS.some((key) => visibleSettingsKeys.has(key));
   const hasSupportSidebarItems = SETTINGS_SIDEBAR_SUPPORT_KEYS.some((key) => visibleSettingsKeys.has(key));
+  const hasLegalSidebarItems = SETTINGS_SIDEBAR_LEGAL_KEYS.some((key) => visibleSettingsKeys.has(key));
+
+  const renderSettingsSidebarLegalLink = (key) => {
+    const item = settingsItemByKey[key];
+    if (!item || !visibleSettingsKeys.has(key)) return null;
+    const active = activeSection === key;
+    return (
+      <TouchableOpacity
+        key={key}
+        style={styles.footerLink}
+        onPress={() => handleSettingsNavPress(key)}
+        accessibilityRole="button"
+        accessibilityState={{ selected: active }}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <Text style={[styles.footerLinkText, active && styles.footerLinkTextActive]}>
+          {item.label}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
 
   if (error && !family) {
     return (
@@ -5433,6 +5364,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 <View style={styles.sidebarCard}>
                   <Text style={styles.sidebarCardTitle}>Support</Text>
                   {SETTINGS_SIDEBAR_SUPPORT_KEYS.map((key) => renderSettingsSidebarButton(key))}
+                </View>
+              ) : null}
+
+              {hasLegalSidebarItems ? (
+                <View style={styles.footerLinksContainer}>
+                  {SETTINGS_SIDEBAR_LEGAL_KEYS.map((key) => renderSettingsSidebarLegalLink(key))}
                 </View>
               ) : null}
             </View>
@@ -6297,164 +6234,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         </TouchableOpacity>
       </Modal>
 
-      {/* Tutor Invite Modal */}
-      <Modal
-        visible={showTutorInviteModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => {
-          setShowTutorInviteModal(false);
-          setTutorInviteEmail('');
-          setTutorInviteChildIds([]);
-          setTutorInvitePermissionProfile(DEFAULT_TUTOR_PROFILE);
-          setError(null);
-        }}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => {
-            setShowTutorInviteModal(false);
-            setTutorInviteEmail('');
-            setTutorInviteChildIds([]);
-            setTutorInvitePermissionProfile(DEFAULT_TUTOR_PROFILE);
-            setError(null);
-          }}
-        >
-          <TouchableOpacity style={styles.childInviteModal} activeOpacity={1} onPress={() => {}}>
-            <View style={styles.childInviteModalHeader}>
-              <Text style={styles.childInviteModalTitle}>Invite a tutor</Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setShowTutorInviteModal(false);
-                  setTutorInviteEmail('');
-                  setTutorInviteChildIds([]);
-                  setTutorInvitePermissionProfile(DEFAULT_TUTOR_PROFILE);
-                  setError(null);
-                }}
-                style={styles.inviteUrlModalClose}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <X size={20} color="#6b7280" />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.inviteUrlModalDescription}>
-              Choose which children this tutor can support:
-            </Text>
-            <View style={styles.tutorInviteChildList}>
-              {children.map((child) => {
-                const childId = String(child?.id || '').trim();
-                if (!childId) return null;
-                const checked = tutorInviteChildIds.includes(childId);
-                return (
-                  <TouchableOpacity
-                    key={String(childId)}
-                    style={styles.tutorInviteChildRow}
-                    onPress={() => {
-                      setTutorInviteChildIds((prev) =>
-                        prev.includes(childId) ? prev.filter((id) => id !== childId) : [...prev, childId]
-                      );
-                    }}
-                    activeOpacity={0.85}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={[styles.tutorInviteCheck, checked && styles.tutorInviteCheckSelected]}>
-                      {checked ? <Check size={12} color="#ffffff" /> : null}
-                    </View>
-                    <Text style={styles.tutorInviteChildRowText}>
-                      {child.name || child.first_name || 'Child'}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <Text style={styles.inviteUrlModalDescription}>Permission level for this tutor:</Text>
-            <View style={styles.tutorInvitePermissionPills}>
-              {TUTOR_PERMISSION_OPTIONS.map((option) => {
-                const selected = option.id === tutorInvitePermissionProfile;
-                return (
-                  <TouchableOpacity
-                    key={option.id}
-                    style={[
-                      styles.tutorInvitePermissionPill,
-                      selected && styles.tutorInvitePermissionPillSelected,
-                      invitingTutor && styles.tutorInvitePermissionPillDisabled,
-                    ]}
-                    onPress={() => setTutorInvitePermissionProfile(option.id)}
-                    disabled={invitingTutor}
-                    activeOpacity={0.85}
-                    {...(Platform.OS === 'web' && { cursor: invitingTutor ? 'not-allowed' : 'pointer' })}
-                  >
-                    <Text style={[styles.tutorInvitePermissionPillText, selected && styles.tutorInvitePermissionPillTextSelected]}>
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-            <Text style={styles.tutorInviteHelperText}>
-              You can update access and permission level anytime in Edit Tutor.
-            </Text>
-
-            <Text style={styles.inviteUrlModalDescription}>
-              Tutor email address:
-            </Text>
-            <TextInput
-              style={styles.childInviteEmailInput}
-              placeholder="name@example.com"
-              placeholderTextColor="#9ca3af"
-              value={tutorInviteEmail}
-              onChangeText={setTutorInviteEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            {error && (
-              <Text style={styles.childInviteError}>{error}</Text>
-            )}
-            <View style={styles.inviteUrlModalActions}>
-              <TouchableOpacity
-                style={styles.inviteUrlDoneButton}
-                onPress={() => {
-                  setShowTutorInviteModal(false);
-                  setTutorInviteEmail('');
-                  setError(null);
-                }}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.inviteUrlDoneButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.inviteUrlCopyButton,
-                  (invitingTutor || !tutorInviteEmail.trim() || tutorInviteChildIds.length === 0) &&
-                    styles.inviteUrlCopyButtonDisabled,
-                ]}
-                onPress={handleInviteTutorFromModal}
-                disabled={invitingTutor || !tutorInviteEmail.trim() || tutorInviteChildIds.length === 0}
-                {...(Platform.OS === 'web' && {
-                  cursor:
-                    invitingTutor || !tutorInviteEmail.trim() || tutorInviteChildIds.length === 0
-                      ? 'not-allowed'
-                      : 'pointer',
-                })}
-              >
-                {invitingTutor ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <>
-                    <Send size={16} color="#ffffff" />
-                    <Text style={styles.inviteUrlCopyButtonText}>Send Invite</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
-
     </View>
   );
 }
@@ -7238,32 +7017,36 @@ function createStyles(tokens) {
     },
     footerLinksContainer: {
       flexDirection: 'row',
-      flexWrap: 'wrap',
-      justifyContent: 'center',
-      gap: 12,
-      marginTop: 12,
-      paddingTop: 12,
-      borderTopWidth: 1,
-      borderTopColor: '#e5e7eb',
+      flexWrap: 'nowrap',
+      alignItems: 'center',
+      justifyContent: 'space-evenly',
+      width: '100%',
+      paddingTop: 4,
+      paddingHorizontal: 8,
       flexShrink: 0,
     },
     footerLink: {
-      paddingVertical: 4,
-      paddingHorizontal: 8,
+      paddingVertical: 6,
+      paddingHorizontal: 4,
       ...(Platform.OS === 'web' && {
         cursor: 'pointer',
         transition: 'opacity 0.2s ease',
       }),
     },
     footerLinkText: {
-      fontSize: 11,
+      fontSize: 13,
       fontWeight: '500',
       color: '#6B7280',
-      letterSpacing: 0.5,
+      letterSpacing: 0.3,
       textTransform: 'uppercase',
+      textAlign: 'center',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
+    },
+    footerLinkTextActive: {
+      color: '#111827',
+      fontWeight: '600',
     },
     aboutPageContainer: {
       maxWidth: 800,

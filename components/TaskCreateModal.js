@@ -166,7 +166,7 @@ const buildFallbackPlannerDefaultsForDate = (date = new Date()) => {
     default_fall_term_start_date: `${startYear}-08-01`,
     default_fall_term_end_date: `${startYear}-12-31`,
     default_spring_term_start_date: `${endYear}-01-01`,
-    default_spring_term_end_date: `${endYear}-05-01`,
+    default_spring_term_end_date: `${endYear}-05-31`,
     allowed_weekdays: [1, 2, 3, 4, 5],
     default_day_start_time: '08:00:00',
     default_day_end_time: '15:00:00',

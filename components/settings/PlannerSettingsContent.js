@@ -29,7 +29,7 @@ import { apiRequest } from '../../lib/apiClient';
 import { useToast } from '../Toast';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
 import MaskedTimeInput from '../ui/MaskedTimeInput';
-import { LEARNADOODLE_LIGHT_BLUE } from '../../theme/comingSoonModalTheme';
+import { LEARNADOODLE_LIGHT_BLUE, comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 import { designTokens } from '../../theme/designTokens';
 import { SettingsLayout, SettingsTypography } from './settingsDesignTokens';
 import {
@@ -290,9 +290,9 @@ const schoolYearRangeDefaults = (schoolYearLabel) => {
     fallStart: `${parsed.start}-08-01`,
     fallEnd: `${parsed.start}-12-31`,
     springStart: `${parsed.end}-01-01`,
-    springEnd: `${parsed.end}-05-01`,
+    springEnd: `${parsed.end}-05-31`,
     summerStart: `${parsed.end}-06-01`,
-    summerEnd: `${parsed.end}-08-31`,
+    summerEnd: `${parsed.end}-07-31`,
   };
 };
 
@@ -418,6 +418,7 @@ export default function PlannerSettingsContent({
   const [savedIndicator, setSavedIndicator] = useState(false);
   const [hasPendingModalSave, setHasPendingModalSave] = useState(false);
   const [error, setError] = useState(null);
+  const [showNoSubjectsForPerSubjectModal, setShowNoSubjectsForPerSubjectModal] = useState(false);
   const saveTimeoutRef = useRef(null);
   const subjectTargetSaveTimeoutRef = useRef(null);
   const loadDefaultsRequestRef = useRef(0);
@@ -1381,6 +1382,12 @@ export default function PlannerSettingsContent({
     const normalizedMode = getAttendanceMode({ academicYearMode: mode });
     const previousMode = getAttendanceMode({ academicYearMode: attendanceTrackingMode });
     if (previousMode === normalizedMode) return;
+
+    if (normalizedMode === ATTENDANCE_MODES.SUBJECT && visibleSubjects.length === 0) {
+      setShowNoSubjectsForPerSubjectModal(true);
+      return;
+    }
+
     let risk = null;
     try {
       risk = await getSelectedYearModeAndRisk();
@@ -1406,6 +1413,10 @@ export default function PlannerSettingsContent({
         .select('id');
       if (yearSaveErr) throw yearSaveErr;
       if (!Array.isArray(updatedRows) || updatedRows.length === 0) {
+        if (normalizedMode === ATTENDANCE_MODES.SUBJECT) {
+          setShowNoSubjectsForPerSubjectModal(true);
+          return;
+        }
         throw new Error('No academic year found for the selected school year. Create or load that year before changing attendance mode.');
       }
 
@@ -1455,7 +1466,7 @@ export default function PlannerSettingsContent({
     } catch (err) {
       toast.push(err?.message || 'Failed to save attendance mode', 'error');
     }
-  }, [attendanceTrackingMode, familyId, getSelectedYearModeAndRisk, readOnly, selectedSchoolYearLabel, selectedYearMeta.end, selectedYearMeta.start, toast]);
+  }, [attendanceTrackingMode, familyId, getSelectedYearModeAndRisk, readOnly, selectedSchoolYearLabel, selectedYearMeta.end, selectedYearMeta.start, toast, visibleSubjects]);
 
   const handleGoalChange = (mode) => {
     if (mode === 'days' && parsePositiveIntOrNull(stateRef.current?.targetDays) == null) {
@@ -1676,9 +1687,11 @@ export default function PlannerSettingsContent({
     };
   }, [embeddedInModal, handleRequestClose]);
 
-  const useTwoColumnModalLayout = embeddedInModal && hideEmbeddedHeader;
+  const useTwoColumnModalLayout =
+    (embeddedInModal && hideEmbeddedHeader) || layoutVariant === 'settings';
 
-  const usePlainSettingsSections = layoutVariant === 'settings' && !embeddedInModal;
+  const usePlainSettingsSections =
+    layoutVariant === 'settings' && !embeddedInModal && !useTwoColumnModalLayout;
   const sectionStyle = {
     paddingTop: 0,
     paddingBottom: 0,
@@ -2513,15 +2526,21 @@ export default function PlannerSettingsContent({
         <View style={assignmentModalStyles.schoolYearSettingsSidePanel}>
           <SectionHeading>{SCHOOL_YEAR_SETTINGS_UI.sections.attendanceTracking}</SectionHeading>
           {attendanceTrackingModeField}
-          <ScrollView
-            style={assignmentModalStyles.assignmentSideFields}
-            contentContainerStyle={{ gap: 0, paddingBottom: 8, paddingTop: 4 }}
-            showsVerticalScrollIndicator
-            keyboardShouldPersistTaps="handled"
-            nestedScrollEnabled
-          >
-            {attendanceGoalsContent}
-          </ScrollView>
+          {embeddedInModal ? (
+            <ScrollView
+              style={assignmentModalStyles.assignmentSideFields}
+              contentContainerStyle={{ gap: 0, paddingBottom: 8, paddingTop: 4 }}
+              showsVerticalScrollIndicator
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+            >
+              {attendanceGoalsContent}
+            </ScrollView>
+          ) : (
+            <View style={{ width: '100%', paddingTop: 4, paddingBottom: 8 }}>
+              {attendanceGoalsContent}
+            </View>
+          )}
         </View>
       </View>
     </View>
@@ -2727,10 +2746,41 @@ export default function PlannerSettingsContent({
         )}
 
         {error && <Text style={{ color: '#DC2626', fontSize: 14, marginTop: 12 }}>{error}</Text>}
+
+        <Modal
+          visible={showNoSubjectsForPerSubjectModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowNoSubjectsForPerSubjectModal(false)}
+        >
+          <View style={comingSoonModalStyles.overlay}>
+            <View style={comingSoonModalStyles.content}>
+              <TouchableOpacity
+                style={comingSoonModalStyles.close}
+                onPress={() => setShowNoSubjectsForPerSubjectModal(false)}
+                hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={20} color="#6b7280" />
+              </TouchableOpacity>
+              <Text style={comingSoonModalStyles.title}>Add subjects first</Text>
+              <Text style={comingSoonModalStyles.body}>
+                There are no subjects for this school year yet. Add subjects first, then you can set per-subject tracking goals.
+              </Text>
+              <TouchableOpacity
+                style={comingSoonModalStyles.button}
+                onPress={() => setShowNoSubjectsForPerSubjectModal(false)}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={comingSoonModalStyles.buttonText}>Got it</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       </View>
   );
 
-  if (useTwoColumnModalLayout) {
+  if (useTwoColumnModalLayout && embeddedInModal) {
     return settingsInner;
   }
 

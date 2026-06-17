@@ -626,7 +626,7 @@ def resolve_run_dates_for_scope(
         resolved_end = date(school_start_year, 12, 31)
     elif duration_scope == "spring_term":
         resolved_start = date(school_start_year + 1, 1, 1)
-        resolved_end = date(school_start_year + 1, 5, 1)
+        resolved_end = date(school_start_year + 1, 5, 31)
     else:
         raise HTTPException(
             status_code=400,
