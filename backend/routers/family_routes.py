@@ -67,6 +67,32 @@ class PendingTutorInviteRow(BaseModel):
     email: Optional[str] = None
     sent_at: Optional[str] = None
     child_scope: List[str] = Field(default_factory=list)
+    avatar_url: Optional[str] = None
+    tutor_permission_profile: Optional[str] = None
+
+
+class GuestMemberOut(BaseModel):
+    id: str
+    role: str
+    display_name: str
+    avatar_url: Optional[str] = None
+    child_scope: List[str] = Field(default_factory=list)
+    tutor_permission_profile: Optional[str] = None
+
+
+class GuestMemberIn(BaseModel):
+    role: str = Field(..., description="parent or tutor")
+    display_name: str = Field(..., min_length=1, max_length=40)
+    avatar_url: str = Field(..., min_length=1)
+    child_ids: List[str] = Field(default_factory=list)
+    tutor_permission_profile: Optional[str] = None
+
+
+class GuestMemberUpdateIn(BaseModel):
+    display_name: Optional[str] = Field(None, min_length=1, max_length=40)
+    avatar_url: Optional[str] = None
+    child_ids: Optional[List[str]] = None
+    tutor_permission_profile: Optional[str] = None
 
 
 class FamilyMembersOut(BaseModel):
@@ -83,12 +109,16 @@ class FamilyMembersOut(BaseModel):
     child_invite_summaries: Dict[str, ChildInviteSummaryOut] = Field(default_factory=dict)
     pending_tutor_invites: List[PendingTutorInviteRow] = Field(default_factory=list)
     pending_parent_invites: List[PendingTutorInviteRow] = Field(default_factory=list)
+    guest_members: List[GuestMemberOut] = Field(default_factory=list)
 
 class InviteTutorIn(BaseModel):
     email: EmailStr = Field(..., description="Email of the member to invite")
     role: str = Field("tutor", description="Role: 'tutor', 'child', or 'parent'")
     child_ids: List[str] = Field(default_factory=list, description="List of child IDs (required for tutors, single ID for children, empty for parents)")
     tutor_name: Optional[str] = Field(None, description="Optional display name for tutor invites")
+    parent_name: Optional[str] = Field(None, description="Optional display name for parent invites")
+    invited_avatar_url: Optional[str] = Field(None, description="Optional prof avatar key for the invite")
+    guest_member_id: Optional[str] = Field(None, description="Guest profile row to consume when sending invite")
     child_permission_profile: Optional[str] = Field(None, description="Optional child permission profile for child invites")
     tutor_permission_profile: Optional[str] = Field(None, description="Optional tutor permission profile for tutor invites")
 
@@ -354,7 +384,7 @@ def _pending_tutor_invites(supabase, family_id: str) -> List[PendingTutorInviteR
         try:
             invite_res = (
                 supabase.table("invites")
-                .select("id, email, invited_name, created_at, accepted_at, expires_at, child_scope")
+                .select("id, email, invited_name, invited_avatar_url, tutor_permission_profile, created_at, accepted_at, expires_at, child_scope")
                 .eq("family_id", family_id)
                 .eq("role", "tutor")
                 .execute()
@@ -398,6 +428,12 @@ def _pending_tutor_invites(supabase, family_id: str) -> List[PendingTutorInviteR
                 email=str(invite.get("email") or "").strip() or None,
                 sent_at=_iso_or_none(invite.get("created_at")),
                 child_scope=child_scope,
+                avatar_url=_validate_bundled_avatar(invite.get("invited_avatar_url")),
+                tutor_permission_profile=(
+                    _normalize_tutor_permission_profile(invite.get("tutor_permission_profile"))
+                    if invite.get("tutor_permission_profile") is not None
+                    else None
+                ),
             )
             if row.email:
                 existing = latest_by_email.get(row.email)
@@ -419,7 +455,7 @@ def _pending_parent_invites(supabase, family_id: str) -> List[PendingTutorInvite
         try:
             invites_res = (
                 supabase.table("invites")
-                .select("id, email, invited_name, created_at, accepted_at, expires_at")
+                .select("id, email, invited_name, invited_avatar_url, created_at, accepted_at, expires_at")
                 .eq("family_id", family_id)
                 .eq("role", "parent")
                 .order("created_at", desc=True)
@@ -454,6 +490,7 @@ def _pending_parent_invites(supabase, family_id: str) -> List[PendingTutorInvite
                 email=str(invite.get("email") or "").strip() or None,
                 sent_at=_iso_or_none(invite.get("created_at")),
                 child_scope=[],
+                avatar_url=_validate_bundled_avatar(invite.get("invited_avatar_url")),
             )
             if row.email:
                 existing = latest_by_email.get(row.email)
@@ -499,6 +536,63 @@ def _normalize_child_permission_profile(value: Optional[str]) -> str:
 def _normalize_tutor_permission_profile(value: Optional[str]) -> str:
     normalized = (value or "").strip().lower()
     return normalized if normalized in TUTOR_PERMISSION_PROFILES else DEFAULT_TUTOR_PERMISSION_PROFILE
+
+
+PROF_AVATAR_KEYS: Set[str] = {f"prof{i}" for i in range(1, 11)}
+
+
+def _validate_bundled_avatar(raw: Optional[str]) -> Optional[str]:
+    if not raw or not isinstance(raw, str):
+        return None
+    key = raw.strip().lower()
+    if key in PROF_AVATAR_KEYS:
+        return key
+    if key.startswith("http://") or key.startswith("https://") or key.startswith("data:"):
+        return raw.strip()
+    return None
+
+
+def _parse_child_scope_list(raw_scope) -> List[str]:
+    if isinstance(raw_scope, list):
+        return [str(x).strip() for x in raw_scope if x is not None and str(x).strip()]
+    if isinstance(raw_scope, str):
+        try:
+            parsed = json.loads(raw_scope)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed if x is not None and str(x).strip()]
+        except Exception:
+            return []
+    return []
+
+
+def _guest_member_out(row: dict) -> GuestMemberOut:
+    return GuestMemberOut(
+        id=str(row.get("id") or ""),
+        role=_norm_member_role(row.get("role")),
+        display_name=str(row.get("display_name") or "").strip(),
+        avatar_url=_validate_bundled_avatar(row.get("avatar_url")),
+        child_scope=_parse_child_scope_list(row.get("child_scope")),
+        tutor_permission_profile=(
+            _normalize_tutor_permission_profile(row.get("tutor_permission_profile"))
+            if _norm_member_role(row.get("role")) == "tutor"
+            else None
+        ),
+    )
+
+
+def _family_guest_members(supabase, family_id: str) -> List[GuestMemberOut]:
+    try:
+        res = (
+            supabase.table("family_guest_members")
+            .select("id, role, display_name, avatar_url, child_scope, tutor_permission_profile")
+            .eq("family_id", family_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        return [_guest_member_out(row) for row in (res.data or []) if row.get("id")]
+    except Exception as e:
+        log_event("family.get_members.guest_members_error", family_id=family_id, error=str(e))
+        return []
 
 
 def _user_is_parent_for_family(supabase, user_id: str, family_id: str) -> bool:
@@ -1101,6 +1195,11 @@ async def get_family_members(
             pending_parent_invites = _pending_parent_invites(supabase, family_id)
         except Exception as e:
             log_event("family.get_members.pending_parent_invites_error", user_id=user["id"], error=str(e))
+        guest_members: List[GuestMemberOut] = []
+        try:
+            guest_members = _family_guest_members(supabase, family_id)
+        except Exception as e:
+            log_event("family.get_members.guest_members_error", user_id=user["id"], error=str(e))
 
         return FamilyMembersOut(
             id=family_id,
@@ -1114,6 +1213,7 @@ async def get_family_members(
             child_invite_summaries=invite_summaries,
             pending_tutor_invites=pending_tutor_invites,
             pending_parent_invites=pending_parent_invites,
+            guest_members=guest_members,
         )
     except HTTPException:
         raise
@@ -1132,6 +1232,7 @@ async def get_family_members(
             child_invite_summaries={},
             pending_tutor_invites=[],
             pending_parent_invites=[],
+            guest_members=[],
         )
 
 
@@ -1658,6 +1759,168 @@ async def unlink_child_login(
     return {"ok": True, "removed_auth_user_ids": removed_auth_ids}
 
 
+@router.post("/guest_members", response_model=GuestMemberOut)
+async def create_guest_member(
+    body: GuestMemberIn,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """Create a parent/tutor profile (name + avatar) before sending an account invite."""
+    role = _norm_member_role(body.role)
+    if role not in ("parent", "tutor"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Role must be parent or tutor")
+
+    display_name = str(body.display_name or "").strip()
+    if not display_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Display name is required")
+
+    avatar_key = _validate_bundled_avatar(body.avatar_url)
+    if not avatar_key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choose a valid avatar")
+
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Family not found")
+
+    supabase = get_admin_client()
+    if not _user_is_parent_for_family(supabase, user["id"], family_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only parents can add family members")
+
+    child_ids = [str(x).strip() for x in (body.child_ids or []) if str(x).strip()]
+    if role == "tutor" and not child_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select at least one child for tutor access")
+    for child_id in child_ids:
+        if not child_belongs_to_family(child_id, family_id):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Child ID {child_id} does not belong to your family")
+
+    tutor_profile = None
+    if role == "tutor":
+        tutor_profile = _normalize_tutor_permission_profile(body.tutor_permission_profile)
+
+    now = datetime.utcnow().isoformat()
+    insert_row = {
+        "family_id": family_id,
+        "role": role,
+        "display_name": display_name[:40],
+        "avatar_url": avatar_key,
+        "child_scope": child_ids,
+        "updated_at": now,
+    }
+    if tutor_profile:
+        insert_row["tutor_permission_profile"] = tutor_profile
+
+    try:
+        res = supabase.table("family_guest_members").insert(insert_row).select("*").single().execute()
+    except Exception as e:
+        log_event("family.create_guest_member.error", user_id=user["id"], error=str(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create family member profile")
+
+    if not res.data:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create family member profile")
+
+    log_event("family.create_guest_member.success", user_id=user["id"], family_id=family_id, guest_id=res.data.get("id"))
+    return _guest_member_out(res.data)
+
+
+@router.patch("/guest_members/{guest_id}", response_model=GuestMemberOut)
+async def update_guest_member(
+    guest_id: str,
+    body: GuestMemberUpdateIn,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """Update a guest parent/tutor profile before invite is sent."""
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Family not found")
+
+    supabase = get_admin_client()
+    if not _user_is_parent_for_family(supabase, user["id"], family_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only parents can update family members")
+
+    try:
+        existing_res = (
+            supabase.table("family_guest_members")
+            .select("*")
+            .eq("id", guest_id)
+            .eq("family_id", family_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as e:
+        log_event("family.update_guest_member.read_error", user_id=user["id"], error=str(e))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Family member not found")
+
+    existing = existing_res.data if existing_res else None
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Family member not found")
+
+    update_payload: dict = {"updated_at": datetime.utcnow().isoformat()}
+    if body.display_name is not None:
+        name = str(body.display_name).strip()
+        if not name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Display name is required")
+        update_payload["display_name"] = name[:40]
+    if body.avatar_url is not None:
+        avatar_key = _validate_bundled_avatar(body.avatar_url)
+        if not avatar_key:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choose a valid avatar")
+        update_payload["avatar_url"] = avatar_key
+    if body.child_ids is not None:
+        child_ids = [str(x).strip() for x in body.child_ids if str(x).strip()]
+        if _norm_member_role(existing.get("role")) == "tutor" and not child_ids:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select at least one child for tutor access")
+        for child_id in child_ids:
+            if not child_belongs_to_family(child_id, family_id):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Child ID {child_id} does not belong to your family")
+        update_payload["child_scope"] = child_ids
+    if body.tutor_permission_profile is not None and _norm_member_role(existing.get("role")) == "tutor":
+        update_payload["tutor_permission_profile"] = _normalize_tutor_permission_profile(body.tutor_permission_profile)
+
+    try:
+        res = (
+            supabase.table("family_guest_members")
+            .update(update_payload)
+            .eq("id", guest_id)
+            .eq("family_id", family_id)
+            .select("*")
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        log_event("family.update_guest_member.error", user_id=user["id"], error=str(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update family member profile")
+
+    if not res.data:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update family member profile")
+
+    return _guest_member_out(res.data)
+
+
+@router.delete("/guest_members/{guest_id}")
+async def delete_guest_member(
+    guest_id: str,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """Remove a guest parent/tutor profile that has not accepted an invite yet."""
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Family not found")
+
+    supabase = get_admin_client()
+    if not _user_is_parent_for_family(supabase, user["id"], family_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only parents can remove family members")
+
+    try:
+        supabase.table("family_guest_members").delete().eq("id", guest_id).eq("family_id", family_id).execute()
+    except Exception as e:
+        log_event("family.delete_guest_member.error", user_id=user["id"], error=str(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to remove family member profile")
+
+    return {"ok": True}
+
+
 @router.post("/invite", response_model=InviteTutorOut)
 async def invite_tutor(
     body: InviteTutorIn,
@@ -1772,29 +2035,54 @@ async def invite_tutor(
                 detail="Only parents can invite members. Self-managed student accounts may invite a parent only."
             )
 
+        guest_member_row = None
+        guest_role = None
+        if body.guest_member_id:
+            try:
+                guest_res = (
+                    supabase.table("family_guest_members")
+                    .select("*")
+                    .eq("id", body.guest_member_id)
+                    .eq("family_id", family_id)
+                    .maybe_single()
+                    .execute()
+                )
+                guest_member_row = guest_res.data if guest_res else None
+            except Exception as guest_err:
+                log_event("family.invite_tutor.guest_lookup_error", user_id=user["id"], error=str(guest_err))
+            if not guest_member_row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Family member profile not found")
+            guest_role = _norm_member_role(guest_member_row.get("role"))
+            if guest_role != _norm_member_role(body.role):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Family member role mismatch")
+
+        effective_child_ids = list(body.child_ids or [])
+        if body.role == "tutor" and guest_member_row and not effective_child_ids:
+            effective_child_ids = _parse_child_scope_list(guest_member_row.get("child_scope"))
+
         # Validate child_ids belong to family
         # For tutors: require at least one child
         # For children: require exactly one child (the child being invited)
         # For parents: child_ids can be empty
         if body.role == "tutor":
-            if not body.child_ids or len(body.child_ids) == 0:
+            if not effective_child_ids:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Tutors must have access to at least one child"
                 )
-            for child_id in body.child_ids:
+            for child_id in effective_child_ids:
                 if not child_belongs_to_family(child_id, family_id):
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Child ID {child_id} does not belong to your family"
                     )
         elif body.role == "child":
-            if not body.child_ids or len(body.child_ids) != 1:
+            if not effective_child_ids or len(effective_child_ids) != 1:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Child invites must specify exactly one child record"
                 )
-            child_id = body.child_ids[0]
+            child_id = effective_child_ids[0]
             if not child_belongs_to_family(child_id, family_id):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -1810,38 +2098,52 @@ async def invite_tutor(
                     detail="Invalid child permission profile"
                 )
 
+        invite_tutor_profile_raw = body.tutor_permission_profile
+        if body.role == "tutor" and invite_tutor_profile_raw is None and guest_member_row:
+            invite_tutor_profile_raw = guest_member_row.get("tutor_permission_profile")
+
         normalized_tutor_profile = None
-        if body.role == "tutor" and body.tutor_permission_profile is not None:
-            normalized_tutor_profile = _normalize_tutor_permission_profile(body.tutor_permission_profile)
-            if normalized_tutor_profile != str(body.tutor_permission_profile).strip().lower():
+        if body.role == "tutor" and invite_tutor_profile_raw is not None:
+            normalized_tutor_profile = _normalize_tutor_permission_profile(invite_tutor_profile_raw)
+            if normalized_tutor_profile != str(invite_tutor_profile_raw).strip().lower():
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid tutor permission profile"
                 )
 
-        if body.role == "child" and normalized_child_profile and body.child_ids and len(body.child_ids) == 1:
+        if body.role == "child" and normalized_child_profile and effective_child_ids and len(effective_child_ids) == 1:
             try:
                 supabase.table("children").update(
                     {"permission_profile": normalized_child_profile}
-                ).eq("id", body.child_ids[0]).eq("family_id", family_id).execute()
+                ).eq("id", effective_child_ids[0]).eq("family_id", family_id).execute()
             except Exception as child_profile_error:
                 log_event(
                     "family.invite_tutor.child_profile_update_error",
                     user_id=user["id"],
-                    child_id=body.child_ids[0],
+                    child_id=effective_child_ids[0],
                     error=str(child_profile_error),
                 )
 
         # Use existing invite system
         import secrets
         from datetime import timedelta
-        
+
         log_event("family.invite_tutor.before_token_gen", user_id=user["id"])
         token = secrets.token_urlsafe(32)
         expires_at = (datetime.now() + timedelta(days=30)).isoformat()
         normalized_tutor_name = (
             str(body.tutor_name or "").strip()[:120] if body.role == "tutor" else ""
         ) or None
+        normalized_parent_name = (
+            str(body.parent_name or "").strip()[:120] if body.role == "parent" else ""
+        ) or None
+        if body.role == "tutor" and not normalized_tutor_name and guest_member_row:
+            normalized_tutor_name = str(guest_member_row.get("display_name") or "").strip()[:120] or None
+        if body.role == "parent" and not normalized_parent_name and guest_member_row:
+            normalized_parent_name = str(guest_member_row.get("display_name") or "").strip()[:120] or None
+        invited_avatar_url = _validate_bundled_avatar(body.invited_avatar_url)
+        if not invited_avatar_url and guest_member_row:
+            invited_avatar_url = _validate_bundled_avatar(guest_member_row.get("avatar_url"))
         log_event("family.invite_tutor.after_token_gen", user_id=user["id"], token_preview=token[:8])
 
         # Create invite
@@ -1878,7 +2180,7 @@ async def invite_tutor(
                         "p_email": body.email,
                         "p_token": token,
                         "p_role": body.role,
-                        "p_child_scope": body.child_ids or [],
+                        "p_child_scope": effective_child_ids or [],
                         "p_expires_at": expires_at,
                         "p_invited_by": user["id"],
                     }
@@ -2004,16 +2306,20 @@ async def invite_tutor(
                     "email": body.email,
                     "token": token,
                     "role": body.role,
-                    "child_scope": body.child_ids or [],
+                    "child_scope": effective_child_ids or [],
                     "expires_at": expires_at,
                     "invited_by": user["id"],
                 }
                 if body.role == "tutor" and normalized_tutor_name:
                     insert_invite["invited_name"] = normalized_tutor_name
+                if body.role == "parent" and normalized_parent_name:
+                    insert_invite["invited_name"] = normalized_parent_name
+                if invited_avatar_url:
+                    insert_invite["invited_avatar_url"] = invited_avatar_url
                 if body.role == "tutor" and normalized_tutor_profile:
                     insert_invite["tutor_permission_profile"] = normalized_tutor_profile
-                if body.role == "child" and body.child_ids and len(body.child_ids) == 1:
-                    insert_invite["child_id"] = body.child_ids[0]
+                if body.role == "child" and effective_child_ids and len(effective_child_ids) == 1:
+                    insert_invite["child_id"] = effective_child_ids[0]
                 try:
                     invite_res = supabase.table("invites").insert(insert_invite).execute()
                 except Exception as invite_insert_err:
@@ -2021,6 +2327,7 @@ async def invite_tutor(
                     if "invited_name" in str(invite_insert_err) or "tutor_permission_profile" in str(invite_insert_err):
                         insert_invite.pop("invited_name", None)
                         insert_invite.pop("tutor_permission_profile", None)
+                        insert_invite.pop("invited_avatar_url", None)
                         invite_res = supabase.table("invites").insert(insert_invite).execute()
                     else:
                         raise
@@ -2063,16 +2370,34 @@ async def invite_tutor(
                 detail="Failed to create invite: No invite was created"
             )
 
-        if body.role == "tutor" and (normalized_tutor_name or normalized_tutor_profile):
+        if body.role == "tutor" and (normalized_tutor_name or normalized_tutor_profile or invited_avatar_url):
             try:
                 tutor_invite_update_payload = {}
                 if normalized_tutor_name:
                     tutor_invite_update_payload["invited_name"] = normalized_tutor_name
                 if normalized_tutor_profile:
                     tutor_invite_update_payload["tutor_permission_profile"] = normalized_tutor_profile
+                if invited_avatar_url:
+                    tutor_invite_update_payload["invited_avatar_url"] = invited_avatar_url
                 supabase.table("invites").update(tutor_invite_update_payload).eq("id", invite.get("id")).execute()
             except Exception:
                 pass
+        elif body.role == "parent" and (normalized_parent_name or invited_avatar_url):
+            try:
+                parent_invite_update_payload = {}
+                if normalized_parent_name:
+                    parent_invite_update_payload["invited_name"] = normalized_parent_name
+                if invited_avatar_url:
+                    parent_invite_update_payload["invited_avatar_url"] = invited_avatar_url
+                supabase.table("invites").update(parent_invite_update_payload).eq("id", invite.get("id")).execute()
+            except Exception:
+                pass
+
+        if body.guest_member_id and guest_member_row:
+            try:
+                supabase.table("family_guest_members").delete().eq("id", body.guest_member_id).eq("family_id", family_id).execute()
+            except Exception as guest_delete_err:
+                log_event("family.invite_tutor.guest_delete_error", user_id=user["id"], error=str(guest_delete_err))
 
         # Generate invite URLs: copy link = landing page; email button = create-password page (for child) or same (for others)
         invite_landing_base = os.environ.get("INVITE_LANDING_URL", "https://learnadoodle.com")

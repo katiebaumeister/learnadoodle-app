@@ -33,6 +33,7 @@ import {
   deleteBulletinPost,
   updateBulletinPost,
   displayNameForUser,
+  avatarSourceForUser,
   mergeFamilyMemberProfiles,
   formatBulletinTimestamp,
   formatStreamTimestamp,
@@ -41,7 +42,7 @@ import {
 } from '../../lib/services/bulletinClient';
 import { resolveBundledAvatarSource, LEARNADOODLE_ICON_ASSET } from '../../assets/imageAssetMap';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
-import { getChildColorFromAvatar } from '../../utils/avatarColors';
+import { getChildColorFromAvatar, hexToRgba } from '../../utils/avatarColors';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import ConfirmDialog from '../ConfirmDialog';
 import CreateModalShell from '../create/shared/CreateModalShell';
@@ -100,11 +101,15 @@ function findChildForUserId(userId, children = [], familyMembers = []) {
   return null;
 }
 
-function resolveBulletinAuthorAvatarBackground(isLearnadoodle, userId, children = [], familyMembers = []) {
+function resolveBulletinAuthorAvatarBackground(isLearnadoodle, userId, children = [], familyMembers = [], profileMap = null) {
   if (isLearnadoodle) return BULLETIN_PARENT_AVATAR_BG;
   const child = findChildForUserId(userId, children, familyMembers);
   if (child) {
     return getChildColorFromAvatar(child.avatar_key || child.avatar_url || child.avatar);
+  }
+  const profile = profileMap?.get?.(String(userId));
+  if (profile?.avatarUrl) {
+    return hexToRgba(getChildColorFromAvatar(profile.avatarUrl), 0.55);
   }
   return BULLETIN_PARENT_AVATAR_BG;
 }
@@ -135,7 +140,10 @@ function BulletinAuthorAvatar({ source, backgroundColor, isLearnadoodle = false 
   );
 }
 
-function avatarSourceForUserId(userId) {
+function avatarSourceForUserId(userId, profileMap = null) {
+  if (profileMap) {
+    return avatarSourceForUser(profileMap, userId);
+  }
   const raw = String(userId || '');
   if (!raw) return resolveBundledAvatarSource('prof1');
   let hash = 0;
@@ -186,12 +194,13 @@ function BulletinPostCard({
     ? LEARNADOODLE_ICON_ASSET
     : childAuthor
       ? sourceForChild(childAuthor)
-      : avatarSourceForUserId(post.authorUserId);
+      : avatarSourceForUserId(post.authorUserId, profileMap);
   const authorAvatarBackground = resolveBulletinAuthorAvatarBackground(
     isLearnadoodlePost,
     post.authorUserId,
     familyChildren,
-    familyMembers
+    familyMembers,
+    profileMap
   );
 
   const handlePostComment = async () => {
@@ -455,6 +464,8 @@ function resolveContextMenuPoint(nativeEvent) {
   return { x: x ?? 0, y: y ?? 0 };
 }
 
+const ANNOUNCEMENT_STREAM_MENU_WIDTH = 248;
+
 const StreamPostMenu = forwardRef(function StreamPostMenu({
   post,
   onEdit,
@@ -578,7 +589,7 @@ function AuthorBulletinPostCard({
           onDelete={onDelete}
           editLabel="Edit Announcement"
           deleteLabel="Delete Announcement"
-          menuWidth={220}
+          menuWidth={ANNOUNCEMENT_STREAM_MENU_WIDTH}
         />
       )}
     />
@@ -614,7 +625,7 @@ function ParentAssignmentStreamCard({
           onDelete={onDelete}
           editLabel="Edit assignment"
           deleteLabel="Delete assignment"
-          menuWidth={220}
+          menuWidth={ANNOUNCEMENT_STREAM_MENU_WIDTH}
         />
       )}
     />
@@ -790,6 +801,7 @@ export default function BulletinBoardSection({
     }),
     [streamPosts, activityItems, subjectById, profileMap, filterSubjectId]
   );
+
   const detailPost = detailEntry?.kind === 'post' ? detailEntry.payload : null;
   const canManageDetailPost = Boolean(
     detailPost
@@ -1372,7 +1384,7 @@ export default function BulletinBoardSection({
                   />
                 );
               })
-            )}
+        )}
       </ScrollView>
 
       <ConfirmDialog
@@ -1417,7 +1429,7 @@ export default function BulletinBoardSection({
               post={detailPost}
               editLabel="Edit Announcement"
               deleteLabel="Delete Announcement"
-              menuWidth={220}
+              menuWidth={ANNOUNCEMENT_STREAM_MENU_WIDTH}
               onEdit={(post) => {
                 setDetailEntry(null);
                 openEditPost(post);

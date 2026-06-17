@@ -9,6 +9,7 @@ import {
   getOnboardingStatus,
   getFamilyMembers,
   permanentDeleteChild,
+  saveOnboardingParentProfile,
 } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { persistStudentSelfSignupFromOnboarding } from '../../lib/services/accountPrefsClient';
@@ -17,9 +18,12 @@ import WelcomeStep from './WelcomeStep';
 import PlanningModeStep from './PlanningModeStep';
 import LearningContextStep from './LearningContextStep';
 import AddChildStep from './AddChildStep';
+import ParentProfileStep from './ParentProfileStep';
 import CompleteStep from './CompleteStep';
+import { seedHomeWelcomeBulletinPost } from '../../lib/homeWelcomeBulletin';
 
-const STEPS = ['welcome', 'planning_mode', 'learning_context', 'add_child', 'complete'];
+const STEPS = ['welcome', 'planning_mode', 'parent_profile', 'learning_context', 'add_child', 'complete'];
+const ONBOARDING_WHO_STORAGE_KEY = 'ld_onboarding_who';
 
 export default function OnboardingModal({
   visible,
@@ -35,6 +39,8 @@ export default function OnboardingModal({
   const [onboardingWho, setOnboardingWho] = useState('parent'); // 'parent' | 'student' from "I'm using Learnadoodle for..."
   const [planningMode, setPlanningMode] = useState(initialPlanningMode);
   const [createdChildren, setCreatedChildren] = useState([]); // [{ id, name }]
+  const [parentDisplayName, setParentDisplayName] = useState('');
+  const [parentAvatarKey, setParentAvatarKey] = useState('prof1');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState(null);
   const [resuming, setResuming] = useState(true);
@@ -83,13 +89,35 @@ export default function OnboardingModal({
         const res = await getOnboardingStatus();
         const data = res?.data ?? res;
         if (cancelled) return;
+        let persistedWho = null;
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          persistedWho = localStorage.getItem(ONBOARDING_WHO_STORAGE_KEY);
+          if (persistedWho === 'parent' || persistedWho === 'student') {
+            setOnboardingWho(persistedWho);
+          }
+        }
+        const isStudentFlow = persistedWho === 'student';
         if (data?.onboarding_completed) {
           if (onCompleted) onCompleted();
           return;
         }
         if (!data?.default_planning_mode) {
-          setStep('welcome');
-          setPlanningMode(initialPlanningMode ?? null);
+          if (!isStudentFlow && data?.has_parent_profile) {
+            setStep('learning_context');
+            setPlanningMode(initialPlanningMode ?? null);
+            setParentDisplayName(data.parent_display_name || '');
+            setParentAvatarKey(data.parent_avatar_url || 'prof1');
+            setCreatedChildren([]);
+          } else {
+            setStep('welcome');
+            setPlanningMode(initialPlanningMode ?? null);
+            setCreatedChildren([]);
+          }
+        } else if (!isStudentFlow && data?.has_parent_profile === false) {
+          setStep('parent_profile');
+          setPlanningMode(data.default_planning_mode);
+          setParentDisplayName(data.parent_display_name || '');
+          setParentAvatarKey(data.parent_avatar_url || 'prof1');
           setCreatedChildren([]);
         } else if (!data?.has_children) {
           setStep('add_child');
@@ -123,6 +151,28 @@ export default function OnboardingModal({
     setError(null);
     const idx = STEPS.indexOf(step);
     if (idx > 0) transitionToStep(STEPS[idx - 1]);
+  };
+
+  const persistParentProfile = async ({ displayName, avatarKey }) => {
+    setIsSaving(true);
+    setError(null);
+    try {
+      const res = await saveOnboardingParentProfile({
+        display_name: displayName,
+        avatar_url: avatarKey,
+      });
+      if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to save profile.');
+      setParentDisplayName(displayName);
+      setParentAvatarKey(avatarKey);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshProfile'));
+      }
+      transitionToStep('learning_context');
+    } catch (e) {
+      setError(e?.message ?? 'Failed to save your profile.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const persistPlanningMode = () => {
@@ -283,6 +333,11 @@ export default function OnboardingModal({
     try {
       const res = await completeOnboarding({ family_id: fid, onboarding_who: onboardingWho });
       if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to complete.');
+      try {
+        await seedHomeWelcomeBulletinPost({ familyId: fid, planningMode });
+      } catch (seedErr) {
+        console.warn('[OnboardingModal] home welcome bulletin', seedErr);
+      }
       if (onboardingWho === 'student') {
         const { data: authData } = await supabase.auth.getUser();
         const uid = authData?.user?.id;
@@ -293,6 +348,7 @@ export default function OnboardingModal({
       }
       // Dispatch first so WebLayout can close modal immediately (avoids depending on refetch, e.g. 429)
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        localStorage.removeItem(ONBOARDING_WHO_STORAGE_KEY);
         window.dispatchEvent(new CustomEvent('onboardingCompleted', {
           detail: { planningMode: planningMode || null },
         }));
@@ -380,8 +436,19 @@ export default function OnboardingModal({
                         setCreatedChildren([]);
                       }
                       setOnboardingWho(newWho);
-                      transitionToStep('learning_context');
+                      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                        localStorage.setItem(ONBOARDING_WHO_STORAGE_KEY, newWho);
+                      }
+                      transitionToStep(newWho === 'parent' ? 'parent_profile' : 'learning_context');
                     }}
+                    isSaving={isSaving}
+                  />
+                </View>
+                <View style={step === 'parent_profile' ? undefined : styles.stepHidden}>
+                  <ParentProfileStep
+                    initialName={parentDisplayName}
+                    initialAvatar={parentAvatarKey}
+                    onNext={persistParentProfile}
                     isSaving={isSaving}
                   />
                 </View>

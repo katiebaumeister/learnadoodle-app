@@ -1,4 +1,5 @@
 /**
+ * @deprecated Unused — welcome is seeded via homeWelcomeBulletin.js.
  * Mode-aware post-onboarding setup checklist (Home rail — not chatbot).
  */
 

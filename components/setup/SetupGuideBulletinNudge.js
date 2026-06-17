@@ -1,5 +1,5 @@
 /**
- * Lightweight bulletin-style nudge when setup guide card is dismissed.
+ * @deprecated Replaced by SetupWelcomeBulletinPost inside BulletinBoardSection.
  */
 
 import React from 'react';

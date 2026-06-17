@@ -6,16 +6,24 @@ import {
   StyleSheet,
   Modal as RNModal,
   Platform,
-  TextInput,
-  ActivityIndicator,
+  ScrollView,
 } from 'react-native';
-import { AlertTriangle, CheckSquare, ChevronDown, ChevronUp, Square } from 'lucide-react';
-import { inviteTutor, updateTutorScope } from '../lib/apiClient';
+import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import {
+  inviteTutor,
+  updateTutorScope,
+  createGuestMember,
+  updateGuestMember,
+  deleteGuestMember,
+} from '../lib/apiClient';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
 import { DEFAULT_TUTOR_PROFILE, normalizeTutorProfile } from '../lib/permissions/userPermissionProfiles';
+import FamilyAdultProfileFields, { isFamilyAdultProfileComplete } from './family/FamilyAdultProfileFields';
+import FamilyMemberAccountSection from './family/FamilyMemberAccountSection';
+import { DEFAULT_AVATAR_KEY } from '../lib/onboardingProfAvatars';
 
 function normalizeScope(scope) {
   if (Array.isArray(scope)) return scope.map((x) => String(x)).filter(Boolean);
@@ -34,30 +42,36 @@ export default function EditTutorModal({
   visible,
   onClose,
   tutor,
-  children = [],
+  familyChildren = [],
   onTutorUpdated,
+  onInviteSent,
 }) {
   const toast = useToast();
   const [selectedChildIds, setSelectedChildIds] = useState([]);
   const [displayName, setDisplayName] = useState('');
+  const [avatarKey, setAvatarKey] = useState(DEFAULT_AVATAR_KEY);
+  const [savedGuestId, setSavedGuestId] = useState(null);
   const [email, setEmail] = useState('');
   const [tutorPermissionProfile, setTutorPermissionProfile] = useState(DEFAULT_TUTOR_PROFILE);
   const [isSaving, setIsSaving] = useState(false);
+  const [inviting, setInviting] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
   const [error, setError] = useState(null);
-  const [savingInviteEmail, setSavingInviteEmail] = useState(false);
 
   const isNewTutor = tutor?.isNew === true || String(tutor?.id || '').startsWith('draft-');
-  const isPendingInvite = !isNewTutor && tutor?.invite_status === 'pending';
-  const tutorName = isNewTutor ? 'Add tutor' : (tutor?.name || tutor?.email || 'Tutor');
+  const isGuest = Boolean(tutor?.isGuest || savedGuestId);
+  const isPendingInvite = !isNewTutor && !isGuest && (tutor?.invite_status === 'pending' || tutor?.isPendingInvite);
+  const isConnected = !isNewTutor && !isGuest && !isPendingInvite && Boolean(tutor?.user_id || tutor?.email);
+  const profileSaved = Boolean(isConnected || isPendingInvite || isGuest || savedGuestId);
+  const tutorName = isNewTutor && !savedGuestId ? 'Add tutor' : (displayName.trim() || tutor?.name || tutor?.email || 'Tutor');
 
   const childOptions = useMemo(
     () =>
-      (children || []).map((child) => ({
+      (familyChildren || []).map((child) => ({
         id: String(child?.id || ''),
         name: child?.name || child?.first_name || 'Child',
       })),
-    [children]
+    [familyChildren]
   );
 
   useEffect(() => {
@@ -69,7 +83,9 @@ export default function EditTutorModal({
     const normalizedName = incomingName && incomingName !== incomingEmail ? incomingName : '';
     setSelectedChildIds(knownScope.length > 0 ? knownScope : fallbackScope);
     setDisplayName(normalizedName);
+    setAvatarKey(tutor?.avatar_url || DEFAULT_AVATAR_KEY);
     setEmail(incomingEmail);
+    setSavedGuestId(tutor?.isGuest ? String(tutor.id || '') : null);
     setTutorPermissionProfile(normalizeTutorProfile(tutor?.tutor_permission_profile || DEFAULT_TUTOR_PROFILE));
     setError(null);
     setShowDangerZone(false);
@@ -80,7 +96,7 @@ export default function EditTutorModal({
       setError(null);
       setShowDangerZone(false);
       setIsSaving(false);
-      setSavingInviteEmail(false);
+      setInviting(false);
     }
   }, [visible]);
 
@@ -90,29 +106,42 @@ export default function EditTutorModal({
     );
   };
 
-  const handleSaveScope = async () => {
-    if (!tutor) return;
+  const persistGuestProfile = async () => {
+    if (!isFamilyAdultProfileComplete(displayName, avatarKey)) {
+      setError('Enter a name and choose an avatar.');
+      return null;
+    }
     if (selectedChildIds.length === 0) {
       setError('Select at least one child this tutor can access.');
-      return;
+      return null;
     }
+    const payload = {
+      role: 'tutor',
+      display_name: displayName.trim(),
+      avatar_url: avatarKey,
+      child_ids: selectedChildIds,
+      tutor_permission_profile: normalizeTutorProfile(tutorPermissionProfile),
+    };
+    if (savedGuestId) {
+      const { data, error: patchErr } = await updateGuestMember(savedGuestId, payload);
+      if (patchErr) throw patchErr;
+      return data;
+    }
+    if (isNewTutor || isGuest) {
+      const { data, error: createErr } = await createGuestMember(payload);
+      if (createErr) throw createErr;
+      if (data?.id) setSavedGuestId(String(data.id));
+      return data;
+    }
+    return null;
+  };
+
+  const handleSave = async () => {
+    if (!tutor) return;
     setIsSaving(true);
     setError(null);
     try {
-      if (isNewTutor || isPendingInvite) {
-        if (!email.trim()) {
-          throw new Error('Enter an email address for this tutor.');
-        }
-        const { error: inviteError } = await inviteTutor({
-          email: email.trim(),
-          role: 'tutor',
-          child_ids: selectedChildIds,
-          tutor_name: displayName.trim() || null,
-          tutor_permission_profile: normalizeTutorProfile(tutorPermissionProfile),
-        });
-        if (inviteError) throw inviteError;
-        toast.push(isNewTutor ? 'Tutor added. Invite sent!' : 'Tutor invite updated and re-sent.', 'success');
-      } else {
+      if (isConnected) {
         const { error: patchError } = await updateTutorScope(tutor.id, {
           child_ids: selectedChildIds,
           display_name: displayName.trim() || null,
@@ -120,8 +149,35 @@ export default function EditTutorModal({
         });
         if (patchError) throw patchError;
         toast.push('Tutor access updated.', 'success');
+        onTutorUpdated?.();
+        onClose?.();
+        return;
       }
+
+      if (isPendingInvite) {
+        if (!email.trim()) {
+          throw new Error('Enter an email address for this tutor.');
+        }
+        const { data, error: inviteError } = await inviteTutor({
+          email: email.trim(),
+          role: 'tutor',
+          child_ids: selectedChildIds,
+          tutor_name: displayName.trim() || null,
+          invited_avatar_url: avatarKey,
+          tutor_permission_profile: normalizeTutorProfile(tutorPermissionProfile),
+        });
+        if (inviteError) throw inviteError;
+        toast.push('Tutor invite updated and re-sent.', 'success');
+        if (data?.invite_url) onInviteSent?.(data.invite_url);
+        onTutorUpdated?.();
+        onClose?.();
+        return;
+      }
+
+      await persistGuestProfile();
+      toast.push(isNewTutor && !savedGuestId ? 'Tutor added.' : 'Tutor profile saved.', 'success');
       onTutorUpdated?.();
+      if (isNewTutor && !isPendingInvite) return;
       onClose?.();
     } catch (err) {
       setError(err?.message || 'Could not update tutor settings.');
@@ -130,29 +186,33 @@ export default function EditTutorModal({
     }
   };
 
-  const handleSaveEmailAndResend = async () => {
-    if (!tutor || !isPendingInvite) return;
-    if (!email.trim()) {
-      setError('Enter an email address before resending.');
-      return;
-    }
-    setSavingInviteEmail(true);
+  const handleSendInvite = async (inviteEmail) => {
+    setInviting(true);
     setError(null);
     try {
-      const { error: inviteError } = await inviteTutor({
-        email: email.trim(),
+      let guestId = savedGuestId;
+      if (!guestId) {
+        const created = await persistGuestProfile();
+        guestId = created?.id ? String(created.id) : savedGuestId;
+      }
+      const { data, error: inviteError } = await inviteTutor({
+        email: inviteEmail.trim(),
         role: 'tutor',
-        child_ids: selectedChildIds.length > 0 ? selectedChildIds : childOptions.map((c) => c.id),
+        child_ids: selectedChildIds,
         tutor_name: displayName.trim() || null,
+        invited_avatar_url: avatarKey,
+        tutor_permission_profile: normalizeTutorProfile(tutorPermissionProfile),
+        guest_member_id: guestId || null,
       });
       if (inviteError) throw inviteError;
-      toast.push('Tutor invite sent.', 'success');
+      toast.push('Tutor invite sent!', 'success');
+      if (data?.invite_url) onInviteSent?.(data.invite_url);
       onTutorUpdated?.();
       onClose?.();
     } catch (err) {
-      setError(err?.message || 'Could not resend invite.');
+      setError(err?.message || 'Could not send invite.');
     } finally {
-      setSavingInviteEmail(false);
+      setInviting(false);
     }
   };
 
@@ -161,10 +221,15 @@ export default function EditTutorModal({
     setIsSaving(true);
     setError(null);
     try {
-      const { error: patchError } = await updateTutorScope(tutor.id, { child_ids: [] });
-      if (patchError) throw patchError;
-      setSelectedChildIds([]);
-      toast.push('Tutor access removed.', 'success');
+      if (savedGuestId) {
+        const { error: delErr } = await deleteGuestMember(savedGuestId);
+        if (delErr) throw delErr;
+        toast.push('Tutor removed.', 'success');
+      } else {
+        const { error: patchError } = await updateTutorScope(tutor.id, { child_ids: [] });
+        if (patchError) throw patchError;
+        toast.push('Tutor access removed.', 'success');
+      }
       onTutorUpdated?.();
       onClose?.();
     } catch (err) {
@@ -184,23 +249,18 @@ export default function EditTutorModal({
             title={tutorName}
             onClose={onClose}
             shellStyle={styles.compactShell}
-            bodyStyle={styles.compactBody}
-            scrollerStyle={styles.compactScroller}
-            contentContainerStyle={styles.scrollContent}
+            bodyStyle={styles.shellBody}
+            contentContainerStyle={styles.contentContainer}
             footer={(
               <ModalFooter
                 mode="edit"
-                primaryLabel={
-                  isSaving
-                    ? 'Saving...'
-                    : (isNewTutor ? 'Add tutor' : 'Save changes')
-                }
-                destructiveLabel={isPendingInvite || isNewTutor ? null : 'Remove access'}
+                primaryLabel={isSaving ? 'Saving...' : (isNewTutor && !profileSaved ? 'Add tutor' : 'Save changes')}
+                destructiveLabel={isConnected ? 'Remove access' : (isGuest || savedGuestId ? 'Remove tutor' : null)}
                 onCancel={onClose}
-                onDelete={isPendingInvite ? undefined : () => setShowDangerZone((v) => !v)}
-                onPrimary={handleSaveScope}
+                onDelete={isConnected || isGuest || savedGuestId ? () => setShowDangerZone((v) => !v) : undefined}
+                onPrimary={handleSave}
                 accent="#9ECFFB"
-                disabled={isSaving || savingInviteEmail}
+                disabled={isSaving || inviting}
                 loading={isSaving}
               />
             )}
@@ -211,155 +271,105 @@ export default function EditTutorModal({
               </View>
             ) : null}
 
-            <View style={styles.formStack}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <FamilyAdultProfileFields
+                displayName={displayName}
+                avatarKey={avatarKey}
+                onDisplayNameChange={setDisplayName}
+                onAvatarChange={setAvatarKey}
+                disabled={isSaving || inviting}
+                nameLabel="What should we call them?"
+                namePlaceholder="Professor Doodle"
+              />
+
               <View style={styles.formGroup}>
                 <Text style={styles.fieldLabel}>Children access</Text>
                 <Text style={styles.fieldHint}>Select which children this tutor can view and manage.</Text>
-                <View style={styles.childList}>
+                <View style={styles.childChipRow}>
+                  {childOptions.length === 0 ? (
+                    <Text style={styles.fieldHint}>Add a child to your family first, then assign tutor access.</Text>
+                  ) : null}
                   {childOptions.map((child) => {
-                    const checked = selectedChildIds.includes(child.id);
+                    const isSelected = selectedChildIds.includes(child.id);
                     return (
                       <TouchableOpacity
                         key={child.id}
-                        style={styles.childRow}
+                        style={[styles.childChip, isSelected && styles.childChipActive]}
                         onPress={() => toggleChildAccess(child.id)}
                         activeOpacity={0.85}
+                        disabled={isSaving || inviting}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        {checked ? <CheckSquare size={18} color="#6BB3E8" /> : <Square size={18} color="#94a3b8" />}
-                        <Text style={styles.childRowText}>{child.name}</Text>
+                        <Text style={[styles.childChipText, isSelected && styles.childChipTextActive]}>
+                          {child.name}
+                        </Text>
                       </TouchableOpacity>
                     );
                   })}
                 </View>
               </View>
 
-              <View style={styles.formGroup}>
-                <Text style={styles.fieldLabel}>Tutor name</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  value={displayName}
-                  onChangeText={setDisplayName}
-                  placeholder="Professor Doodle"
-                  placeholderTextColor="#9ca3af"
-                  autoCapitalize="words"
-                  autoCorrect={false}
+              {profileSaved && !isConnected ? (
+                <FamilyMemberAccountSection
+                  roleLabel="tutor"
+                  inviteStatus={isPendingInvite ? 'pending' : 'none'}
+                  pendingEmail={email || null}
+                  onSendInvite={handleSendInvite}
+                  inviting={inviting}
+                  disabled={isSaving}
                 />
-                {isNewTutor ? (
-                  <>
-                    <Text style={[styles.fieldLabel, styles.fieldLabelSpaced]}>Email</Text>
-                    <TextInput
-                      style={styles.fieldInput}
-                      value={email}
-                      onChangeText={setEmail}
-                      placeholder="tutor@email.com"
-                      placeholderTextColor="#9ca3af"
-                      autoCapitalize="none"
-                      keyboardType="email-address"
-                      autoCorrect={false}
-                    />
-                    <Text style={styles.fieldHint}>
-                      An invite will be sent to this email when you add the tutor.
-                    </Text>
-                  </>
-                ) : isPendingInvite ? (
-                  <>
-                    <Text style={styles.pendingTitle}>Invite sent</Text>
-                    <TextInput
-                      style={styles.fieldInput}
-                      value={email}
-                      onChangeText={setEmail}
-                      placeholder="tutor@email.com"
-                      placeholderTextColor="#9ca3af"
-                      autoCapitalize="none"
-                      keyboardType="email-address"
-                      autoCorrect={false}
-                    />
-                    <Text style={styles.pendingWait}>Waiting for acceptance</Text>
-                    <View style={styles.accountButtons}>
+              ) : null}
+
+              {isConnected ? (
+                <View style={styles.accountConnectedWrap}>
+                  <Text style={styles.sectionTitle}>Account</Text>
+                  <View style={styles.accountRule} />
+                  <Text style={styles.connectedLine}>
+                    {email ? `✓ Connected · ${email}` : 'Tutor account connected'}
+                  </Text>
+                </View>
+              ) : null}
+
+              {(isConnected || isGuest || savedGuestId) && !isPendingInvite ? (
+                <View style={styles.dangerZoneAccordion}>
+                  <TouchableOpacity
+                    onPress={() => setShowDangerZone((v) => !v)}
+                    style={styles.dangerZoneHeader}
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={styles.dangerZoneHeaderLeft}>
+                      <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
+                      <Text style={styles.dangerZoneTitle}>Danger zone</Text>
+                    </View>
+                    {showDangerZone ? (
+                      <ChevronUp size={20} color={colors.redBold || '#dc2626'} />
+                    ) : (
+                      <ChevronDown size={20} color={colors.redBold || '#dc2626'} />
+                    )}
+                  </TouchableOpacity>
+                  {showDangerZone ? (
+                    <View style={styles.dangerZoneContent}>
+                      <Text style={styles.dangerHint}>
+                        {savedGuestId
+                          ? 'Remove this tutor profile from your family.'
+                          : 'Remove all child access for this tutor. This does not delete their account.'}
+                      </Text>
                       <TouchableOpacity
-                        style={styles.accountOutlineButton}
-                        onPress={handleSaveEmailAndResend}
-                        activeOpacity={0.8}
-                        disabled={savingInviteEmail}
-                        {...(Platform.OS === 'web' && { cursor: savingInviteEmail ? 'not-allowed' : 'pointer' })}
+                        style={styles.dangerButton}
+                        onPress={handleRemoveAllAccess}
+                        disabled={isSaving}
+                        {...(Platform.OS === 'web' && { cursor: isSaving ? 'not-allowed' : 'pointer' })}
                       >
-                        {savingInviteEmail ? (
-                          <ActivityIndicator size="small" color="#475569" />
-                        ) : (
-                          <Text style={styles.accountOutlineButtonText}>Resend invite</Text>
-                        )}
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.accountOutlineButton}
-                        onPress={handleSaveEmailAndResend}
-                        activeOpacity={0.8}
-                        disabled={savingInviteEmail}
-                        {...(Platform.OS === 'web' && { cursor: savingInviteEmail ? 'not-allowed' : 'pointer' })}
-                      >
-                        <Text style={styles.accountOutlineButtonText}>Change email</Text>
+                        <Text style={styles.dangerButtonText}>
+                          {isSaving ? 'Removing...' : (savedGuestId ? 'Remove tutor' : 'Remove all access')}
+                        </Text>
                       </TouchableOpacity>
                     </View>
-                  </>
-                ) : (
-                  <>
-                    <Text style={styles.connectedLine}>
-                      {email ? `✓ Connected · ${email}` : 'Tutor account connected'}
-                    </Text>
-                    <Text style={styles.fieldHint}>
-                      This tutor can access only the selected children from this section.
-                    </Text>
-                  </>
-                )}
-              </View>
-
-              {!isNewTutor ? (
-              <View style={styles.dangerZoneAccordion}>
-                <TouchableOpacity
-                  onPress={() => setShowDangerZone((v) => !v)}
-                  style={styles.dangerZoneHeader}
-                  activeOpacity={0.8}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.dangerZoneHeaderLeft}>
-                    <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
-                    <Text style={styles.dangerZoneTitle}>Danger zone</Text>
-                  </View>
-                  {showDangerZone ? (
-                    <ChevronUp size={20} color={colors.redBold || '#dc2626'} />
-                  ) : (
-                    <ChevronDown size={20} color={colors.redBold || '#dc2626'} />
-                  )}
-                </TouchableOpacity>
-                {showDangerZone ? (
-                  <View style={styles.dangerZoneContent}>
-                    {isPendingInvite ? (
-                      <Text style={styles.dangerHint}>
-                        Pending tutor invites can be updated by changing the email and resending above.
-                      </Text>
-                    ) : (
-                      <>
-                        <Text style={styles.dangerHint}>
-                          Remove all child access for this tutor. This does not delete their account.
-                        </Text>
-                        <TouchableOpacity
-                          style={styles.dangerButton}
-                          onPress={handleRemoveAllAccess}
-                          disabled={isSaving}
-                          activeOpacity={0.8}
-                          {...(Platform.OS === 'web' && { cursor: isSaving ? 'not-allowed' : 'pointer' })}
-                        >
-                          <Text style={styles.dangerButtonText}>
-                            {isSaving ? 'Removing access...' : 'Remove all access'}
-                          </Text>
-                        </TouchableOpacity>
-                      </>
-                    )}
-                  </View>
-                ) : null}
-              </View>
+                  ) : null}
+                </View>
               ) : null}
-            </View>
+            </ScrollView>
           </AppModalShell>
         </TouchableOpacity>
       </TouchableOpacity>
@@ -375,82 +385,57 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
-  modalWrap: {
-    width: '100%',
-    maxWidth: 860,
-  },
+  modalWrap: { width: '100%', maxWidth: 860 },
   compactShell: {
     ...(Platform.OS === 'web'
-      ? {
-          height: 'auto',
-          maxHeight: '90vh',
-          minHeight: 0,
-          borderRadius: 28,
-          boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
-        }
-      : {
-          height: 'auto',
-          maxHeight: '86%',
-        }),
+      ? { height: 'auto', maxHeight: '90vh', minHeight: 360, borderRadius: 28, boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)' }
+      : { height: 'auto', maxHeight: '86%', minHeight: 360 }),
     overflow: 'hidden',
   },
-  compactBody: {
-    flex: 0,
-    flexGrow: 0,
-    flexShrink: 0,
-    paddingBottom: 8,
-  },
-  compactScroller: {
-    flexGrow: 0,
-    flexShrink: 0,
-  },
-  scrollContent: {
-    paddingBottom: 4,
-  },
-  formStack: {
-    width: '100%',
-    gap: 0,
-  },
-  formGroup: {
-    marginBottom: 16,
-  },
+  shellBody: { paddingTop: 0, paddingBottom: 8 },
+  contentContainer: { paddingBottom: 4 },
+  formGroup: { marginBottom: 16 },
   fieldLabel: {
     fontSize: 12,
     fontWeight: '500',
     color: '#6B7280',
     marginBottom: 6,
-    textAlign: 'left',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
-  fieldLabelSpaced: {
-    marginTop: 12,
+  fieldHint: { fontSize: 13, color: '#64748b', lineHeight: 19, marginTop: 4 },
+  childChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
   },
-  fieldInput: {
-    fontSize: 16,
-    fontWeight: '400',
-    color: '#111827',
-    backgroundColor: '#F3F4F6',
-    borderWidth: 0,
-    borderBottomWidth: 1,
-    borderBottomColor: '#9CA3AF',
-    borderTopLeftRadius: 4,
-    borderTopRightRadius: 4,
-    paddingVertical: 10,
+  childChip: {
+    minHeight: 36,
+    minWidth: 96,
+    paddingVertical: 0,
     paddingHorizontal: 12,
-    minHeight: 44,
-    width: '100%',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  childChipActive: {
+    borderColor: '#9ECFFB',
+    backgroundColor: 'rgba(158, 207, 251, 0.25)',
+  },
+  childChipText: {
+    color: '#6b7280',
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '500',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      outlineStyle: 'none',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  fieldHint: {
-    fontSize: 13,
-    color: '#64748b',
-    lineHeight: 19,
-    marginTop: 8,
+  childChipTextActive: {
+    color: '#6BB3E8',
+    fontWeight: '600',
   },
   errorContainer: {
     backgroundColor: '#fef2f2',
@@ -460,68 +445,23 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 14,
   },
-  errorText: {
+  errorText: { fontSize: 13, color: '#dc2626' },
+  accountConnectedWrap: { marginTop: 8, marginBottom: 8 },
+  sectionTitle: {
     fontSize: 13,
-    color: '#dc2626',
-  },
-  childList: {
-    gap: 8,
-    marginTop: 4,
-  },
-  childRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 6,
-  },
-  childRowText: {
-    fontSize: 14,
+    fontWeight: '700',
     color: '#0f172a',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
   },
-  pendingTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#0f172a',
-    marginTop: 12,
-    marginBottom: 8,
-  },
-  pendingWait: {
-    fontSize: 12,
-    color: '#64748b',
-    marginTop: 8,
-  },
-  accountButtons: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 14,
-  },
-  accountOutlineButton: {
-    paddingVertical: 9,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
-  },
-  accountOutlineButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  connectedLine: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#166534',
-    lineHeight: 22,
-    marginTop: 12,
-  },
+  accountRule: { height: 1, backgroundColor: '#e2e8f0', marginTop: 10, marginBottom: 14 },
+  connectedLine: { fontSize: 15, fontWeight: '600', color: '#166534', lineHeight: 22 },
   dangerZoneAccordion: {
     borderWidth: 1,
     borderColor: 'rgba(220, 38, 38, 0.25)',
     borderRadius: 12,
     padding: 10,
-    marginBottom: 10,
+    marginTop: 8,
     backgroundColor: 'rgba(254, 242, 242, 0.5)',
   },
   dangerZoneHeader: {
@@ -530,36 +470,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 4,
   },
-  dangerZoneHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  dangerZoneTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.redBold || '#dc2626',
-  },
-  dangerZoneContent: {
-    marginTop: 12,
-    gap: 10,
-  },
-  dangerHint: {
-    fontSize: 12,
-    lineHeight: 18,
-    color: '#6b7280',
-  },
+  dangerZoneHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  dangerZoneTitle: { fontSize: 14, fontWeight: '600', color: colors.redBold || '#dc2626' },
+  dangerZoneContent: { marginTop: 12, gap: 10 },
+  dangerHint: { fontSize: 12, lineHeight: 18, color: '#6b7280' },
   dangerButton: {
     alignSelf: 'flex-start',
     backgroundColor: colors.redBold || '#dc2626',
     paddingVertical: 9,
     paddingHorizontal: 14,
     borderRadius: 8,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
-  dangerButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#ffffff',
-  },
+  dangerButtonText: { fontSize: 13, fontWeight: '600', color: '#ffffff' },
 });

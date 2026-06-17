@@ -3,7 +3,7 @@ FastAPI routes for onboarding and child management
 Handles family setup, adding children, and state standards lookup
 """
 from fastapi import APIRouter, HTTPException, Depends, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 import sys
@@ -217,6 +217,19 @@ class CompleteOnboardingIn(BaseModel):
     onboarding_who: Optional[str] = None  # 'parent' | 'student'
 
 
+class ParentProfileIn(BaseModel):
+    display_name: str = Field(..., min_length=1, max_length=40)
+    avatar_url: str = Field(..., min_length=1)
+
+
+def _profile_has_parent_display(profile_row: Optional[dict]) -> bool:
+    if not profile_row:
+        return False
+    name = (profile_row.get("first_name") or profile_row.get("name") or "").strip()
+    avatar = validate_avatar_url(profile_row.get("avatar_url"))
+    return bool(name and avatar)
+
+
 # ============================================================
 # Routes
 # ============================================================
@@ -355,6 +368,78 @@ async def create_subject(
     return {"subject_id": subject_id}
 
 
+@router.post("/parent_profile")
+async def save_parent_profile(
+    body: ParentProfileIn,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """Save parent display name and bundled avatar key on profiles during onboarding."""
+    display_name = body.display_name.strip()
+    if not display_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Display name is required",
+        )
+    avatar_key = validate_avatar_url(body.avatar_url)
+    if not avatar_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Choose a valid avatar",
+        )
+
+    supabase = get_admin_client()
+    user_id = user["id"]
+    family_id = get_family_id_for_user(user_id)
+
+    try:
+        profile_res = supabase.table("profiles").select("id, role").eq("id", user_id).maybe_single().execute()
+        profile_row = profile_res.data or {}
+        role = (profile_row.get("role") or "").lower()
+        if role and role not in ("parent", "admin"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only parents can set a parent profile during onboarding",
+            )
+
+        now = datetime.utcnow().isoformat()
+        supabase.table("profiles").update({
+            "first_name": display_name,
+            "name": display_name,
+            "avatar_url": avatar_key,
+            "updated_at": now,
+        }).eq("id", user_id).execute()
+
+        if family_id:
+            try:
+                supabase.table("family_members").update({
+                    "display_name": display_name,
+                    "updated_at": now,
+                }).eq("family_id", family_id).eq("user_id", user_id).execute()
+            except Exception as member_err:
+                log_event(
+                    "onboarding.parent_profile.family_member_display_name",
+                    user_id=user_id,
+                    family_id=family_id,
+                    error=str(member_err),
+                )
+
+        log_event("onboarding.parent_profile.success", user_id=user_id, family_id=family_id)
+        return {
+            "success": True,
+            "display_name": display_name,
+            "avatar_url": avatar_key,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("onboarding.parent_profile.error", user_id=user_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save parent profile: {str(e)}",
+        )
+
+
 @router.get("/status")
 async def onboarding_status(
     user: dict = Depends(get_current_user),
@@ -367,9 +452,23 @@ async def onboarding_status(
             "onboarding_completed": False,
             "has_children": False,
             "has_subjects": False,
+            "has_parent_profile": False,
+            "parent_display_name": None,
+            "parent_avatar_url": None,
             "default_planning_mode": None,
         }
     supabase = get_admin_client()
+    profile_row = {}
+    try:
+        profile_res = supabase.table("profiles").select(
+            "first_name, name, avatar_url, role"
+        ).eq("id", user["id"]).maybe_single().execute()
+        profile_row = profile_res.data or {}
+    except Exception:
+        profile_row = {}
+    has_parent_profile = _profile_has_parent_display(profile_row)
+    parent_display_name = (profile_row.get("first_name") or profile_row.get("name") or "").strip() or None
+    parent_avatar_url = validate_avatar_url(profile_row.get("avatar_url"))
     try:
         family_res = supabase.table("family").select("*").eq("id", family_id).maybe_single().execute()
         row = family_res.data or {}
@@ -399,6 +498,9 @@ async def onboarding_status(
         "onboarding_is_valid": onboarding_is_valid,
         "has_children": has_children,
         "has_subjects": has_subjects,
+        "has_parent_profile": has_parent_profile,
+        "parent_display_name": parent_display_name,
+        "parent_avatar_url": parent_avatar_url,
         "default_planning_mode": default_planning_mode,
     }
 

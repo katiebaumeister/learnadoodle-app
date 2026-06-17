@@ -20,8 +20,10 @@ import {
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
+import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
 import StableImage from '../ui/StableImage';
 import EditChildModal from '../EditChildModal';
+import EditParentModal from '../EditParentModal';
 import EditTutorModal from '../EditTutorModal';
 import AddChildModal from '../AddChildModal';
 import InviteChildModal from '../InviteChildModal';
@@ -252,6 +254,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [showEditChildModal, setShowEditChildModal] = useState(false);
   const [editingTutor, setEditingTutor] = useState(null);
   const [showEditTutorModal, setShowEditTutorModal] = useState(false);
+  const [editingParent, setEditingParent] = useState(null);
+  const [showEditParentModal, setShowEditParentModal] = useState(false);
   const [familyId, setFamilyId] = useState(propFamilyId);
   const [hoveredTutorId, setHoveredTutorId] = useState(null);
   const [familyNameRowHovered, setFamilyNameRowHovered] = useState(false);
@@ -1642,7 +1646,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     const pendingParentCount = Array.isArray(family?.pending_parent_invites)
       ? family.pending_parent_invites.length
       : 0;
-    if (currentParents.length + pendingParentCount >= MAX_FAMILY_PARENTS) {
+    const guestParentCount = Array.isArray(family?.guest_members)
+      ? family.guest_members.filter((m) => (m?.role || '') === 'parent').length
+      : 0;
+    if (currentParents.length + pendingParentCount + guestParentCount >= MAX_FAMILY_PARENTS) {
       setError(`Maximum of ${MAX_FAMILY_PARENTS} parents allowed per family.`);
       toast.push(`Maximum of ${MAX_FAMILY_PARENTS} parents allowed per family`, 'error');
       return;
@@ -1908,6 +1915,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const tutors = (family?.members || []).filter(
     (m) => (m.member_role || m.role) === 'tutor'
   );
+  const guestMembers = Array.isArray(family?.guest_members) ? family.guest_members : [];
+  const guestParents = guestMembers.filter((m) => (m.role || '') === 'parent');
+  const guestTutors = guestMembers.filter((m) => (m.role || '') === 'tutor');
   const pendingTutorInvites = Array.isArray(family?.pending_tutor_invites)
     ? family.pending_tutor_invites
         .map((invite) => ({
@@ -1918,6 +1928,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           child_scope: Array.isArray(invite?.child_scope)
             ? invite.child_scope.map((id) => String(id || '').trim()).filter(Boolean)
             : [],
+          avatar_url: invite?.avatar_url ? String(invite.avatar_url).trim() : null,
+          tutor_permission_profile: invite?.tutor_permission_profile || null,
         }))
         .filter((invite) => invite.id)
     : [];
@@ -1928,6 +1940,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           name: invite?.name ? String(invite.name).trim() : null,
           email: invite?.email ? String(invite.email).trim() : null,
           sent_at: invite?.sent_at || null,
+          avatar_url: invite?.avatar_url ? String(invite.avatar_url).trim() : null,
           child_scope: Array.isArray(invite?.child_scope)
             ? invite.child_scope.map((id) => String(id || '').trim()).filter(Boolean)
             : [],
@@ -1935,10 +1948,50 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         .filter((invite) => invite.id || invite.email)
     : [];
   const latestPendingParentInvite = pendingParentInvites[0] || null;
-  const parentSlotCount = parents.length + pendingParentInvites.length;
-  const tutorSlotCount = tutors.length + pendingTutorInvites.length;
+  const parentSlotCount = parents.length + pendingParentInvites.length + guestParents.length;
+  const tutorSlotCount = tutors.length + pendingTutorInvites.length + guestTutors.length;
   const canAddAnotherParent = canManageChildInvites && parentSlotCount < MAX_FAMILY_PARENTS;
   const canAddAnotherTutor = canManageChildInvites && tutorSlotCount < MAX_FAMILY_TUTORS;
+
+  const openAddParentModal = useCallback(() => {
+    if (!canAddAnotherParent) {
+      toast.push(`Maximum of ${MAX_FAMILY_PARENTS} parents allowed per family`, 'error');
+      return;
+    }
+    setEditingParent({
+      isNew: true,
+      display_name: '',
+      avatar_url: 'prof1',
+      invite_status: 'none',
+    });
+    setShowEditParentModal(true);
+    setError(null);
+  }, [canAddAnotherParent, toast]);
+
+  const openEditGuestParent = useCallback((guest) => {
+    setEditingParent({
+      id: String(guest.id),
+      isGuest: true,
+      display_name: guest.display_name || guest.name || '',
+      avatar_url: guest.avatar_url || 'prof1',
+      invite_status: 'none',
+    });
+    setShowEditParentModal(true);
+    setError(null);
+  }, []);
+
+  const openEditPendingParentModal = useCallback((invite) => {
+    setEditingParent({
+      id: String(invite.id),
+      isPendingInvite: true,
+      display_name: invite.name || '',
+      avatar_url: invite.avatar_url || 'prof1',
+      email: invite.email || '',
+      invite_status: 'pending',
+    });
+    setShowEditParentModal(true);
+    setError(null);
+  }, []);
 
   const openParentInviteModal = useCallback((mode = 'invite', prefillEmail = '') => {
     if (!canAddAnotherParent) {
@@ -1955,14 +2008,29 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     setEditingTutor({
       id: String(invite.id),
       name: invite.name || invite.email || 'Tutor invite',
-      display_name:
-        invite.name && invite.email && invite.name !== invite.email
-          ? invite.name
-          : null,
+      display_name: invite.name || '',
+      avatar_url: invite.avatar_url || 'prof1',
       email: invite.email || '',
       child_scope: Array.isArray(invite.child_scope) ? invite.child_scope : [],
+      tutor_permission_profile: invite.tutor_permission_profile || null,
       invite_status: 'pending',
+      isPendingInvite: true,
       sent_at: invite.sent_at || null,
+    });
+    setShowEditTutorModal(true);
+    setError(null);
+  }, []);
+
+  const openEditGuestTutor = useCallback((guest) => {
+    setEditingTutor({
+      id: String(guest.id),
+      isGuest: true,
+      name: guest.display_name || 'Tutor',
+      display_name: guest.display_name || '',
+      avatar_url: guest.avatar_url || 'prof1',
+      child_scope: Array.isArray(guest.child_scope) ? guest.child_scope : [],
+      tutor_permission_profile: guest.tutor_permission_profile || null,
+      invite_status: 'none',
     });
     setShowEditTutorModal(true);
     setError(null);
@@ -1980,9 +2048,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       id: `draft-${Date.now()}`,
       name: '',
       display_name: '',
+      avatar_url: 'prof1',
       email: '',
       child_scope: defaultChildIds,
-      invite_status: 'pending',
+      invite_status: 'none',
       isNew: true,
     });
     setShowEditTutorModal(true);
@@ -3497,7 +3566,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               {!isChildRestrictedView && canAddAnotherParent ? (
                 <TouchableOpacity
                   style={embeddedInModal ? styles.membersSectionLinkButton : styles.membersInviteButton}
-                  onPress={() => openParentInviteModal('add')}
+                  onPress={isSelfManagedStudent ? () => openParentInviteModal('add') : openAddParentModal}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   {!embeddedInModal ? <Plus size={16} color="#374151" /> : null}
@@ -3612,6 +3681,42 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               </View>
             ) : null}
             {!isSelfManagedStudent && !isChildRestrictedView
+              ? guestParents.map((guest) => (
+                  <View key={`guest-parent-${guest.id}`} style={styles.memberRow}>
+                    <View style={styles.memberRowChildMain}>
+                      <View style={styles.memberRowChildAvatarWrap}>
+                        <Image
+                          source={resolveBundledAvatarSource(guest.avatar_url || 'prof1')}
+                          style={styles.memberRowChildAvatar}
+                          resizeMode="contain"
+                        />
+                      </View>
+                      <View style={styles.memberRowChildTextCol}>
+                        <View style={styles.memberRowChildNameRow}>
+                          <Text style={styles.memberRowName} numberOfLines={1}>
+                            {guest.display_name || 'Parent'}
+                          </Text>
+                          <View style={[styles.childStatusPill, styles.childStatusPillGray]}>
+                            <Text style={[styles.childStatusPillText, styles.childStatusPillTextGray]}>
+                              Not invited
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    </View>
+                    <MemberRowActionsMenu
+                      menuKey={`guest-parent-${guest.id}`}
+                      openMenuKey={openMemberMenuKey}
+                      setOpenMenuKey={setOpenMemberMenuKey}
+                      actionButtonStyle={styles.memberRowActionButton}
+                      items={[
+                        { icon: Pencil, label: 'Edit', onPress: () => openEditGuestParent(guest) },
+                      ]}
+                    />
+                  </View>
+                ))
+              : null}
+            {!isSelfManagedStudent && !isChildRestrictedView
               ? pendingParentInvites.map((invite) => {
                   const lastSentRel = invite?.sent_at ? formatInviteLastSent(invite.sent_at) : null;
                   return (
@@ -3648,12 +3753,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           {
                             icon: Pencil,
                             label: 'Edit',
-                            onPress: () => openParentInviteModal('invite', invite.email || ''),
+                            onPress: () => openEditPendingParentModal(invite),
                           },
                           {
                             icon: Send,
                             label: 'Resend invite',
-                            onPress: () => openParentInviteModal('invite', invite.email || ''),
+                            onPress: () => openEditPendingParentModal(invite),
                           },
                         ]}
                       />
@@ -3661,7 +3766,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   );
                 })
               : null}
-            {parents.length === 0 && pendingParentInvites.length === 0 && (
+            {parents.length === 0 && pendingParentInvites.length === 0 && guestParents.length === 0 && (
               <Text style={[styles.membersEmptyText, { marginTop: 8 }]}>
                 {isSelfManagedStudent ? 'No parents yet' : (profile?.role === 'parent' ? 'No other parents yet' : 'No parents found')}
               </Text>
@@ -3863,10 +3968,46 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
             {!embeddedInModal ? <View style={styles.subsectionDivider} /> : null}
             
-            {tutors.length === 0 && pendingTutorInvites.length === 0 ? (
+            {tutors.length === 0 && pendingTutorInvites.length === 0 && guestTutors.length === 0 ? (
               <Text style={styles.membersEmptyText}>No tutors yet</Text>
             ) : (
               <>
+                {guestTutors.map((guest) => (
+                  <View key={`guest-tutor-${guest.id}`} style={styles.memberRow}>
+                    <View style={styles.memberRowChildMain}>
+                      <View style={styles.memberRowChildAvatarWrap}>
+                        <Image
+                          source={resolveBundledAvatarSource(guest.avatar_url || 'prof1')}
+                          style={styles.memberRowChildAvatar}
+                          resizeMode="contain"
+                        />
+                      </View>
+                      <View style={styles.memberRowChildTextCol}>
+                        <View style={styles.memberRowChildNameRow}>
+                          <Text style={styles.memberRowName} numberOfLines={1}>
+                            {guest.display_name || 'Tutor'}
+                          </Text>
+                          <View style={[styles.childStatusPill, styles.childStatusPillGray]}>
+                            <Text style={[styles.childStatusPillText, styles.childStatusPillTextGray]}>
+                              Not invited
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    </View>
+                    {!isChildRestrictedView ? (
+                      <MemberRowActionsMenu
+                        menuKey={`guest-tutor-${guest.id}`}
+                        openMenuKey={openMemberMenuKey}
+                        setOpenMenuKey={setOpenMemberMenuKey}
+                        actionButtonStyle={styles.memberRowActionButton}
+                        items={[
+                          { icon: Pencil, label: 'Edit', onPress: () => openEditGuestTutor(guest) },
+                        ]}
+                      />
+                    ) : null}
+                  </View>
+                ))}
                 {tutors.map((tutor) => (
                   <View
                     key={tutor.id}
@@ -5823,8 +5964,28 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           setEditingTutor(null);
         }}
         tutor={editingTutor}
-        children={children}
+        familyChildren={children}
+        onInviteSent={(url) => showInviteSuccessModal(url, 'tutor')}
         onTutorUpdated={async () => {
+          try {
+            const { data, error: err } = await getFamilyMembers();
+            if (!err && data) {
+              setFamily(data);
+              if (onFamilyUpdate) onFamilyUpdate(data);
+            }
+          } catch (_e) {}
+        }}
+      />
+
+      <EditParentModal
+        visible={showEditParentModal}
+        onClose={() => {
+          setShowEditParentModal(false);
+          setEditingParent(null);
+        }}
+        parent={editingParent}
+        onInviteSent={(url) => showInviteSuccessModal(url, 'parent')}
+        onParentUpdated={async () => {
           try {
             const { data, error: err } = await getFamilyMembers();
             if (!err && data) {

@@ -4,8 +4,10 @@ import { BookOpen, Brain, FileText, Check, X } from 'lucide-react';
 import { getChildColorFromAvatar, hexToRgba } from '../../utils/avatarColors';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
 
-const AVATAR_SIZE = 64;
-const AVATAR_PREVIEW_SIZE = 72;
+import { AVATAR_PICKER_CELL_SIZE, AVATAR_PICKER_IMAGE_SIZE, AVATAR_PICKER_LARGE_PREVIEW_SIZE } from '../../lib/onboardingProfAvatars';
+
+const AVATAR_SIZE = AVATAR_PICKER_CELL_SIZE;
+const AVATAR_PREVIEW_SIZE = AVATAR_PICKER_LARGE_PREVIEW_SIZE;
 
 const GRADES = ['Pre-K', 'K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 const STATES = ['None', 'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DC', 'DE', 'FL', 'GA', 'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ', 'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY'];
@@ -982,7 +984,7 @@ const styles = StyleSheet.create({
     borderColor: '#6BB3E8',
   },
   avatarImg: {
-    width: 48,
-    height: 48,
+    width: AVATAR_PICKER_IMAGE_SIZE,
+    height: AVATAR_PICKER_IMAGE_SIZE,
   },
 });

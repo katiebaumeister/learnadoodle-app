@@ -111,7 +111,7 @@ import {
 } from '../lib/planYearRetirement';
 import { prefetchAllSubjectProgressPlans } from '../lib/prefetchSubjectProgressPlan';
 import { parseExplorerTourFromPrefs, persistExplorerTourMerge, EXPLORER_TOUR_PREFS_KEY } from '../lib/services/explorerTourClient';
-import { applySetupProgressFromNavigation, getPostOnboardingRoute } from '../lib/setupGuide';
+import { getPostOnboardingRoute } from '../lib/setupGuide';
 import AppLoader, { ensureWebShellImagesLoaded } from './AppLoader';
 import RebalanceModal from './year/RebalanceModal';
 import FamilyMessagesPane from './messages/FamilyMessagesPane';
@@ -126,7 +126,7 @@ import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib
 import { AVATAR_KEYS } from '../assets/imageAssetMap';
 /**
  * Retired: parent explorer tour and Doodle chatbot setup checklist.
- * Post-onboarding guidance lives on Home (SetupGuideCard) and bulletin nudges.
+ * Post-onboarding guidance is a seeded Learnadoodle bulletin welcome post (see homeWelcomeBulletin.js).
  */
 const EXPLORER_PARENT_STEPS = [
   {
@@ -3469,26 +3469,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     window.addEventListener('onboardingCompleted', handlePostOnboardingRoute);
     return () => window.removeEventListener('onboardingCompleted', handlePostOnboardingRoute);
   }, [family?.default_planning_mode, handleTabChange, handleTopSelect]);
-
-  // Track setup guide progress from navigation (Home setup card — not chatbot)
-  useEffect(() => {
-    if (Platform.OS !== 'web' || onboardingBlocked) return;
-    if (!authUserId || !familyId) return;
-    const mode = family?.default_planning_mode || 'HOMESCHOOL_COMPLIANCE';
-    applySetupProgressFromNavigation(authUserId, familyId, mode, {
-      activeTab,
-      activeSubtab,
-      currentView,
-    });
-  }, [
-    authUserId,
-    familyId,
-    family?.default_planning_mode,
-    activeTab,
-    activeSubtab,
-    currentView,
-    onboardingBlocked,
-  ]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;

@@ -10590,8 +10590,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         preloadedSubjectsOverview={subjectsOverviewCache}
         preloadedSubjects={propSubjects}
         preloadedPlanHealth={propPreloadedPlanHealth}
-        preloadedAcademicYears={propPreloadedAcademicYears}
-        familyMembers={propFamily?.members ?? null}
       />
     );
 

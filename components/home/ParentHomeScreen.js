@@ -18,9 +18,6 @@ import RoleHomeShell from './RoleHomeShell';
 import TodayScheduleCard from './TodayScheduleCard';
 import ParentDigestModal from './ParentDigestModal';
 import BulletinBoardSection from '../bulletin/BulletinBoardSection';
-import SetupGuideCard from '../setup/SetupGuideCard';
-import SetupGuideBulletinNudge from '../setup/SetupGuideBulletinNudge';
-import { getSetupGuideBulletinNudge } from '../../lib/setupGuide';
 import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
@@ -187,8 +184,6 @@ export default function ParentHomeScreen({
   hideRailOnboardingCards = false,
   preloadedSubjectsOverview = null,
   preloadedSubjects = null,
-  preloadedAcademicYears = null,
-  familyMembers = null,
 }) {
   const session = useSession();
   const [homeData, setHomeData] = useState(null);
@@ -205,7 +200,6 @@ export default function ParentHomeScreen({
   const [notificationCount, setNotificationCount] = useState(0);
   const [error, setError] = useState(null);
   const [showParentDigest, setShowParentDigest] = useState(false);
-  const [setupGuideVisible, setSetupGuideVisible] = useState(false);
   const initialDataReadyFiredRef = useRef(false);
   const onInitialDataReadyRef = useRef(onInitialDataReady);
   onInitialDataReadyRef.current = onInitialDataReady;
@@ -225,67 +219,6 @@ export default function ParentHomeScreen({
     if (!trimmed) return null;
     return trimmed.split(/\s+/)[0];
   }, [profile?.first_name, profile?.name]);
-
-  const planningMode = family?.default_planning_mode || 'HOMESCHOOL_COMPLIANCE';
-  const userId = profile?.id || session?.user_id || null;
-
-  const setupGuideAppData = useMemo(() => {
-    const data = homeData || { learning: [], subjects: [], children: [] };
-    const subjectList = data.subjects?.length ? data.subjects : stableSubjects;
-    const learningEvents = data.learning || [];
-    const academicYears = Array.isArray(preloadedAcademicYears) ? preloadedAcademicYears : [];
-    const hasConfiguredYear = academicYears.some(
-      (y) => y?.start_date && y?.end_date,
-    );
-    const memberCount = Array.isArray(familyMembers)
-      ? familyMembers.length
-      : (Array.isArray(family?.members) ? family.members.length : 1);
-    const assignmentCount = (dashboardExtras.dueAssignments?.length || 0)
-      + (dashboardExtras.pendingSubmissions?.length || 0)
-      + (dashboardExtras.missingSubmissions?.length || 0);
-
-    return {
-      mode: planningMode,
-      subjectCount: subjectList?.length || 0,
-      eventCount: learningEvents.length,
-      // TODO: detect recurring events from planner event series when available on home payload.
-      hasRecurringEvents: false,
-      hasAcademicYearConfigured: hasConfiguredYear,
-      // TODO: detect units/lessons from subject curriculum cache when wired to home.
-      hasUnitsOrLessons: assignmentCount > 0,
-      assignmentCount,
-      familyMemberCount: memberCount,
-      hasCalendarIntegration: false,
-      visitedPlanner: false,
-    };
-  }, [
-    homeData,
-    stableSubjects,
-    preloadedAcademicYears,
-    familyMembers,
-    family?.members,
-    dashboardExtras,
-    planningMode,
-  ]);
-
-  const setupBulletinNudge = useMemo(
-    () => getSetupGuideBulletinNudge(planningMode, setupGuideAppData, { setupGuideVisible }),
-    [planningMode, setupGuideAppData, setupGuideVisible],
-  );
-
-  const handleSetupGuideNavigate = useCallback((tab, subtab = null) => {
-    onNavigate?.(tab, subtab);
-  }, [onNavigate]);
-
-  const handleSetupGuideAction = useCallback((action) => {
-    if (action === 'add_subject') {
-      onAddSubject?.();
-      return;
-    }
-    if (action === 'create_activity' || action === 'create_event') {
-      onAddEvent?.();
-    }
-  }, [onAddSubject, onAddEvent]);
 
   useEffect(() => {
     const incoming = pickSubjectListSource(preloadedSubjectsOverview, preloadedSubjects);
@@ -902,24 +835,6 @@ export default function ParentHomeScreen({
 
   const bulletinRailContent = (
     <View style={[styles.bulletinBoardSection, styles.railBulletinSection]}>
-      {family?.onboarding_completed !== false ? (
-        <SetupGuideCard
-          mode={planningMode}
-          userId={userId}
-          familyId={familyId}
-          onNavigate={handleSetupGuideNavigate}
-          onAction={handleSetupGuideAction}
-          appData={setupGuideAppData}
-          onVisibilityChange={setSetupGuideVisible}
-        />
-      ) : null}
-      {!setupGuideVisible ? (
-        <SetupGuideBulletinNudge
-          nudge={setupBulletinNudge}
-          onNavigate={handleSetupGuideNavigate}
-          onAction={handleSetupGuideAction}
-        />
-      ) : null}
       <BulletinBoardSection
         familyId={familyId}
         children={children}
