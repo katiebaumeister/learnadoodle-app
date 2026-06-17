@@ -2716,7 +2716,7 @@ export default function PlannerSettingsContent({
 
   if (loading && embeddedInModal) {
     return (
-      <View style={{ padding: 20, alignItems: 'center' }}>
+      <View style={assignmentModalStyles.schoolYearSettingsLoadingBody}>
         <ActivityIndicator size="large" color={ACCENT} />
         <Text style={{ marginTop: 12, fontSize: 14, color: TEXT_BLACK }}>Loading...</Text>
       </View>

@@ -37,9 +37,6 @@ export default function ParentProfileStep({
   return (
     <View style={styles.container}>
       <Text style={styles.prompt}>What should we call you?</Text>
-      <Text style={styles.subtext}>
-        This is how your name appears on bulletin posts, messages, and anywhere you show up in Learnadoodle.
-      </Text>
 
       {trimmed ? (
         <View style={styles.previewRow}>
@@ -132,17 +129,9 @@ const styles = StyleSheet.create({
     fontSize: 30,
     fontWeight: '600',
     color: ONBOARDING_TEXT_PRIMARY,
-    marginBottom: 12,
-    textAlign: 'center',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
-  },
-  subtext: {
-    fontSize: 16,
-    color: '#6B7280',
     marginBottom: 24,
     textAlign: 'center',
-    lineHeight: 24,
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   previewRow: {
     flexDirection: 'row',

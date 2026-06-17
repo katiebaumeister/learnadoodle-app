@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
 import Dropdown, { DropdownItem } from './ui/Dropdown';
 import StableImage from './ui/StableImage';
+import { getSubjectsNavLabel } from '../lib/subjectsModeCopy';
 import { safeImageUri } from '../lib/safeImageUri';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
 import {
@@ -16,9 +17,6 @@ const SHOW_MATERIALS_IN_SIDEBAR = true;
 const SHOW_SUBJECTS_CATALOG_IN_SIDEBAR = false;
 const SHOW_RECORDS_IN_SIDEBAR = false;
 const SHOW_CREATE_IN_SIDEBAR = false;
-
-// TODO(mode-aware-nav): Hide or de-emphasize Subjects/Materials for NONE planning mode
-// unless the family has existing subject/material data or enables learning features.
 
 const SIDEBAR_BRAND_LOGO = LEARNADOODLE_LOGO_ASSET;
 const NAV_ICON_SIZE = 22;
@@ -105,6 +103,7 @@ export default function LeftRail({
   hideProfileNav = false,
   iconRailMode = false,
   permanentSidebar = false,
+  familyPlanningMode = null,
 }) {
   const [expandedChildren, setExpandedChildren] = useState(new Set());
   const [hoveredItem, setHoveredItem] = useState(null);
@@ -202,9 +201,17 @@ export default function LeftRail({
   ]);
 
   const navBuckets = useMemo(() => {
+    const subjectsNavLabel = getSubjectsNavLabel(familyPlanningMode);
     const resolveBucket = (keys) => ({
       items: keys
-        .map((key) => NAV_ITEM_DEFS[key])
+        .map((key) => {
+          const item = NAV_ITEM_DEFS[key];
+          if (!item) return null;
+          if (item.key === 'subjects') {
+            return { ...item, label: subjectsNavLabel };
+          }
+          return item;
+        })
         .filter((item) => shouldIncludeNavItem(item)),
     });
 
@@ -222,7 +229,7 @@ export default function LeftRail({
     }
 
     return bucketKeys.map(resolveBucket).filter((bucket) => bucket.items.length > 0);
-  }, [shouldIncludeNavItem, userRole]);
+  }, [shouldIncludeNavItem, userRole, familyPlanningMode]);
 
   const showLabels = permanentSidebar || !isCollapsed;
 

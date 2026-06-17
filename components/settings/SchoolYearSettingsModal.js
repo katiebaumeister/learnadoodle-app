@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import {
   View,
+  Text,
   TouchableOpacity,
   StyleSheet,
   Platform,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
@@ -18,6 +20,7 @@ import {
 } from '../create/shared/createModalStyles';
 
 const MODAL_MAX_WIDTH = SCHOOL_YEAR_SETTINGS_MODAL_MAX_WIDTH;
+const MODAL_ACCENT = '#9ECFFB';
 
 export default function SchoolYearSettingsModal({
   visible = false,
@@ -35,6 +38,7 @@ export default function SchoolYearSettingsModal({
   const savedSinceOpenRef = useRef(false);
   const schoolYearLabelRef = useRef(null);
   const [footerState, setFooterState] = useState({ saving: false, readOnly: false });
+  const [contentReady, setContentReady] = useState(false);
 
   useEffect(() => {
     savedSinceOpenRef.current = savedSinceOpen;
@@ -71,29 +75,48 @@ export default function SchoolYearSettingsModal({
         excluded_holiday_dates: excluded_holiday_dates || [],
         subjects: subjectsData || [],
       };
-      setInitialDataByYear((prev) => ({ ...prev, [year]: payload }));
+      setInitialDataByYear((prev) => {
+        const next = { ...prev, [year]: payload };
+        initialDataByYearRef.current = next;
+        return next;
+      });
       return payload;
     } catch (_) {
       return null;
     }
   }, [familyId]);
 
-  useEffect(() => {
-    if (!visible) return;
+  useLayoutEffect(() => {
+    if (!visible || !familyId) {
+      setContentReady(false);
+      return undefined;
+    }
     const targetYear = String(initialSchoolYearLabel || '').trim();
-    if (!targetYear) return;
+    if (!targetYear) {
+      setContentReady(false);
+      return undefined;
+    }
     setSchoolYearLabel(targetYear);
     schoolYearLabelRef.current = targetYear;
     setSavedSinceOpen(false);
     savedSinceOpenRef.current = false;
-    preloadData(targetYear);
-  }, [visible, initialSchoolYearLabel, preloadData]);
+    let cancelled = false;
+    setContentReady(false);
+    (async () => {
+      await preloadData(targetYear);
+      if (!cancelled) setContentReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, initialSchoolYearLabel, familyId, preloadData]);
 
   const handleClose = useCallback(() => {
     const closedYearLabel = String(schoolYearLabelRef.current || schoolYearLabel || '').trim();
     const saved = savedSinceOpenRef.current;
     planningModalActionsRef.current = null;
     setFooterState({ saving: false, readOnly: false });
+    setContentReady(false);
     schoolYearLabelRef.current = null;
     setSchoolYearLabel(null);
     onClose?.();
@@ -125,18 +148,26 @@ export default function SchoolYearSettingsModal({
     if (!label) return;
     setSchoolYearLabel(label);
     schoolYearLabelRef.current = label;
+    const cached = initialDataByYearRef.current[label];
+    if (!cached) {
+      setContentReady(false);
+    }
     await preloadData(label);
+    setContentReady(true);
   }, [preloadData]);
 
   if (!visible || !familyId) return null;
 
-  const activeYear = String(schoolYearLabel || '').trim();
+  const activeYear = String(schoolYearLabel || initialSchoolYearLabel || '').trim();
+  const activeInitialData = activeYear
+    ? (initialDataByYear[activeYear] || initialDataByYearRef.current[activeYear] || null)
+    : null;
 
   return (
     <Modal
       visible
       transparent
-      animationType="fade"
+      animationType={Platform.OS === 'web' ? 'none' : 'fade'}
       onRequestClose={requestClose}
     >
       <View style={styles.overlay}>
@@ -166,49 +197,57 @@ export default function SchoolYearSettingsModal({
                 onCancel={() => planningModalActionsRef.current?.handleCancel?.()}
                 onPrimary={() => planningModalActionsRef.current?.handleSave?.()}
                 accent="#9ECFFB"
-                disabled={footerState.saving || footerState.readOnly}
+                disabled={footerState.saving || footerState.readOnly || !contentReady}
                 loading={footerState.saving}
               />
             )}
           >
-            <PlannerSettingsContent
-              familyId={familyId}
-              initialData={activeYear ? (initialDataByYear[activeYear] || null) : null}
-              embeddedInModal
-              hideEmbeddedHeader
-              initialSchoolYearLabel={activeYear || initialSchoolYearLabel}
-              onSchoolYearChange={handleSchoolYearChange}
-              onEmbeddedModalActionsReady={(actions) => {
-                planningModalActionsRef.current = actions;
-              }}
-              onEmbeddedModalFooterStateChange={({ saving, readOnly }) => {
-                setFooterState((prev) => {
-                  if (prev.saving === saving && prev.readOnly === readOnly) return prev;
-                  return { saving, readOnly };
-                });
-              }}
-              onRequestClose={handleClose}
-              onSave={() => {
-                const activeYearLabel = String(schoolYearLabelRef.current || schoolYearLabel || '').trim();
-                setSavedSinceOpen(true);
-                savedSinceOpenRef.current = true;
-                if (activeYearLabel) {
-                  setInitialDataByYear((prev) => {
-                    if (!prev || !prev[activeYearLabel]) return prev;
-                    const next = { ...prev };
-                    delete next[activeYearLabel];
-                    return next;
+            {contentReady && activeYear ? (
+              <PlannerSettingsContent
+                key={`planner-settings-${activeYear}`}
+                familyId={familyId}
+                initialData={activeInitialData}
+                embeddedInModal
+                hideEmbeddedHeader
+                initialSchoolYearLabel={activeYear}
+                onSchoolYearChange={handleSchoolYearChange}
+                onEmbeddedModalActionsReady={(actions) => {
+                  planningModalActionsRef.current = actions;
+                }}
+                onEmbeddedModalFooterStateChange={({ saving, readOnly }) => {
+                  setFooterState((prev) => {
+                    if (prev.saving === saving && prev.readOnly === readOnly) return prev;
+                    return { saving, readOnly };
                   });
-                }
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
-                  window.dispatchEvent(new CustomEvent('refreshSubjects'));
-                  window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
-                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
-                }
-                onSaved?.();
-              }}
-            />
+                }}
+                onRequestClose={handleClose}
+                onSave={() => {
+                  const activeYearLabel = String(schoolYearLabelRef.current || schoolYearLabel || '').trim();
+                  setSavedSinceOpen(true);
+                  savedSinceOpenRef.current = true;
+                  if (activeYearLabel) {
+                    setInitialDataByYear((prev) => {
+                      if (!prev || !prev[activeYearLabel]) return prev;
+                      const next = { ...prev };
+                      delete next[activeYearLabel];
+                      return next;
+                    });
+                  }
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+                    window.dispatchEvent(new CustomEvent('refreshSubjects'));
+                    window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+                    window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+                  }
+                  onSaved?.();
+                }}
+              />
+            ) : (
+              <View style={[assignmentModalStyles.schoolYearSettingsLoadingBody, styles.loadingBody]}>
+                <ActivityIndicator size="large" color={MODAL_ACCENT} />
+                <Text style={styles.loadingText}>Loading settings...</Text>
+              </View>
+            )}
           </AppModalShell>
         </TouchableOpacity>
       </View>
@@ -280,6 +319,17 @@ const styles = StyleSheet.create({
       display: 'flex',
       flexDirection: 'column',
       flex: 'none',
+    }),
+  },
+  loadingBody: {
+    width: '100%',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
 });

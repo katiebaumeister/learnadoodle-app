@@ -23,10 +23,7 @@ import { supabase } from '../../lib/supabase';
 import { formatSchoolYearLabel, getChildDisplayName } from './familySectionRouting';
 import { familyCardStyle, familyStyles, FAMILY_CARD_GAP } from './familyDesignTokens';
 
-const GOAL_LABELS = {
-  HOMESCHOOL_COMPLIANCE: 'Homeschooling',
-  AFTERSCHOOL_GOALS: 'Afterschooling',
-};
+import { getPlanningModeLabel } from '../../lib/planningMode';
 
 function StatCard({ icon: Icon, iconColor, iconBg, value, meta, label }) {
   return (
@@ -105,7 +102,7 @@ export default function FamilyOverviewView({
   }, [academicYears]);
 
   const plannerSettings = preloadedPlannerSettings?.settings || preloadedPlannerSettings || {};
-  const goalLabel = GOAL_LABELS[family?.default_planning_mode] || 'Not set';
+  const goalLabel = getPlanningModeLabel(family?.default_planning_mode);
   const planningStyle =
     plannerSettings.default_constraint_mode === 'hours'
       ? `Hours (${plannerSettings.default_target_hours || '—'} per week)`

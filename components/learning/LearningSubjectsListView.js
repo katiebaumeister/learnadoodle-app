@@ -7,7 +7,7 @@ import {
   StyleSheet,
   Platform,
 } from 'react-native';
-import { Plus, ChevronLeft, ChevronRight, Users, CalendarDays } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Users, CalendarDays, Calendar } from 'lucide-react';
 import SubjectOverviewCard from '../subjects/SubjectOverviewCard';
 import { colors } from '../../theme/colors';
 
@@ -45,9 +45,78 @@ export default function LearningSubjectsListView({
   onEditSchoolYear,
   onEditFamily,
   isAtCurrentSchoolYear = false,
+  yearHeaderLabel = null,
+  editSchoolYearLabel = 'Edit School Year',
+  isHomeschoolExperience = true,
+  showOpenPlannerAction = false,
   emptyTitle = 'No subjects yet',
   emptyText = 'Create subjects to organize learning.',
+  emptyPrimaryAction = 'add_subject',
+  emptySecondaryAction = null,
+  previousYearAccessibilityLabel = 'Previous school year',
+  nextYearAccessibilityLabel = 'Next school year',
+  currentYearAccessibilityLabel = 'Return to current school year',
 }) {
+  const resolvedYearHeaderLabel = yearHeaderLabel || (selectedSchoolYear ? `${selectedSchoolYear} School Year` : null);
+  const showEmptyPrimaryPlanner = emptyPrimaryAction === 'planner' && typeof onNavigateToPlanner === 'function';
+  const showEmptyPrimaryAddSubject = emptyPrimaryAction === 'add_subject' && canManageSubjects && onAddSubject;
+  const showEmptySecondaryAddSubject = emptySecondaryAction === 'add_subject' && canManageSubjects && onAddSubject;
+
+  const renderEditSchoolYearButton = onEditSchoolYear ? (
+    <TouchableOpacity
+      style={styles.headerActionButton}
+      onPress={onEditSchoolYear}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel={editSchoolYearLabel}
+      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+    >
+      <CalendarDays size={18} color="#334155" strokeWidth={2.25} />
+      <Text style={styles.headerActionButtonText}>{editSchoolYearLabel}</Text>
+    </TouchableOpacity>
+  ) : null;
+
+  const renderEditFamilyButton = onEditFamily ? (
+    <TouchableOpacity
+      style={styles.headerActionButton}
+      onPress={onEditFamily}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel="Edit Family"
+      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+    >
+      <Users size={18} color="#334155" strokeWidth={2.25} />
+      <Text style={styles.headerActionButtonText}>Edit Family</Text>
+    </TouchableOpacity>
+  ) : null;
+
+  const renderAddSubjectButton = (canManageSubjects && onAddSubject) ? (
+    <TouchableOpacity
+      style={styles.headerActionButton}
+      onPress={onAddSubject}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel="Add subject"
+      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+    >
+      <Plus size={18} color="#334155" strokeWidth={2.25} />
+      <Text style={styles.headerActionButtonText}>Add subject</Text>
+    </TouchableOpacity>
+  ) : null;
+
+  const renderOpenPlannerButton = (showOpenPlannerAction && onNavigateToPlanner) ? (
+    <TouchableOpacity
+      style={styles.headerActionButton}
+      onPress={() => onNavigateToPlanner()}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel="Open Planner"
+      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+    >
+      <Calendar size={18} color="#334155" strokeWidth={2.25} />
+      <Text style={styles.headerActionButtonText}>Open Planner</Text>
+    </TouchableOpacity>
+  ) : null;
   return (
     <View style={styles.container}>
       <View style={styles.pageHeader}>
@@ -58,7 +127,7 @@ export default function LearningSubjectsListView({
                 style={styles.yearNavBtn}
                 onPress={() => onShiftSchoolYear?.(-1)}
                 accessibilityRole="button"
-                accessibilityLabel="Previous school year"
+                accessibilityLabel={previousYearAccessibilityLabel}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
                 <ChevronLeft size={16} color="rgba(15,23,42,0.4)" />
@@ -67,7 +136,7 @@ export default function LearningSubjectsListView({
                 style={styles.yearNavBtn}
                 onPress={() => onShiftSchoolYear?.(1)}
                 accessibilityRole="button"
-                accessibilityLabel="Next school year"
+                accessibilityLabel={nextYearAccessibilityLabel}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
                 <ChevronRight size={16} color="rgba(15,23,42,0.4)" />
@@ -82,55 +151,27 @@ export default function LearningSubjectsListView({
                 onPress={onJumpToCurrentSchoolYear}
                 disabled={isAtCurrentSchoolYear}
                 accessibilityRole="button"
-                accessibilityLabel="Return to current school year"
+                accessibilityLabel={currentYearAccessibilityLabel}
                 {...(Platform.OS === 'web' && { cursor: isAtCurrentSchoolYear ? 'default' : 'pointer' })}
               >
-                <Text style={styles.yearNavTitle}>{selectedSchoolYear} School Year</Text>
+                <Text style={styles.yearNavTitle}>{resolvedYearHeaderLabel}</Text>
               </TouchableOpacity>
             </View>
           </View>
         ) : null}
-        {(onEditFamily || onEditSchoolYear || (canManageSubjects && onAddSubject)) ? (
+        {(isHomeschoolExperience
+          ? (onEditFamily || onEditSchoolYear || (canManageSubjects && onAddSubject))
+          : (canManageSubjects && onAddSubject)) ? (
           <View style={styles.headerActions}>
-            {onEditSchoolYear ? (
-              <TouchableOpacity
-                style={styles.headerActionButton}
-                onPress={onEditSchoolYear}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel="Edit School Year"
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <CalendarDays size={18} color="#334155" strokeWidth={2.25} />
-                <Text style={styles.headerActionButtonText}>Edit School Year</Text>
-              </TouchableOpacity>
-            ) : null}
-            {onEditFamily ? (
-              <TouchableOpacity
-                style={styles.headerActionButton}
-                onPress={onEditFamily}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel="Edit Family"
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Users size={18} color="#334155" strokeWidth={2.25} />
-                <Text style={styles.headerActionButtonText}>Edit Family</Text>
-              </TouchableOpacity>
-            ) : null}
-            {canManageSubjects && onAddSubject ? (
-              <TouchableOpacity
-                style={styles.headerActionButton}
-                onPress={onAddSubject}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel="Add subject"
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Plus size={18} color="#334155" strokeWidth={2.25} />
-                <Text style={styles.headerActionButtonText}>Add subject</Text>
-              </TouchableOpacity>
-            ) : null}
+            {isHomeschoolExperience ? (
+              <>
+                {renderEditSchoolYearButton}
+                {renderEditFamilyButton}
+                {renderAddSubjectButton}
+              </>
+            ) : (
+              renderAddSubjectButton
+            )}
           </View>
         ) : null}
       </View>
@@ -141,9 +182,35 @@ export default function LearningSubjectsListView({
         <View style={styles.emptyWrap}>
           <Text style={styles.emptyTitle}>{emptyTitle}</Text>
           <Text style={styles.emptyText}>{emptyText}</Text>
-          {canManageSubjects ? (
+          {showEmptyPrimaryPlanner ? (
             <TouchableOpacity
               style={[styles.addBtn, styles.emptyBtn]}
+              onPress={() => onNavigateToPlanner()}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Open Planner"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Calendar size={16} color={BRAND_SKY_BLUE_TEXT} strokeWidth={2.25} />
+              <Text style={styles.addBtnText}>Open Planner</Text>
+            </TouchableOpacity>
+          ) : null}
+          {showEmptyPrimaryAddSubject ? (
+            <TouchableOpacity
+              style={[styles.addBtn, styles.emptyBtn, showEmptyPrimaryPlanner && styles.emptyBtnSecondary]}
+              onPress={onAddSubject}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Add subject"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={16} color={BRAND_SKY_BLUE_TEXT} strokeWidth={2.25} />
+              <Text style={styles.addBtnText}>Add subject</Text>
+            </TouchableOpacity>
+          ) : null}
+          {showEmptySecondaryAddSubject && emptyPrimaryAction !== 'add_subject' ? (
+            <TouchableOpacity
+              style={[styles.addBtn, styles.emptyBtnSecondary]}
               onPress={onAddSubject}
               activeOpacity={0.85}
               accessibilityRole="button"
@@ -352,5 +419,8 @@ const styles = StyleSheet.create({
   },
   emptyBtn: {
     marginTop: 20,
+  },
+  emptyBtnSecondary: {
+    marginTop: 12,
   },
 });

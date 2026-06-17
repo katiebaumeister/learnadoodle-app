@@ -296,7 +296,7 @@ export const createModalStyles = StyleSheet.create({
       ? {
           width: 'auto',
           height: 'auto',
-          minHeight: 0,
+          minHeight: 680,
           maxHeight: '90vh',
           borderRadius: 28,
           boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
@@ -304,9 +304,16 @@ export const createModalStyles = StyleSheet.create({
       : {
           height: 'auto',
           maxHeight: '88%',
-          minHeight: 0,
+          minHeight: 560,
         }),
     overflow: 'hidden',
+  },
+  schoolYearSettingsLoadingBody: {
+    minHeight: 560,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
   },
   schoolYearSettingsModalBody: {
     flexGrow: 0,

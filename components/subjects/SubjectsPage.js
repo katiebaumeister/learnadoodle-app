@@ -17,7 +17,6 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  Calendar,
   Clock,
   GraduationCap,
   Download,
@@ -56,6 +55,14 @@ import {
 import { dispatchOpenSubjectUnitsEditor } from '../../lib/subjectUnitsEditor';
 import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
 import { curriculumStructureHasContent } from '../../lib/subjectUnitsEditorDraft';
+import { isHomeschoolPlanningMode } from '../../lib/planningMode';
+import { useFamilyPlanningMode } from '../../lib/useFamilyPlanningMode';
+import {
+  getSubjectsCatalogEmptyCopy,
+  getSubjectsEditSchoolYearLabel,
+  getSubjectsYearHeaderLabel,
+  shouldShowSubjectsYearTargets,
+} from '../../lib/subjectsModeCopy';
 import SchoolYearSettingsModal from '../settings/SchoolYearSettingsModal';
 import FamilyPanel from '../settings/FamilyPanel';
 import AppModalShell from '../ui/AppModalShell';
@@ -226,6 +233,8 @@ export default function SubjectsPage({
   onTabChange = null,
 }) {
   const isCatalogScreen = screenMode === 'catalog';
+  const storedPlanningMode = useFamilyPlanningMode(familyId, family);
+  const isHomeschoolExperience = isHomeschoolPlanningMode(storedPlanningMode);
   const toast = useToast();
   // Get session context for role-based filtering
   const session = useSession();
@@ -1476,7 +1485,7 @@ export default function SubjectsPage({
       } else if (subjectsExportType === 'report_card') {
         const format = subjectsExportFormat === 'docx' ? 'docx' : 'pdf';
         const termLabel = selectedTermFilter === ALL_TERMS_FILTER
-          ? `${selectedCoursesYear} School Year`
+          ? getSubjectsYearHeaderLabel(selectedCoursesYear, storedPlanningMode)
           : `${getSubjectTermLabel(selectedTermFilter)} ${selectedCoursesYear}`;
         const toDate = (value) => {
           if (!value) return null;
@@ -1925,9 +1934,10 @@ export default function SubjectsPage({
 
   // Child IDs we show compliance for (used for loading attendance to derive "met" for attendance requirement)
   const complianceChildIds = useMemo(() => {
+    if (!isHomeschoolExperience) return [];
     const list = selectedChildFilter === 'all' ? safeChildren : safeChildren.filter(c => c.id === selectedChildFilter);
     return list.map(c => c.id).filter(Boolean);
-  }, [safeChildren, selectedChildFilter]);
+  }, [isHomeschoolExperience, safeChildren, selectedChildFilter]);
 
   const complianceChildIdsKey = useMemo(() => complianceChildIds.slice().sort().join(','), [complianceChildIds]);
 
@@ -2811,6 +2821,7 @@ export default function SubjectsPage({
         <SubjectDetailPage
           subjectId={selectedSubjectId}
           familyId={familyId}
+          family={family}
           children={safeChildren}
           layoutVariant="default"
           onOpenPlannerSettings={openPlanningPreferencesModal}
@@ -2855,7 +2866,10 @@ export default function SubjectsPage({
 
   const subjectsHeaderTitle = isChildView
     ? 'YOUR SUBJECTS'
-    : "YOUR FAMILY'S COURSES";
+    : (isHomeschoolExperience ? "YOUR FAMILY'S COURSES" : 'YOUR LEARNING');
+  const catalogEmptyCopy = getSubjectsCatalogEmptyCopy(storedPlanningMode, {
+    isSearch: Boolean(searchQuery?.trim()),
+  });
   const showHeaderYearNavigator = !isChildView && !isCatalogScreen;
   return (
     <View style={styles.container}>
@@ -2880,9 +2894,11 @@ export default function SubjectsPage({
                 onPress={jumpToCurrentCoursesYear}
                 disabled={isAtCurrentCoursesYear}
                 accessibilityRole="button"
-                accessibilityLabel="Return to current school year"
+                accessibilityLabel={isHomeschoolExperience ? 'Return to current school year' : 'Return to current year'}
               >
-                <Text style={styles.headerYearNavTitle}>{selectedCoursesYear} School Year</Text>
+                <Text style={styles.headerYearNavTitle}>
+                  {getSubjectsYearHeaderLabel(selectedCoursesYear, storedPlanningMode)}
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.headerYearNavBtn, !canNavigateNextCoursesYear && styles.headerYearNavBtnDisabled]}
@@ -3128,9 +3144,13 @@ export default function SubjectsPage({
           onShiftSchoolYear={shiftCoursesYear}
           onJumpToCurrentSchoolYear={jumpToCurrentCoursesYear}
           isAtCurrentSchoolYear={isAtCurrentCoursesYear}
-          onEditSchoolYear={!isChildView ? () => openPlanningPreferencesModal(selectedCoursesYear) : undefined}
+          onEditSchoolYear={
+            !isChildView && isHomeschoolExperience
+              ? () => openPlanningPreferencesModal(selectedCoursesYear)
+              : undefined
+          }
           onEditFamily={
-            !isChildView
+            !isChildView && isHomeschoolExperience
               ? () => setShowFamilyMembersModal(true)
               : undefined
           }
@@ -3143,12 +3163,16 @@ export default function SubjectsPage({
             }
           }}
           onPlanWeek={() => onTabChange?.('planner', 'calendar')}
-          emptyTitle={searchQuery ? 'No results found' : 'No subjects yet'}
-          emptyText={
-            searchQuery
-              ? 'Please try something else'
-              : 'Create subjects to organize learning.'
-          }
+          yearHeaderLabel={getSubjectsYearHeaderLabel(selectedCoursesYear, storedPlanningMode)}
+          editSchoolYearLabel={getSubjectsEditSchoolYearLabel(storedPlanningMode)}
+          isHomeschoolExperience={isHomeschoolExperience}
+          previousYearAccessibilityLabel={isHomeschoolExperience ? 'Previous school year' : 'Previous year'}
+          nextYearAccessibilityLabel={isHomeschoolExperience ? 'Next school year' : 'Next year'}
+          currentYearAccessibilityLabel={isHomeschoolExperience ? 'Return to current school year' : 'Return to current year'}
+          emptyTitle={catalogEmptyCopy.title}
+          emptyText={catalogEmptyCopy.text}
+          emptyPrimaryAction={catalogEmptyCopy.primaryAction}
+          emptySecondaryAction={catalogEmptyCopy.secondaryAction}
         />
       ) : selectedModeFilter === 'plan' ? (
         <View style={styles.coursesTabContent}>
@@ -3165,7 +3189,7 @@ export default function SubjectsPage({
             onPendingScheduleModalHandled={() => setPendingScheduleModalRequest(null)}
             onDone={() => setSelectedModeFilter('view')}
             onOpenPlannerSettings={openPlanningPreferencesModal}
-            homeSections="yearTargets"
+            homeSections={shouldShowSubjectsYearTargets(storedPlanningMode) ? 'yearTargets' : 'subjectDays'}
             onOpenSubject={(subjectId) => {
               const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
               if (match) {
@@ -3217,7 +3241,9 @@ export default function SubjectsPage({
             <Text style={styles.emptyText}>
               {searchQuery
                 ? 'Please try something else'
-                : 'Create subjects to organize learning.'}
+                : (isHomeschoolExperience
+                  ? 'Create subjects to organize learning.'
+                  : 'Add subjects to track reading, practice, or enrichment.')}
             </Text>
             {!searchQuery && (
               <TouchableOpacity
@@ -4679,6 +4705,9 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
+  },
+  emptyButtonSecondary: {
+    marginTop: 12,
   },
   emptyButtonText: {
     fontSize: 14,

@@ -90,9 +90,8 @@ export default function AppShell({
               >
                 {disabled && (
                   <View style={[styles.setupBanner, { pointerEvents: 'box-none' }]}>
-                    <Text style={styles.setupBannerText}>Finish setup to begin planning</Text>
-                    <Text style={styles.setupBannerHint}>
-                      Complete the quick setup above to use the planner, add events, and track progress.
+                    <Text style={styles.setupBannerText}>
+                      Complete the new user set up steps to log in and begin planning
                     </Text>
                   </View>
                 )}
@@ -301,12 +300,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#5B21B6',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
-  },
-  setupBannerHint: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginTop: 4,
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
   focusOverlay: {
     position: 'absolute',

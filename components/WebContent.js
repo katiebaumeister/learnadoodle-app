@@ -10605,6 +10605,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           <SubjectDetailPage
             subjectId={subjectId}
             familyId={subjectFamilyId}
+            family={propFamily}
             children={children || []}
             layoutVariant="default"
             onOpenPlannerSettings={() => {

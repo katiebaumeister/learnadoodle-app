@@ -29,6 +29,11 @@ import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal
 import SubjectEventsModal from './SubjectEventsModal';
 import { ATTENDANCE_MODES, getAttendanceMode, isClassDayMode as resolveClassDayMode } from '../../lib/attendanceMode';
 import { trackEvent } from '../../lib/analytics';
+import { normalizePlanningModeForUi } from '../../lib/planningMode';
+import {
+  getSubjectsPlanEditSettingsLabel,
+  getSubjectsPlanEmptyScheduleText,
+} from '../../lib/subjectsModeCopy';
 
 const FG = '#111827';
 const SUB = '#64748b';
@@ -134,14 +139,6 @@ function formatScheduleScopeChipLabel(scopeId) {
   if (scopeId === 'fall_term') return 'Fall term';
   if (scopeId === 'spring_term') return 'Spring term';
   return '';
-}
-
-function normalizePlanningMode(mode) {
-  const raw = String(mode || '').trim().toLowerCase();
-  if (!raw) return 'afterschool';
-  if (raw.includes('home')) return 'homeschool';
-  if (raw.includes('after')) return 'afterschool';
-  return 'afterschool';
 }
 
 function formatYmdFromTemplateYear(startYear, endYear, scope) {
@@ -2101,7 +2098,7 @@ export default function SubjectsPlanBuilder({
     return schoolYearOptions.find((opt) => String(opt?.label || '').trim() === scopeYearKey) || null;
   }, [selectedYearFilter, schoolYearOptions]);
   const selectedTermOption = useMemo(() => TERM_OPTIONS.find((x) => x.id === selectedTerm) || TERM_OPTIONS[0], [selectedTerm]);
-  const currentUserMode = useMemo(() => normalizePlanningMode(planningMode), [planningMode]);
+  const currentUserMode = useMemo(() => normalizePlanningModeForUi(planningMode), [planningMode]);
   const isHomeschoolMode = currentUserMode === 'homeschool';
   const displaySchoolYear = useMemo(
     () => schoolYearFromFilter || selectedSchoolYear,
@@ -7715,7 +7712,8 @@ export default function SubjectsPlanBuilder({
   if (surfaceMode === 'home') {
     const showFooterOnly = homeSections === 'footerOnly';
     const showSubjectDaysSection = !showFooterOnly && (homeSections === 'all' || homeSections === 'subjectDays');
-    const showYearTargetsSection = !showFooterOnly && (homeSections === 'all' || homeSections === 'yearTargets');
+    const showYearTargetsSection = !showFooterOnly && isHomeschoolMode && (homeSections === 'all' || homeSections === 'yearTargets');
+    const planEditSettingsLabel = getSubjectsPlanEditSettingsLabel(planningMode);
     const scheduleSectionContent = (
           <View style={[
             styles.emptyScheduleSection,
@@ -7740,11 +7738,11 @@ export default function SubjectsPlanBuilder({
                         onPress={openPlanningPreferences}
                         activeOpacity={0.7}
                         accessibilityRole="button"
-                        accessibilityLabel="Edit School Year Settings"
+                        accessibilityLabel={planEditSettingsLabel}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
                         <Pencil size={14} color="#6B7280" />
-                        <Text style={styles.sectionHeaderActionButtonText}>Edit School Year Settings</Text>
+                        <Text style={styles.sectionHeaderActionButtonText}>{planEditSettingsLabel}</Text>
                       </TouchableOpacity>
                     ) : null}
                   </View>
@@ -7754,7 +7752,7 @@ export default function SubjectsPlanBuilder({
                       <Text style={styles.scheduleEmptyText}>
                         {overviewLoading
                           ? 'Loading schedule status...'
-                          : 'No subjects for this school year yet. Add a subject, then start scheduling.'}
+                          : getSubjectsPlanEmptyScheduleText(planningMode, { overviewLoading })}
                       </Text>
                     </View>
                   ) : (
@@ -7781,7 +7779,11 @@ export default function SubjectsPlanBuilder({
                           {termSection.subjectPlans.length === 0 ? (
                             <View style={[styles.subjectRow, styles.subjectRowLast]}>
                               <View style={styles.subjectCadence}>
-                                <Text style={styles.subjectCadenceText}>No subjects for this school year yet. Create a new subject, then add a plan.</Text>
+                                <Text style={styles.subjectCadenceText}>
+                                  {isHomeschoolMode
+                                    ? 'No subjects for this school year yet. Create a new subject, then add a plan.'
+                                    : 'No subjects yet. Add one from Learning or schedule events in Planner.'}
+                                </Text>
                               </View>
                             </View>
                           ) : (

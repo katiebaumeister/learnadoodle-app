@@ -52,6 +52,14 @@ export default function OnboardingModal({
     setStep(nextStep);
   };
 
+  const stepRef = useRef(step);
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
+
+  /** Tracks resume per modal open so familyId arriving mid-flow does not reset the step. */
+  const resumeKeyRef = useRef(null);
+
   useEffect(() => {
     if (!visible) return;
     setError(null);
@@ -67,23 +75,41 @@ export default function OnboardingModal({
     }).start();
   }, [step, resuming, stepContentOpacity]);
 
-  // Resume: set step from backend status every time modal opens (avoids stale state if user deletes child/subject mid-flow)
+  // Resume: set step from backend status when modal opens (avoids stale state if user deletes child/subject mid-flow).
+  // familyId may arrive after the user leaves welcome — do not re-run resume in that case.
   useEffect(() => {
-    if (!visible) return;
-    let cancelled = false;
-    if (!familyId) {
-      // New signup: no family yet (ensure_family may 404 if backend not deployed). Stop loading after delay so user sees first step.
-      const t = setTimeout(() => {
-        if (!cancelled) {
-          setStep('welcome');
-          setPlanningMode(initialPlanningMode ?? null);
-          setCreatedChildren([]);
-          setResuming(false);
-          if (onReady) onReady();
-        }
-      }, 2000);
-      return () => { cancelled = true; clearTimeout(t); };
+    if (!visible) {
+      resumeKeyRef.current = null;
+      return;
     }
+    let cancelled = false;
+
+    const finishResume = () => {
+      if (cancelled) return;
+      setResuming(false);
+      if (onReady) onReady();
+    };
+
+    if (!familyId) {
+      if (resumeKeyRef.current === 'no-family') return () => { cancelled = true; };
+      resumeKeyRef.current = 'no-family';
+      setStep('welcome');
+      setPlanningMode(initialPlanningMode ?? null);
+      setCreatedChildren([]);
+      finishResume();
+      return () => { cancelled = true; };
+    }
+
+    const stepIdx = STEPS.indexOf(stepRef.current);
+    if (resumeKeyRef.current === 'no-family' && stepIdx > 0) {
+      resumeKeyRef.current = familyId;
+      finishResume();
+      return () => { cancelled = true; };
+    }
+
+    if (resumeKeyRef.current === familyId) return () => { cancelled = true; };
+    resumeKeyRef.current = familyId;
+
     (async () => {
       try {
         const res = await getOnboardingStatus();
@@ -108,7 +134,7 @@ export default function OnboardingModal({
             setParentDisplayName(data.parent_display_name || '');
             setParentAvatarKey(data.parent_avatar_url || 'prof1');
             setCreatedChildren([]);
-          } else {
+          } else if (stepIdx === 0) {
             setStep('welcome');
             setPlanningMode(initialPlanningMode ?? null);
             setCreatedChildren([]);
@@ -138,10 +164,7 @@ export default function OnboardingModal({
       } catch (_) {
         // Don't reset step on fetch error (e.g. 429) — only set step from successful API data
       } finally {
-        if (!cancelled) {
-          setResuming(false);
-          if (onReady) onReady();
-        }
+        finishResume();
       }
     })();
     return () => { cancelled = true; };
@@ -334,7 +357,10 @@ export default function OnboardingModal({
       const res = await completeOnboarding({ family_id: fid, onboarding_who: onboardingWho });
       if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to complete.');
       try {
-        await seedHomeWelcomeBulletinPost({ familyId: fid, planningMode });
+        const seedResult = await seedHomeWelcomeBulletinPost({ familyId: fid, planningMode });
+        if (seedResult?.error) {
+          console.warn('[OnboardingModal] home welcome bulletin', seedResult.error);
+        }
       } catch (seedErr) {
         console.warn('[OnboardingModal] home welcome bulletin', seedErr);
       }

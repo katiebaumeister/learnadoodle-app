@@ -17,6 +17,7 @@ import PlannerCalendarToolbar from './PlannerCalendarToolbar';
 import PlanHealthConflicts from './PlanHealthConflicts';
 import PlannerSmartActionsMenu from './PlannerSmartActionsMenu';
 import SubjectsPlanBuilder from '../subjects/SubjectsPlanBuilder';
+import { getEffectivePlanningMode } from '../../lib/planningMode';
 import { parsePlannerSection } from './plannerSectionRouting';
 import { familyStyles } from '../family/familyDesignTokens';
 
@@ -112,7 +113,7 @@ export default function PlannerSectionView({
     >
       <SubjectsPlanBuilder
         familyId={familyId}
-        planningMode={family?.default_planning_mode ?? null}
+        planningMode={getEffectivePlanningMode(family?.default_planning_mode ?? null)}
         children={children}
         visibleSubjects={fullSubjects || []}
         allSubjects={fullSubjects || []}

@@ -2,20 +2,13 @@ import React, { useCallback, useState } from 'react';
 import { View, Text, Platform, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Check, ChevronDown } from 'lucide-react';
 import { setOnboardingPlanningMode } from '../../lib/apiClient';
+import { FAMILY_APPROACH_OPTIONS, getPlanningModeLabel } from '../../lib/planningMode';
+import { dispatchPlanningModeChanged } from '../../lib/useFamilyPlanningMode';
 import { useToast } from '../Toast';
 import ConfirmDialog from '../ConfirmDialog';
 import { SettingsTypography } from './settingsDesignTokens';
 
-export const FAMILY_APPROACH_OPTIONS = [
-  {
-    id: 'HOMESCHOOL_COMPLIANCE',
-    label: 'Homeschooling',
-  },
-  {
-    id: 'AFTERSCHOOL_GOALS',
-    label: 'Afterschooling',
-  },
-];
+export { FAMILY_APPROACH_OPTIONS };
 
 export default function FamilyApproachSelector({
   familyId,
@@ -30,8 +23,7 @@ export default function FamilyApproachSelector({
   const [showGoalMenu, setShowGoalMenu] = useState(false);
   const [approachUpdatedLabel, setApproachUpdatedLabel] = useState(null);
   const currentGoalId = family?.default_planning_mode || null;
-  const currentGoalLabel =
-    FAMILY_APPROACH_OPTIONS.find((option) => option.id === currentGoalId)?.label || 'Not set';
+  const currentGoalLabel = getPlanningModeLabel(currentGoalId);
 
   const setMenuOpen = useCallback((nextOpen) => {
     setShowGoalMenu(nextOpen);
@@ -45,17 +37,14 @@ export default function FamilyApproachSelector({
     }
     setSavingGoal(true);
     try {
-      const nextLabel =
-        FAMILY_APPROACH_OPTIONS.find((option) => option.id === nextGoalId)?.label || 'your selection';
+      const nextLabel = getPlanningModeLabel(nextGoalId);
       const res = await setOnboardingPlanningMode({
         family_id: familyId,
         planning_mode: nextGoalId,
       });
       if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to update approach');
       onFamilyUpdate?.({ ...(family || {}), default_planning_mode: nextGoalId });
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshFamily'));
-      }
+      dispatchPlanningModeChanged(nextGoalId);
       setApproachUpdatedLabel(nextLabel);
     } catch (err) {
       toast.push(err?.message || 'Could not update learning approach', 'error');
@@ -111,6 +100,8 @@ export default function FamilyApproachSelector({
         message={`Your family approach is now set to ${approachUpdatedLabel}.`}
         confirmLabel="OK"
         hideCancel
+        brandConfirm
+        centerActions
         onConfirm={() => setApproachUpdatedLabel(null)}
         onCancel={() => setApproachUpdatedLabel(null)}
       />

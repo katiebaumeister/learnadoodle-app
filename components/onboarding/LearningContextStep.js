@@ -40,7 +40,6 @@ export default function LearningContextStep({ value, onChange, onNext, isSaving 
   return (
     <View style={styles.container}>
       <Text style={styles.prompt}>How are you using Learnadoodle?</Text>
-      <Text style={styles.subtext}>Choose the option that best fits your situation.</Text>
 
       <View style={styles.row}>
         {MODE_OPTIONS.map((mode, index) => {
@@ -105,16 +104,9 @@ const styles = StyleSheet.create({
     fontSize: 30,
     fontWeight: '600',
     color: ONBOARDING_TEXT_PRIMARY,
-    marginBottom: 16,
-    textAlign: 'center',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
-  },
-  subtext: {
-    fontSize: 16,
-    color: '#6B7280',
     marginBottom: 32,
     textAlign: 'center',
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   row: {
     flexDirection: 'row',

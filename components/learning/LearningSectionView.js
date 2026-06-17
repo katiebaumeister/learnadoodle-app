@@ -3,6 +3,8 @@ import { View, StyleSheet, Platform } from 'react-native';
 import { resolveSection } from '../layout/sectionNavConfig';
 import MaterialsLibrary from '../materials/MaterialsLibrary';
 import SubjectsPage from '../subjects/SubjectsPage';
+import { getEffectivePlanningMode } from '../../lib/planningMode';
+import { useFamilyPlanningMode } from '../../lib/useFamilyPlanningMode';
 import AssignmentsListScreen from './AssignmentsListScreen';
 import SubmissionsListScreen from './SubmissionsListScreen';
 import GradesListScreen from './GradesListScreen';
@@ -33,6 +35,7 @@ export default function LearningSectionView({
 }) {
   const familyUserControls = useOptionalFamilyUserControls();
   const effectivePermissions = familyUserControls?.effectivePermissions;
+  const storedPlanningMode = useFamilyPlanningMode(familyId, family);
 
   const activeSection = useMemo(() => {
     const resolved = resolveSection(tab, section) || 'subjects';
@@ -108,7 +111,7 @@ export default function LearningSectionView({
         return (
           <SubjectsPage
             familyId={familyId}
-            planningMode={family?.default_planning_mode || null}
+            planningMode={getEffectivePlanningMode(storedPlanningMode)}
             family={family}
             user={user}
             profile={profile}

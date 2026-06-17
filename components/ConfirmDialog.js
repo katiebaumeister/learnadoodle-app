@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Modal, Platform } from 'react
 import { Trash2 } from 'lucide-react';
 import { designTokens } from '../theme/designTokens';
 import { destructiveButtonStyles, destructiveIconColor } from './ui/destructiveButtonStyles';
+import { modalButtonStyles } from './ui/modalButtonStyles';
 
 const { colors: tok, fonts, radius } = designTokens;
 const primary = tok.primary;
@@ -20,7 +21,18 @@ const MODAL_PAD = 32;
 // On web, render above other modals (e.g. Edit Subject). Use portal + high z-index so dialog is never behind a parent modal.
 const WEB_DIALOG_Z_INDEX = 2147483647;
 
-function DialogContent({ title, message, confirmLabel, cancelLabel, destructive, hideCancel, onConfirm, onCancel }) {
+function DialogContent({
+  title,
+  message,
+  confirmLabel,
+  cancelLabel,
+  destructive,
+  hideCancel,
+  brandConfirm,
+  centerActions,
+  onConfirm,
+  onCancel,
+}) {
   return (
     <View style={styles.cardInner}>
       <View style={styles.headerRow}>
@@ -42,7 +54,10 @@ function DialogContent({ title, message, confirmLabel, cancelLabel, destructive,
         </TouchableOpacity>
       </View>
       {message ? <Text style={styles.message}>{message}</Text> : null}
-      <View style={styles.actions}>
+      <View style={[
+        styles.actions,
+        centerActions && styles.actionsCentered,
+      ]}>
         {!hideCancel ? (
           <TouchableOpacity style={styles.cancelButton} onPress={onCancel} activeOpacity={0.85}>
             <Text style={styles.cancelButtonText}>{cancelLabel}</Text>
@@ -50,7 +65,7 @@ function DialogContent({ title, message, confirmLabel, cancelLabel, destructive,
         ) : null}
         <TouchableOpacity
           style={[
-            styles.confirmButton,
+            brandConfirm ? styles.brandConfirmButton : styles.confirmButton,
             destructive && destructiveButtonStyles.buttonCompact,
             destructive && styles.confirmButtonDestructive,
           ]}
@@ -59,7 +74,7 @@ function DialogContent({ title, message, confirmLabel, cancelLabel, destructive,
         >
           {destructive ? <Trash2 size={14} color={destructiveIconColor} strokeWidth={2.25} /> : null}
           <Text style={[
-            styles.confirmButtonText,
+            brandConfirm ? styles.brandConfirmButtonText : styles.confirmButtonText,
             destructive && destructiveButtonStyles.buttonTextCompact,
             destructive && styles.confirmButtonTextDestructive,
           ]}>
@@ -86,6 +101,8 @@ export default function ConfirmDialog({
   onCancel,
   destructive = false,
   hideCancel = false,
+  brandConfirm = false,
+  centerActions = false,
 }) {
   const handleConfirm = () => onConfirm?.();
   const handleCancel = () => onCancel?.();
@@ -110,6 +127,8 @@ export default function ConfirmDialog({
           cancelLabel={cancelLabel}
           destructive={destructive}
           hideCancel={hideCancel}
+          brandConfirm={brandConfirm}
+          centerActions={centerActions}
           onConfirm={handleConfirm}
           onCancel={handleCancel}
         />
@@ -221,6 +240,9 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 12,
   },
+  actionsCentered: {
+    justifyContent: 'center',
+  },
   cancelButton: {
     paddingHorizontal: 20,
     paddingVertical: 12,
@@ -246,6 +268,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
   },
+  brandConfirmButton: {
+    ...modalButtonStyles.primaryButton,
+    minWidth: 120,
+    paddingHorizontal: 28,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 12px rgba(158, 207, 251, 0.55)',
+    }),
+  },
   confirmButtonDestructive: {
     backgroundColor: destructiveButtonStyles.buttonCompact.backgroundColor,
     minWidth: 96,
@@ -254,6 +284,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#FFFFFF',
+    fontFamily: Platform.OS === 'web' ? FONT_MODAL_BUTTON : fonts.sans,
+  },
+  brandConfirmButtonText: {
+    ...modalButtonStyles.primaryButtonText,
+    fontSize: 16,
+    fontWeight: '700',
     fontFamily: Platform.OS === 'web' ? FONT_MODAL_BUTTON : fonts.sans,
   },
   confirmButtonTextDestructive: {

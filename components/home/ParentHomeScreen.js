@@ -21,6 +21,7 @@ import BulletinBoardSection from '../bulletin/BulletinBoardSection';
 import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
+import { seedHomeWelcomeBulletinPost } from '../../lib/homeWelcomeBulletin';
 
 function getTimeBasedGreeting() {
   const hour = new Date().getHours();
@@ -212,6 +213,17 @@ export default function ParentHomeScreen({
 
   // Get familyId from session if not provided as prop
   const familyId = propFamilyId || session?.family_id;
+  const welcomeSeedAttemptedRef = useRef(null);
+
+  useEffect(() => {
+    if (!familyId || family?.onboarding_completed !== true) return;
+    if (welcomeSeedAttemptedRef.current === familyId) return;
+    welcomeSeedAttemptedRef.current = familyId;
+    void seedHomeWelcomeBulletinPost({
+      familyId,
+      planningMode: family?.default_planning_mode,
+    });
+  }, [familyId, family?.onboarding_completed, family?.default_planning_mode]);
 
   const viewerFirstName = useMemo(() => {
     const raw = profile?.first_name || profile?.name || '';

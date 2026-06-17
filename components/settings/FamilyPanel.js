@@ -128,11 +128,8 @@ function subscriptionSidebarProductLabel(planKey) {
   }
 }
 
-const ONBOARDING_GOAL_OPTIONS = [
-  { id: 'HOMESCHOOL_COMPLIANCE', label: 'Homeschooling' },
-  { id: 'AFTERSCHOOL_GOALS', label: 'Afterschooling' },
-  { id: 'NONE', label: 'Just scheduling' },
-];
+import { getPlanningModeLabel } from '../../lib/planningMode';
+import { dispatchPlanningModeChanged } from '../../lib/useFamilyPlanningMode';
 
 const SETTINGS_SIDEBAR_ACCOUNT_KEYS = ['profile', 'appearance', 'notifications'];
 const SETTINGS_SIDEBAR_HOUSEHOLD_KEYS = ['planner-settings', 'members', 'courses'];
@@ -159,7 +156,7 @@ const SHOW_BILLING_TAB = false;
 const SHOW_DANGER_ZONE = true;
 
 function getOnboardingGoalLabel(goalId) {
-  return ONBOARDING_GOAL_OPTIONS.find((opt) => opt.id === goalId)?.label || '—';
+  return getPlanningModeLabel(goalId);
 }
 
 function getFriendlyParentInviteError(err) {
@@ -1844,9 +1841,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       const updatedFamily = { ...(family || {}), default_planning_mode: nextGoalId };
       setFamily(updatedFamily);
       onFamilyUpdate?.(updatedFamily);
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshFamily'));
-      }
+      dispatchPlanningModeChanged(nextGoalId);
       toast.push('Goal updated. Your experience will now match this goal. All existing data was kept.', 'success');
     } catch (err) {
       toast.push(err?.message || 'Failed to update goal', 'error');
@@ -3413,6 +3408,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 styles.profileSection,
                 styles.profileSectionFirst,
                 appearanceGoalMenuOpen && styles.profileSectionDropdownOpen,
+                appearanceGoalMenuOpen && styles.profileSectionMenuOpen,
               ]}
             >
               <View style={styles.profileSectionHeader}>
@@ -7678,6 +7674,11 @@ function createStyles(tokens) {
       zIndex: 160,
       ...(Platform.OS === 'web' && {
         isolation: 'isolate',
+      }),
+    },
+    profileSectionMenuOpen: {
+      ...(Platform.OS === 'web' && {
+        overflow: 'visible',
       }),
     },
     profileSectionFirst: {

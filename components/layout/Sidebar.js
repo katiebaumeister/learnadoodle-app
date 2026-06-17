@@ -30,6 +30,7 @@ export default function Sidebar({
   onOpenFeedback,
   onReservedWidthChange = null,
   onHoverOverlayChange = null,
+  familyPlanningMode = null,
 }) {
   React.useEffect(() => {
     onReservedWidthChange?.(RAIL_EXPANDED_WIDTH);
@@ -63,6 +64,7 @@ export default function Sidebar({
           isCollapsed={false}
           hideBrandLogo={false}
           permanentSidebar
+          familyPlanningMode={familyPlanningMode}
         />
       </View>
     </View>

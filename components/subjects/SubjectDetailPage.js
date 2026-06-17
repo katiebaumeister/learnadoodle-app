@@ -87,6 +87,8 @@ import SubjectClassroomTabs from './SubjectClassroomTabs';
 import SubjectClassworkSection from './SubjectClassworkSection';
 import MaterialsLibrary from '../materials/MaterialsLibrary';
 import SubjectClassworkSmartActions from './SubjectClassworkSmartActions';
+import { isHomeschoolPlanningMode } from '../../lib/planningMode';
+import { useFamilyPlanningMode } from '../../lib/useFamilyPlanningMode';
 import SubjectGradesPanel from './SubjectGradesPanel';
 import SubjectGapAnalysisModal from './SubjectGapAnalysisModal';
 import { parseSubjectGradingSettings, getGradingMethodLabel } from '../../lib/subjectGradingSettings';
@@ -460,6 +462,7 @@ function buildLearningGoalsUnitsFromEvents(events) {
 export default function SubjectDetailPage({
   subjectId,
   familyId,
+  family = null,
   children = [],
   onBack,
   onEditSubject,
@@ -482,6 +485,8 @@ export default function SubjectDetailPage({
     : null;
   const session = useSession();
   const toast = useToast();
+  const storedPlanningMode = useFamilyPlanningMode(familyId, family);
+  const showSmartActions = isHomeschoolPlanningMode(storedPlanningMode);
   const [loading, setLoading] = useState(!preloadedSubjectData);
   const [error, setError] = useState(null);
   const [subjectData, setSubjectData] = useState(preloadedSubjectData || null);
@@ -3681,14 +3686,16 @@ export default function SubjectDetailPage({
             </View>
             {isParentViewer ? (
               <View style={styles.tabBarActions}>
-                <SubjectClassworkSmartActions
-                  onGapAnalysis={openGapAnalysisModal}
-                  gapAnalysisWorking={gapAnalysisWorking}
-                  onScheduleAllLessons={handleScheduleAllLessons}
-                  schedulingAll={classworkSchedulingAll}
-                  buttonStyle={styles.headerTopActionBtn}
-                  textStyle={styles.headerTopActionText}
-                />
+                {showSmartActions ? (
+                  <SubjectClassworkSmartActions
+                    onGapAnalysis={openGapAnalysisModal}
+                    gapAnalysisWorking={gapAnalysisWorking}
+                    onScheduleAllLessons={handleScheduleAllLessons}
+                    schedulingAll={classworkSchedulingAll}
+                    buttonStyle={styles.headerTopActionBtn}
+                    textStyle={styles.headerTopActionText}
+                  />
+                ) : null}
                 <TouchableOpacity
                   style={styles.headerTopActionBtn}
                   onPress={() => openSubjectSettings('details')}

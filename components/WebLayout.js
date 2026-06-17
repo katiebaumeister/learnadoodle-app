@@ -78,7 +78,9 @@ import SyllabusUpload from './SyllabusUpload';
 import { ToastProvider } from './Toast';
 import { supabase } from '../lib/supabase';
 import { prefetchPlanEditListForFamily } from '../lib/services/plannerPrefetch';
-import { preloadBulletinBoardForFamily } from '../lib/bulletinBoardCache';
+import { preloadBulletinBoardForFamily, invalidateBulletinPostsCache } from '../lib/bulletinBoardCache';
+import { seedHomeWelcomeBulletinPost } from '../lib/homeWelcomeBulletin';
+import { useFamilyPlanningMode } from '../lib/useFamilyPlanningMode';
 import { PlannerDiffProvider } from '../app/state/usePlannerDiffStore';
 import PlannerDiffModal from '../app/components/schedule/PlannerDiffModal';
 import { PlannerHealthProvider } from '../app/state/usePlannerHealthStore';
@@ -323,6 +325,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Initialize familyId from session on first paint so planner/home load immediately (no blank until effect runs)
   const [familyId, setFamilyId] = useState(() => (session?.family_id ?? null));
   const [family, setFamily] = useState(null);
+  const familyPlanningMode = useFamilyPlanningMode(familyId, family);
   const [profile, setProfile] = useState(null);
 
   const editChildLinkedLoginEmail = useMemo(() => {
@@ -750,7 +753,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     session &&
     ((session.loading === true) ||
       !shellImagesReady ||
-      (homeNeedsInitialData && !homeInitialDataReady) ||
+      (homeNeedsInitialData && !homeInitialDataReady && !onboardingBlocked) ||
       (onboardingBlocked && (!onboardingUiReady || !onboardingModalReady)))
   );
   const showLoaderEffective = showLoader;
@@ -1904,6 +1907,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (!authUserId || !sessionFamilyId) return;
     if (!isUuidLike(sessionFamilyId)) return;
+    if (onboardingBlocked) return;
     let mounted = true;
     const fetchAcademicYears = async () => {
       let result = await supabase
@@ -1994,7 +1998,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       }
       if (timeoutHandle != null) clearTimeout(timeoutHandle);
     };
-  }, [fetchFamilyData, fetchFamilyMembers, authUserId, sessionFamilyId]);
+  }, [fetchFamilyData, fetchFamilyMembers, authUserId, sessionFamilyId, onboardingBlocked]);
 
   // Resolve onboarding status before showing main content so we never flash landing without modal
   useEffect(() => {
@@ -2128,10 +2132,34 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => window.removeEventListener('refreshSubjects', handleRefreshSubjects);
   }, [refetchSubjects]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const handlePlanningModeChanged = (event) => {
+      const nextMode = event?.detail?.default_planning_mode;
+      if (nextMode !== undefined && nextMode !== null) {
+        setFamily((prev) => (prev ? { ...prev, default_planning_mode: nextMode } : prev));
+      }
+    };
+    const handleRefreshFamily = (event) => {
+      const nextMode = event?.detail?.default_planning_mode;
+      if (nextMode !== undefined && nextMode !== null) {
+        setFamily((prev) => (prev ? { ...prev, default_planning_mode: nextMode } : prev));
+        return;
+      }
+      fetchFamilyData();
+    };
+    window.addEventListener('planningModeChanged', handlePlanningModeChanged);
+    window.addEventListener('refreshFamily', handleRefreshFamily);
+    return () => {
+      window.removeEventListener('planningModeChanged', handlePlanningModeChanged);
+      window.removeEventListener('refreshFamily', handleRefreshFamily);
+    };
+  }, [fetchFamilyData]);
+
   // When onboarding completes (modal or event), close modal optimistically and refresh family/calendar/children/subjects
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handleOnboardingCompleted = () => {
+    const handleOnboardingCompleted = async (event) => {
       setOnboardingJustCompleted(true);
       setInitialOnboardingBlocked(false);
       fetchFamilyData();
@@ -2139,10 +2167,30 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       window.dispatchEvent(new CustomEvent('refreshCalendar'));
       window.dispatchEvent(new CustomEvent('refreshChildren'));
       window.dispatchEvent(new CustomEvent('refreshSubjects'));
+
+      const fid = familyId || sessionFamilyId;
+      const planningMode =
+        event?.detail?.planningMode
+        || family?.default_planning_mode
+        || null;
+      if (!fid) return;
+
+      invalidateBulletinPostsCache(fid);
+      try {
+        const seedResult = await seedHomeWelcomeBulletinPost({ familyId: fid, planningMode });
+        if (seedResult?.error) {
+          console.warn('[WebLayout] home welcome bulletin', seedResult.error);
+        }
+      } catch (seedErr) {
+        console.warn('[WebLayout] home welcome bulletin', seedErr);
+      }
+      invalidateBulletinPostsCache(fid);
+      window.dispatchEvent(new CustomEvent('refreshBulletinBoard', { detail: { familyId: fid } }));
+      preloadBulletinBoardForFamily(fid).catch(() => {});
     };
     window.addEventListener('onboardingCompleted', handleOnboardingCompleted);
     return () => window.removeEventListener('onboardingCompleted', handleOnboardingCompleted);
-  }, [fetchFamilyData, fetchFamilyMembers]);
+  }, [fetchFamilyData, fetchFamilyMembers, familyId, sessionFamilyId, family?.default_planning_mode]);
 
   // Handle URL-based routing for subject detail pages
   useEffect(() => {
@@ -3905,6 +3953,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             onAvatarPress: handleShellAvatarPress,
             user: user,
             userRole: resolvedShellUserRole,
+            familyPlanningMode: familyPlanningMode ?? family?.default_planning_mode ?? null,
           }}
           onOpenSettings={(section = 'profile') => {
             handleTabChange('settings', section);
@@ -4666,7 +4715,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 children={children}
                 family={family}
                 onFamilyUpdate={(updatedFamily) => {
-                  setFamily(updatedFamily);
+                  setFamily((prev) => ({
+                    ...(prev || {}),
+                    ...(updatedFamily || {}),
+                  }));
                 }}
                 session={session}
                 profile={profile}
