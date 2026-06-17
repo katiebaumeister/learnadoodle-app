@@ -1,3 +1,4 @@
+// Deprecated: legacy onboarding flow. Not used by WebLayout/OnboardingModal.
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,

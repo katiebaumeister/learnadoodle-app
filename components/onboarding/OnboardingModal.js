@@ -177,14 +177,6 @@ export default function OnboardingModal({
       if (id) {
         if (pendingId) {
           setCreatedChildren((prev) => prev.map((c) => (c.id === pendingId ? { id, name: child.name } : c)));
-          setCreatedSubjectsByChild((prev) => {
-            const next = { ...prev };
-            if (prev[pendingId]) {
-              next[id] = prev[pendingId];
-              delete next[pendingId];
-            }
-            return next;
-          });
         } else {
           setCreatedChildren((prev) => [...prev, { id, name: child.name }]);
         }
@@ -226,11 +218,6 @@ export default function OnboardingModal({
     } catch (e) {
       if (pendingId) {
         setCreatedChildren((prev) => prev.filter((c) => c.id !== pendingId));
-        setCreatedSubjectsByChild((prev) => {
-          const next = { ...prev };
-          delete next[pendingId];
-          return next;
-        });
       }
       setError(e?.message ?? 'Failed to create child.');
       if (!isBackground) throw e;
@@ -306,7 +293,9 @@ export default function OnboardingModal({
       }
       // Dispatch first so WebLayout can close modal immediately (avoids depending on refetch, e.g. 429)
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('onboardingCompleted'));
+        window.dispatchEvent(new CustomEvent('onboardingCompleted', {
+          detail: { planningMode: planningMode || null },
+        }));
       }
       if (onCompleted) await onCompleted();
     } catch (e) {

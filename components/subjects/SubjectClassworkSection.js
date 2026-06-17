@@ -918,6 +918,78 @@ function ClassworkPanelHeader({
   );
 }
 
+function SubjectEmptyClassworkState({ onAddUnit, onAddLesson, onAddAssignment }) {
+  return (
+    <View style={styles.emptyWrap}>
+      <Text style={styles.emptyHeading}>This subject is empty</Text>
+      <Text style={styles.emptySubtext}>
+        Add a unit, lesson, or assignment to start building classwork.
+      </Text>
+      <View style={styles.emptyActionsRow}>
+        {onAddUnit ? (
+          <TouchableOpacity
+            style={styles.emptyActionBtn}
+            onPress={onAddUnit}
+            accessibilityLabel="Add unit"
+            activeOpacity={0.85}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Plus size={16} color="#334155" strokeWidth={2.25} />
+            <Text style={styles.actionPillBtnText}>Add unit</Text>
+          </TouchableOpacity>
+        ) : null}
+        {onAddLesson ? (
+          <TouchableOpacity
+            style={styles.emptyActionBtn}
+            onPress={onAddLesson}
+            accessibilityLabel="Add lesson"
+            activeOpacity={0.85}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Plus size={16} color="#334155" strokeWidth={2.25} />
+            <Text style={styles.actionPillBtnText}>Add lesson</Text>
+          </TouchableOpacity>
+        ) : null}
+        {onAddAssignment ? (
+          <TouchableOpacity
+            style={styles.emptyActionBtn}
+            onPress={onAddAssignment}
+            accessibilityLabel="Add assignment"
+            activeOpacity={0.85}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Plus size={16} color="#334155" strokeWidth={2.25} />
+            <Text style={styles.actionPillBtnText}>Add assignment</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function EmptyNothingScheduledState({ onScheduleClassDays }) {
+  return (
+    <View style={styles.emptyScheduleWrap}>
+      <Text style={styles.emptyHeading}>Nothing scheduled yet</Text>
+      <Text style={styles.emptySubtext}>
+        Schedule class days or assign lessons to the planner.
+      </Text>
+      {onScheduleClassDays ? (
+        <TouchableOpacity
+          style={styles.emptyUnitsButton}
+          onPress={onScheduleClassDays}
+          accessibilityLabel="Schedule class days"
+          activeOpacity={0.85}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Plus size={18} color="#334155" strokeWidth={2.25} />
+          <Text style={styles.actionPillBtnText}>Schedule class days</Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+}
+
 function EmptyClassworkState({ isParentViewer }) {
   return (
     <View style={styles.emptyWrap}>
@@ -1472,6 +1544,20 @@ export default function SubjectClassworkSection({
     toast,
   ]);
 
+  const handleAddLessonFromEmpty = useCallback(() => {
+    const currentUnits = pendingUnitsRef.current ?? units;
+    const firstUnit = (currentUnits || []).find((u) => u?.id != null);
+    if (!firstUnit) {
+      handleAddUnit();
+      return;
+    }
+    handleAddLesson({
+      unitId: firstUnit.id,
+      title: firstUnit.title,
+      lessons: firstUnit.lessons || [],
+    });
+  }, [units, handleAddUnit, handleAddLesson]);
+
   const handleEditLesson = useCallback(async () => {
     if (!onManageUnits) return;
     if (structureSaveTimerRef.current) {
@@ -1964,6 +2050,13 @@ export default function SubjectClassworkSection({
 
   const hasNoUnitAssignments = model.noUnitAssignments.length > 0;
   const hasScheduledEmptyDays = (model.unlinkedLearningDays || []).length > 0;
+  const hasAnyScheduledContent = useMemo(() => {
+    if ((events || []).length > 0) return true;
+    if (hasScheduledEmptyDays) return true;
+    return (model.units || []).some((unit) =>
+      (unit.lessons || []).some((lesson) => (lesson.learningDays || []).length > 0),
+    );
+  }, [events, hasScheduledEmptyDays, model.units]);
   const hasVisibleContent = hasNoUnitAssignments
     || hasUnitsContent
     || hasScheduledEmptyDays;
@@ -1993,7 +2086,11 @@ export default function SubjectClassworkSection({
             />
           ) : null}
           {isParentViewer ? (
-            <EmptyUnitsState onAddUnit={handleAddUnit} />
+            <SubjectEmptyClassworkState
+              onAddUnit={handleAddUnit}
+              onAddLesson={handleAddLessonFromEmpty}
+              onAddAssignment={onCreateAssignment}
+            />
           ) : (
             <EmptyClassworkState isParentViewer={isParentViewer} />
           )}
@@ -2100,6 +2197,9 @@ export default function SubjectClassworkSection({
           onDragStartLearningDay={handleLearningDayDragStart}
         />
       ) : null}
+      {hasUnitsContent && !hasAnyScheduledContent && isParentViewer ? (
+        <EmptyNothingScheduledState onScheduleClassDays={openScheduleAllModal} />
+      ) : null}
       {noUnitItems.length > 0 ? (
         <ClassworkUnitCard
           title="No unit"
@@ -2151,7 +2251,11 @@ export default function SubjectClassworkSection({
       ) : null}
 
       {!hasUnitsContent && isParentViewer ? (
-        <EmptyUnitsState onAddUnit={handleAddUnit} />
+        <SubjectEmptyClassworkState
+          onAddUnit={handleAddUnit}
+          onAddLesson={handleAddLessonFromEmpty}
+          onAddAssignment={onCreateAssignment}
+        />
       ) : model.units.map((unit) => {
         const peerItems = buildUnitPeerItems(unit, model.eventById);
         if (peerItems.length === 0) return null;
@@ -2746,6 +2850,36 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 8,
     ...CLASSWORK_BODY_FONT,
+  },
+  emptyActionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  emptyActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  emptyScheduleWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+    marginBottom: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    gap: 8,
   },
   emptyUnitsWrap: {
     alignItems: 'center',

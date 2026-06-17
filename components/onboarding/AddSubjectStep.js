@@ -1,3 +1,4 @@
+// Deprecated: legacy onboarding subject step. Not used by blocking OnboardingModal.
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,

@@ -3,9 +3,21 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated } from 're
 import { ONBOARDING_SKY, ONBOARDING_TEXT_PRIMARY } from '../../lib/constants/onboardingTheme';
 
 const MODE_OPTIONS = [
-  { id: 'HOMESCHOOL_COMPLIANCE', label: 'Homeschool' },
-  { id: 'AFTERSCHOOL_GOALS', label: 'Afterschool' },
-  { id: 'NONE', label: 'Just scheduling' },
+  {
+    id: 'HOMESCHOOL_COMPLIANCE',
+    label: 'Homeschool',
+    subtitle: 'Manage subjects, lessons, assignments, attendance, and compliance.',
+  },
+  {
+    id: 'AFTERSCHOOL_GOALS',
+    label: 'Afterschool',
+    subtitle: 'Coordinate activities, enrichment, homework, goals, and family routines.',
+  },
+  {
+    id: 'NONE',
+    label: 'Just scheduling',
+    subtitle: 'Use Learnadoodle as a family planner without school-year tracking.',
+  },
 ];
 
 export default function LearningContextStep({ value, onChange, onNext, isSaving }) {
@@ -54,6 +66,9 @@ export default function LearningContextStep({ value, onChange, onNext, isSaving 
               >
                 <Text style={[styles.cardLabel, selected && styles.cardLabelSelected]}>
                   {mode.label}
+                </Text>
+                <Text style={[styles.cardSubtitle, selected && styles.cardSubtitleSelected]}>
+                  {mode.subtitle}
                 </Text>
               </TouchableOpacity>
             </Animated.View>
@@ -148,6 +163,17 @@ const styles = StyleSheet.create({
   },
   cardLabelSelected: {
     color: ONBOARDING_TEXT_PRIMARY,
+  },
+  cardSubtitle: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+  },
+  cardSubtitleSelected: {
+    color: '#475569',
   },
   continueBtn: {
     backgroundColor: ONBOARDING_SKY,

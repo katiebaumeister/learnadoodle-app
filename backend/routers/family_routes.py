@@ -73,7 +73,7 @@ class FamilyMembersOut(BaseModel):
     id: Optional[str] = None
     family_name: Optional[str] = None
     onboarding_completed: Optional[bool] = False  # stored flag (convenience only)
-    onboarding_is_valid: Optional[bool] = False  # derived: default_planning_mode + has_children + has_subjects
+    onboarding_is_valid: Optional[bool] = False  # derived: default_planning_mode + has_children (subjects optional)
     default_planning_mode: Optional[str] = None  # HOMESCHOOL_COMPLIANCE | AFTERSCHOOL_GOALS | NONE
     children: List[ChildOut] = Field(default_factory=list)
     members: List[MemberOut] = Field(default_factory=list)
@@ -967,7 +967,6 @@ async def get_family_members(
             default_planning_mode is not None
             and default_planning_mode != ""
             and has_children
-            and has_subjects
         )
 
         # Get family members - table may not exist or RLS/migration not applied

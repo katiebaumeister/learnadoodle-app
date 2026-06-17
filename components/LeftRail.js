@@ -17,6 +17,9 @@ const SHOW_SUBJECTS_CATALOG_IN_SIDEBAR = false;
 const SHOW_RECORDS_IN_SIDEBAR = false;
 const SHOW_CREATE_IN_SIDEBAR = false;
 
+// TODO(mode-aware-nav): Hide or de-emphasize Subjects/Materials for NONE planning mode
+// unless the family has existing subject/material data or enables learning features.
+
 const SIDEBAR_BRAND_LOGO = LEARNADOODLE_LOGO_ASSET;
 const NAV_ICON_SIZE = 22;
 const ICON_RAIL_EXPANDED_WIDTH = 220;

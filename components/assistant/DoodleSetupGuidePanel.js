@@ -1,3 +1,7 @@
+/**
+ * @deprecated Chatbot setup checklist — replaced by SetupGuideCard on Home.
+ * Do not wire into SearchModal or WebLayout.
+ */
 import React, { useMemo, useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { ChevronRight } from 'lucide-react';

@@ -10,7 +10,7 @@ export default function CompleteStep({ onFinish, isSaving }) {
       </View>
       <Text style={styles.title}>You're all set</Text>
       <Text style={styles.subtitle}>
-        Finish setup to start planning. You can add more children and subjects anytime from settings.
+        Finish setup to unlock Learnadoodle. You can add more children anytime from Family settings.
       </Text>
       <TouchableOpacity
         style={[styles.finishBtn, isSaving && styles.finishBtnDisabled]}

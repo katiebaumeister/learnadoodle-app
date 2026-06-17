@@ -63,8 +63,9 @@ def delete_signup_confirmation_sent_for_email(email: str) -> None:
 
 def require_onboarding_complete(family_id: str) -> None:
     """
-    Raise HTTP 400 if family has not completed onboarding (default_planning_mode set,
-    at least one child, at least one subject). Use before plan creation / apply_to_calendar.
+    Raise HTTP 400 if family has not completed onboarding (planning mode set,
+    at least one child). Subjects are not required for onboarding completion.
+    Use before plan creation / apply_to_calendar.
     """
     supabase = get_admin_client()
     try:
@@ -84,12 +85,6 @@ def require_onboarding_complete(family_id: str) -> None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Complete setup first: add at least one child in Quick setup.",
-            )
-        subjects_res = supabase.table("subject").select("id").eq("family_id", family_id).limit(1).execute()
-        if not subjects_res.data or len(subjects_res.data) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Complete setup first: add at least one subject in Quick setup.",
             )
     except HTTPException:
         raise

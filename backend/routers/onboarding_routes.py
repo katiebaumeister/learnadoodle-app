@@ -393,7 +393,6 @@ async def onboarding_status(
     onboarding_is_valid = bool(
         default_planning_mode
         and has_children
-        and has_subjects
     )
     return {
         "onboarding_completed": bool(completed),
