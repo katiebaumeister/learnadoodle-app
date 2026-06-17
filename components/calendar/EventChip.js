@@ -32,9 +32,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     holidayType === 'CUSTOM_BREAK' ||
     ['day off', 'break'].includes(normalizedEventType) ||
     isLegacyHolidayWithoutSubtype;
-  const shouldHideCompletionControl = isPublicHoliday || isPlannerDayOffOrBreak;
-  const hideChildDots = isPublicHoliday || ev?.hide_child_dots === true;
-  const effectiveHideTime = hideTime || isPublicHoliday;
+  const isBlankHolidayChip = isPublicHoliday || isPlannerDayOffOrBreak;
+  const shouldHideCompletionControl = isBlankHolidayChip;
+  const hideChildDots = isBlankHolidayChip || ev?.hide_child_dots === true;
+  const effectiveHideTime = hideTime || isBlankHolidayChip;
   const effectiveOnPress = onPress;
   const effectiveDisableTouchable = disableTouchable;
   
@@ -60,14 +61,14 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     [ev?.id, ev?.child_id, ev?.child_ids, children]
   );
 
-  // Get background color based on planner category (three filter colors; US holidays stay blank)
+  // Get background color based on planner category (day-offs and US holidays stay blank)
   const getBackgroundColor = () => {
-    if (isPublicHoliday) return 'transparent';
+    if (isBlankHolidayChip) return 'transparent';
     return categoryMeta.color;
   };
 
   const getHoverBackgroundColor = () => {
-    if (isPublicHoliday) return 'rgba(0, 0, 0, 0.02)';
+    if (isBlankHolidayChip) return 'rgba(0, 0, 0, 0.02)';
     return categoryMeta.hoverColor || categoryMeta.color;
   };
 
@@ -629,7 +630,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
             >
               {chipTitle}
             </Text>
-            {displayTime && !hideTime && !isPublicHoliday && (
+            {displayTime && !hideTime && !isBlankHolidayChip && (
               <Text style={{
                 opacity: 1,
                 fontWeight: '400',
@@ -674,7 +675,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {chipTitle}
                 </Text>
-                {displayTime && !hideTime && !isPublicHoliday && (
+                {displayTime && !hideTime && !isBlankHolidayChip && (
                   <Text style={{ 
                     opacity: 1,
                     fontWeight: '400', // Lighter than title
@@ -744,7 +745,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {chipTitle}
                 </Text>
-                {displayTime && !hideTime && !isPublicHoliday && (
+                {displayTime && !hideTime && !isBlankHolidayChip && (
                   <Text style={{ 
                     opacity: 1,
                     fontWeight: '400', // Lighter than title

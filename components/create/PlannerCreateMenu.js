@@ -1,12 +1,13 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
-import { Calendar, FileText, CalendarDays } from 'lucide-react';
+import { Calendar, FileText, CalendarDays, CalendarX2 } from 'lucide-react';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 
 const CREATE_OPTIONS = [
   { id: 'calendar_event', label: 'Event', icon: Calendar },
   { id: 'assignment', label: 'Assignment', icon: FileText },
   { id: 'learning_day', label: 'Learning day', icon: CalendarDays },
+  { id: 'day_off', label: 'Day off', icon: CalendarX2 },
 ];
 
 export default function PlannerCreateMenu({ visible, triggerRef, onClose, onSelect, panelProps = null }) {

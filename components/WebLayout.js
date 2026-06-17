@@ -26,6 +26,7 @@ import AppShell from './layout/AppShell.js';
 import { resolveSection, getSectionNavTab, getSectionsForTab, SECTION_TITLE_BY_TAB } from './layout/sectionNavConfig';
 import SecondaryNavShell from './layout/SecondaryNavShell';
 import CalendarEventCreateModal from './create/CalendarEventCreateModal';
+import DayOffCreateModal from './create/DayOffCreateModal';
 import AssignmentCreateModal from './create/AssignmentCreateModal';
 import AssignmentEditModal from './create/AssignmentEditModal';
 import TaskCreateModal from './TaskCreateModal';
@@ -563,6 +564,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const plannerAnchorRef = useRef(new Date());
   const [showEditSchoolYearModal, setShowEditSchoolYearModal] = useState(false);
   const [editSchoolYearInitialLabel, setEditSchoolYearInitialLabel] = useState(null);
+  const [showDayOffModal, setShowDayOffModal] = useState(false);
+  const [dayOffModalDate, setDayOffModalDate] = useState(null);
+  const [dayOffModalSchoolYearLabel, setDayOffModalSchoolYearLabel] = useState(null);
   const [showPlannerCreateMenu, setShowPlannerCreateMenu] = useState(false);
   const [showLearningDaySubjectPicker, setShowLearningDaySubjectPicker] = useState(false);
   const [learningDaySetupChoice, setLearningDaySetupChoice] = useState({ visible: false, subject: null });
@@ -2903,6 +2907,20 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
     const handler = (event) => {
+      const defaultDate = event?.detail?.defaultDate || plannerAnchorRef.current || new Date();
+      const schoolYearLabel = String(event?.detail?.schoolYearLabel || '').trim()
+        || resolveSchoolYearLabelFromAnchor(defaultDate instanceof Date ? defaultDate : new Date());
+      setDayOffModalSchoolYearLabel(schoolYearLabel);
+      setDayOffModalDate(defaultDate);
+      setShowDayOffModal(true);
+    };
+    window.addEventListener('openDayOffModal', handler);
+    return () => window.removeEventListener('openDayOffModal', handler);
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const handler = (event) => {
       const modeId = event?.detail?.modeId;
       switch (modeId) {
         case 'rebalance':
@@ -3247,6 +3265,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   );
 
   const openPlannerCreateModal = useCallback((kind) => {
+    if (kind === 'day_off') {
+      if (sessionRestricted && !familyUserControls.allowed('planning_preferences')) {
+        Alert.alert('Not available', 'Your family admin has disabled school year settings.');
+        return;
+      }
+      setShowPlannerCreateMenu(false);
+      const anchorDate = currentMonth || new Date();
+      setDayOffModalSchoolYearLabel(resolveSchoolYearLabelFromAnchor(anchorDate));
+      setDayOffModalDate(anchorDate);
+      setShowDayOffModal(true);
+      return;
+    }
     if (kind === 'learning_day') {
       if (sessionRestricted && !familyUserControls.allowed('subjects')) {
         Alert.alert('Not available', 'Your family admin has disabled adding or editing subjects.');
@@ -4326,6 +4356,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       </TouchableOpacity>
                       {PLANNER_EVENT_CATEGORIES.map(({ key, label, color }) => {
                         const isSelected = selectedEventTypes?.includes(key);
+                        const isDayOffFilter = key === 'Day off';
                         return (
                           <TouchableOpacity
                             key={key}
@@ -4337,6 +4368,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                               paddingHorizontal: 10,
                               borderRadius: 4,
                               backgroundColor: color,
+                              ...(isDayOffFilter ? {
+                                borderWidth: 1,
+                                borderColor: 'rgba(148, 163, 184, 0.35)',
+                              } : null),
                             }}
                             onPress={() => {
                               const current = selectedEventTypes || [];
@@ -4844,6 +4879,20 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           defaultStartTime={taskModalDefaultStartTime}
           familyId={familyId}
           familyMembers={familyMembersForEventing}
+        />
+      ) : null}
+
+      {showDayOffModal ? (
+        <DayOffCreateModal
+          visible
+          onClose={() => {
+            setShowDayOffModal(false);
+            setDayOffModalDate(null);
+            setDayOffModalSchoolYearLabel(null);
+          }}
+          familyId={familyId}
+          schoolYearLabel={dayOffModalSchoolYearLabel}
+          defaultDate={dayOffModalDate}
         />
       ) : null}
 

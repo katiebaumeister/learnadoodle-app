@@ -20,7 +20,7 @@ const MODAL_PAD = 32;
 // On web, render above other modals (e.g. Edit Subject). Use portal + high z-index so dialog is never behind a parent modal.
 const WEB_DIALOG_Z_INDEX = 2147483647;
 
-function DialogContent({ title, message, confirmLabel, cancelLabel, destructive, onConfirm, onCancel }) {
+function DialogContent({ title, message, confirmLabel, cancelLabel, destructive, hideCancel, onConfirm, onCancel }) {
   return (
     <View style={styles.cardInner}>
       <View style={styles.headerRow}>
@@ -43,9 +43,11 @@ function DialogContent({ title, message, confirmLabel, cancelLabel, destructive,
       </View>
       {message ? <Text style={styles.message}>{message}</Text> : null}
       <View style={styles.actions}>
-        <TouchableOpacity style={styles.cancelButton} onPress={onCancel} activeOpacity={0.85}>
-          <Text style={styles.cancelButtonText}>{cancelLabel}</Text>
-        </TouchableOpacity>
+        {!hideCancel ? (
+          <TouchableOpacity style={styles.cancelButton} onPress={onCancel} activeOpacity={0.85}>
+            <Text style={styles.cancelButtonText}>{cancelLabel}</Text>
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity
           style={[
             styles.confirmButton,
@@ -83,6 +85,7 @@ export default function ConfirmDialog({
   onConfirm,
   onCancel,
   destructive = false,
+  hideCancel = false,
 }) {
   const handleConfirm = () => onConfirm?.();
   const handleCancel = () => onCancel?.();
@@ -106,6 +109,7 @@ export default function ConfirmDialog({
           confirmLabel={confirmLabel}
           cancelLabel={cancelLabel}
           destructive={destructive}
+          hideCancel={hideCancel}
           onConfirm={handleConfirm}
           onCancel={handleCancel}
         />

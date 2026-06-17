@@ -35,6 +35,7 @@ import { dispatchOpenSubjectUnitsEditor } from '../../lib/subjectUnitsEditor';
 import IDCardView from '../profile/IDCardView';
 import PlannerSettingsContent from './PlannerSettingsContent';
 import FamilyApproachSelector from './FamilyApproachSelector';
+import ConfirmDialog from '../ConfirmDialog';
 import GoogleDriveImportModal from './GoogleDriveImportModal';
 import { SettingsLayout, SettingsTypography } from './settingsDesignTokens';
 import SubscriptionScreen from '../../screens/profile/SubscriptionScreen';
@@ -347,6 +348,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [pendingOnboardingGoal, setPendingOnboardingGoal] = useState(null);
   const [showGoalChangeConfirmModal, setShowGoalChangeConfirmModal] = useState(false);
   const [showChildLogoutConfirmModal, setShowChildLogoutConfirmModal] = useState(false);
+  const [showEmailVerificationModal, setShowEmailVerificationModal] = useState(false);
   const [savingOnboardingGoal, setSavingOnboardingGoal] = useState(false);
   const goalDropdownRef = useRef(null);
   const onboardingGoalHydratedForFamilyRef = useRef(null);
@@ -1789,8 +1791,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           throw emailError;
         }
         
-        // Show verification message - email won't actually change until verified
-        toast.push('Verification email sent to ' + profileEmail.trim() + '. Please check your inbox to confirm the change. Your email will only be updated after you verify it.', 'info');
+        setShowEmailVerificationModal(true);
         
         // Reset email field to current email since change is pending verification
         setProfileEmail(profile?.email || user?.email || authUser?.email || '');
@@ -3237,11 +3238,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       </TouchableOpacity>
                     )}
                   </View>
-                  <Text style={styles.profileEmailHint}>
-                    {isChildRestrictedView
-                      ? "Your email and account is managed by your parent's account."
-                      : 'Click the checkmark to save your changes and we will send a verification link to the new address. Your email will only be updated after you verify it.'}
-                  </Text>
+                  {isChildRestrictedView ? (
+                    <Text style={styles.profileEmailHint}>
+                      Your email and account is managed by your parent&apos;s account.
+                    </Text>
+                  ) : null}
                   {user && !user.email_confirmed_at && (
                     <View style={styles.profileEmailVerify}>
                       <Text style={styles.profileEmailVerifyText}>Email not verified. </Text>
@@ -5519,6 +5520,15 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       </View>
 
       {/* Modals */}
+      <ConfirmDialog
+        visible={showEmailVerificationModal}
+        title="Check your email"
+        message="We sent a verification link to the new address. Your email will only be updated after you verify it."
+        confirmLabel="OK"
+        hideCancel
+        onConfirm={() => setShowEmailVerificationModal(false)}
+        onCancel={() => setShowEmailVerificationModal(false)}
+      />
       <Modal
         visible={showGoalChangeConfirmModal}
         transparent

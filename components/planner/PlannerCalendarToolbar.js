@@ -162,10 +162,16 @@ export default function PlannerCalendarToolbar({
               </TouchableOpacity>
               {PLANNER_EVENT_CATEGORIES.map((opt) => {
                 const selected = Array.isArray(selectedEventTypes) && selectedEventTypes.includes(opt.key);
+                const isDayOffFilter = opt.key === 'Day off';
                 return (
                   <TouchableOpacity
                     key={opt.key}
-                    style={[styles.filterRow, styles.filterTypeRow, { backgroundColor: opt.color }]}
+                    style={[
+                      styles.filterRow,
+                      styles.filterTypeRow,
+                      { backgroundColor: opt.color },
+                      isDayOffFilter && styles.filterTypeRowDayOff,
+                    ]}
                     onPress={() => {
                       const current = Array.isArray(selectedEventTypes) ? selectedEventTypes : [];
                       const next = selected
@@ -316,6 +322,10 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 4,
+  },
+  filterTypeRowDayOff: {
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.35)',
   },
   filterCheck: {
     width: 14,

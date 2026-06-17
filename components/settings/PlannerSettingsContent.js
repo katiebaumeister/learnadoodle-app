@@ -15,7 +15,7 @@ import {
   Platform,
   Modal,
 } from 'react-native';
-import { Check, X, ChevronLeft, ChevronRight, ChevronDown, CheckCircle } from 'lucide-react';
+import { Check, X, ChevronLeft, ChevronRight, ChevronDown, CheckCircle, Plus } from 'lucide-react';
 import Dropdown from '../ui/Dropdown';
 import {
   getFamilyPlannerSettings,
@@ -23,7 +23,12 @@ import {
   getPlanDefaultsFromSettings,
   syncFamilyHolidayBreakExclusions,
 } from '../../lib/services/plannerSettingsClient';
-import { SCHOOL_YEAR_SETTINGS_UI } from '../planner/planningPreferencesUiCopy';
+import { PLANNING_PREFERENCES_UI, SCHOOL_YEAR_SETTINGS_UI } from '../planner/planningPreferencesUiCopy';
+import DayOffCreateModal from '../create/DayOffCreateModal';
+import {
+  applyDayOffRowToState,
+  mergeDayOffRows,
+} from '../../lib/create/saveDayOffHelpers';
 import { supabase } from '../../lib/supabase';
 import { apiRequest } from '../../lib/apiClient';
 import { useToast } from '../Toast';
@@ -37,7 +42,7 @@ import {
   getAttendanceMode,
 } from '../../lib/attendanceMode';
 import { trackEvent } from '../../lib/analytics';
-import { createModalStyles as assignmentModalStyles } from '../create/shared/createModalStyles';
+import { createModalStyles as assignmentModalStyles, ACCENT_TEXT } from '../create/shared/createModalStyles';
 import { SectionHeading } from '../create/shared/assignmentFormParts';
 
 const MUTED = 'rgba(15,23,42,0.6)';
@@ -51,6 +56,19 @@ const CHIP_SELECTED_BORDER = '#C9D8EC';
 const CHIP_SELECTED_BG = 'rgba(155, 184, 220, 0.26)';
 const SECTION_SEPARATOR = 'rgba(15,23,42,0.05)';
 const LINK_PURPLE = '#4F46E5';
+
+const formatDayOffDateLabel = (ymd) => {
+  if (!ymd) return '';
+  const date = new Date(`${ymd}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return ymd;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const formatDayOffRangeLabel = (row) => {
+  const startLabel = formatDayOffDateLabel(row?.start);
+  if (!row?.end || row.end === row.start) return startLabel;
+  return `${startLabel} – ${formatDayOffDateLabel(row.end)}`;
+};
 const plannerSettingsSnapshotCache = new Map();
 const PLANNER_SETTINGS_SESSION_CACHE_PREFIX = 'ld_planner_settings_snapshot_v1::';
 
@@ -470,6 +488,9 @@ export default function PlannerSettingsContent({
   const [customBreaks, setCustomBreaks] = useState(
     Array.isArray(initialSnapshot?.customBreaks) ? initialSnapshot.customBreaks : []
   );
+  const [showDayOffModal, setShowDayOffModal] = useState(false);
+  const [editingDayOffRow, setEditingDayOffRow] = useState(null);
+  const [pendingDayOffDate, setPendingDayOffDate] = useState(null);
   const [defaultYearStartDate, setDefaultYearStartDate] = useState(initialSnapshot?.defaultYearStartDate || '');
   const [defaultYearEndDate, setDefaultYearEndDate] = useState(initialSnapshot?.defaultYearEndDate || '');
   const [defaultFallStartDate, setDefaultFallStartDate] = useState(initialSnapshot?.defaultFallStartDate || '');
@@ -738,6 +759,11 @@ export default function PlannerSettingsContent({
       });
     },
     [subjects, selectedSchoolYearLabel, currentSchoolYearLabel]
+  );
+
+  const dayOffRows = useMemo(
+    () => mergeDayOffRows(customHolidays, customBreaks),
+    [customHolidays, customBreaks]
   );
 
   useEffect(() => {
@@ -1523,6 +1549,49 @@ export default function PlannerSettingsContent({
     }
     return true;
   }, [persist, toast, embeddedInModal]);
+
+  const openAddDayOffModal = useCallback((date = null) => {
+    if (readOnly) return;
+    setEditingDayOffRow(null);
+    setPendingDayOffDate(date ? new Date(date) : null);
+    setShowDayOffModal(true);
+  }, [readOnly]);
+
+  const openEditDayOffModal = useCallback((row) => {
+    if (readOnly || !row) return;
+    setEditingDayOffRow(row);
+    setPendingDayOffDate(null);
+    setShowDayOffModal(true);
+  }, [readOnly]);
+
+  const closeDayOffModal = useCallback(() => {
+    setShowDayOffModal(false);
+    setEditingDayOffRow(null);
+    setPendingDayOffDate(null);
+  }, []);
+
+  const handleDayOffSaved = useCallback((savedRow, previousRow) => {
+    const next = applyDayOffRowToState(customHolidays, customBreaks, savedRow, previousRow);
+    setCustomHolidays(next.customHolidays);
+    setCustomBreaks(next.customBreaks);
+    stateRef.current = {
+      ...(stateRef.current || {}),
+      customHolidays: next.customHolidays,
+      customBreaks: next.customBreaks,
+    };
+  }, [customHolidays, customBreaks]);
+
+  const handleDayOffDeleted = useCallback((deletedRow) => {
+    const next = applyDayOffRowToState(customHolidays, customBreaks, null, deletedRow);
+    setCustomHolidays(next.customHolidays);
+    setCustomBreaks(next.customBreaks);
+    stateRef.current = {
+      ...(stateRef.current || {}),
+      customHolidays: next.customHolidays,
+      customBreaks: next.customBreaks,
+    };
+  }, [customHolidays, customBreaks]);
+
   const handleRangeDefaultChange = (setter) => (value) => {
     const normalizedValue = normalizeYmd(value);
     setter(normalizedValue);
@@ -2363,6 +2432,93 @@ export default function PlannerSettingsContent({
           </View>
         </View>
       </View>
+      <View style={fieldWrapStyle}>
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          marginBottom: 12,
+        }}
+        >
+          <Text style={modalFieldLabelStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.daysOff}</Text>
+          {!readOnly ? (
+            <TouchableOpacity
+              onPress={() => openAddDayOffModal()}
+              style={[assignmentModalStyles.dropdownOption, assignmentModalStyles.addNewButton]}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={14} color={ACCENT_TEXT} />
+              <Text style={assignmentModalStyles.addNewButtonText}>
+                {PLANNING_PREFERENCES_UI.addDayOff}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        {dayOffRows.length === 0 ? (
+          <Text style={{
+            fontSize: 14,
+            color: MUTED,
+            lineHeight: 20,
+            ...(Platform.OS === 'web' && {
+              fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            }),
+          }}
+          >
+            No days off yet. Add holidays, breaks, or other non-learning days for this school year.
+          </Text>
+        ) : (
+          <View style={{ gap: 8 }}>
+            {dayOffRows.map((row) => (
+              <TouchableOpacity
+                key={row.id}
+                onPress={() => openEditDayOffModal(row)}
+                disabled={readOnly}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  borderRadius: 14,
+                  borderWidth: 1,
+                  borderColor: 'rgba(148, 163, 184, 0.35)',
+                  backgroundColor: '#f9fafb',
+                }}
+                {...(Platform.OS === 'web' && { cursor: readOnly ? 'default' : 'pointer' })}
+              >
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{
+                    fontSize: 14,
+                    fontWeight: '600',
+                    color: TEXT_BLACK,
+                    ...(Platform.OS === 'web' && {
+                      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    }),
+                  }}
+                  numberOfLines={1}
+                  >
+                    {row.name || 'Day off'}
+                  </Text>
+                  <Text style={{
+                    fontSize: 13,
+                    color: MUTED,
+                    marginTop: 2,
+                    ...(Platform.OS === 'web' && {
+                      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    }),
+                  }}
+                  >
+                    {formatDayOffRangeLabel(row)}
+                  </Text>
+                </View>
+                {!readOnly ? <ChevronRight size={16} color="#9CA3AF" /> : null}
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </View>
     </View>
   );
 
@@ -2777,6 +2933,17 @@ export default function PlannerSettingsContent({
             </View>
           </View>
         </Modal>
+
+        <DayOffCreateModal
+          visible={showDayOffModal}
+          onClose={closeDayOffModal}
+          onSaved={handleDayOffSaved}
+          onDeleted={handleDayOffDeleted}
+          familyId={familyId}
+          schoolYearLabel={selectedSchoolYearLabel}
+          defaultDate={pendingDayOffDate}
+          editRow={editingDayOffRow}
+        />
       </View>
   );
 

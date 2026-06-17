@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { View, Text, TouchableOpacity, Platform, Alert } from 'react-native';
 import { eachDayMatrix, isSameMonth, isToday, formatDayNum } from './utils/date';
 import EventChip from '../calendar/EventChip';
+import { isPlannerDayOffCategoryEvent } from '../../lib/planner/plannerEventCategories';
 import { rescheduleEvent } from '../../lib/services/plannerClientWithOffline';
 import { detectConflicts } from '../../lib/utils/conflictDetection';
 
@@ -1017,8 +1018,6 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
     
   }
 
-  const isPublicHolidayEvent = (ev) =>
-    String(ev?.holiday_type || ev?.holidayType || '').toUpperCase() === 'GLOBAL_HOLIDAY';
 
   return (
     <View style={{ 
@@ -1139,9 +1138,9 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                   };
                 })
                 .sort((a, b) => {
-                  const aPublicHoliday = isPublicHolidayEvent(a);
-                  const bPublicHoliday = isPublicHolidayEvent(b);
-                  if (aPublicHoliday !== bPublicHoliday) return aPublicHoliday ? -1 : 1;
+                  const aBlankHoliday = isPlannerDayOffCategoryEvent(a);
+                  const bBlankHoliday = isPlannerDayOffCategoryEvent(b);
+                  if (aBlankHoliday !== bBlankHoliday) return aBlankHoliday ? -1 : 1;
                   const aTime = String(a.start_local || a.time || a.start_ts || '');
                   const bTime = String(b.start_local || b.time || b.start_ts || '');
                   return aTime.localeCompare(bTime);

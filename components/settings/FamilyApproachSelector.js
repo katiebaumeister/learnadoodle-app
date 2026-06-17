@@ -3,6 +3,7 @@ import { View, Text, Platform, TouchableOpacity, ActivityIndicator } from 'react
 import { Check, ChevronDown } from 'lucide-react';
 import { setOnboardingPlanningMode } from '../../lib/apiClient';
 import { useToast } from '../Toast';
+import ConfirmDialog from '../ConfirmDialog';
 import { SettingsTypography } from './settingsDesignTokens';
 
 export const FAMILY_APPROACH_OPTIONS = [
@@ -16,36 +17,18 @@ export const FAMILY_APPROACH_OPTIONS = [
   },
 ];
 
-const APPROACH_COMPARISON_INTRO =
-  'Choose how Learnadoodle is shaped for your family.';
-
-const APPROACH_COMPARISON_DETAILS = [
-  {
-    id: 'HOMESCHOOL_COMPLIANCE',
-    title: 'Homeschooling',
-    body:
-      'Built for families who homeschool as their primary education. Learnadoodle centers on subjects, curriculum, attendance, and progress tracking—so you can manage learning day to day and stay organized.',
-  },
-  {
-    id: 'AFTERSCHOOL_GOALS',
-    title: 'Afterschooling',
-    body:
-      'Built for families whose children learn elsewhere during the day. Learnadoodle is less subject-focused and emphasizes schedule optimization—activities, routines, and family time—rather than full learning management.',
-  },
-];
-
 export default function FamilyApproachSelector({
   familyId,
   family,
   onFamilyUpdate,
   readOnly = false,
-  description = null,
   fieldLabel = 'Family approach',
   onMenuOpenChange = null,
 }) {
   const toast = useToast();
   const [savingGoal, setSavingGoal] = useState(false);
   const [showGoalMenu, setShowGoalMenu] = useState(false);
+  const [approachUpdatedLabel, setApproachUpdatedLabel] = useState(null);
   const currentGoalId = family?.default_planning_mode || null;
   const currentGoalLabel =
     FAMILY_APPROACH_OPTIONS.find((option) => option.id === currentGoalId)?.label || 'Not set';
@@ -62,6 +45,8 @@ export default function FamilyApproachSelector({
     }
     setSavingGoal(true);
     try {
+      const nextLabel =
+        FAMILY_APPROACH_OPTIONS.find((option) => option.id === nextGoalId)?.label || 'your selection';
       const res = await setOnboardingPlanningMode({
         family_id: familyId,
         planning_mode: nextGoalId,
@@ -71,7 +56,7 @@ export default function FamilyApproachSelector({
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshFamily'));
       }
-      toast.push('Learning approach updated', 'success');
+      setApproachUpdatedLabel(nextLabel);
     } catch (err) {
       toast.push(err?.message || 'Could not update learning approach', 'error');
     } finally {
@@ -120,15 +105,15 @@ export default function FamilyApproachSelector({
           </View>
         ) : null}
       </View>
-      <View style={styles.fieldHintBlock}>
-        <Text style={styles.fieldHint}>{description || APPROACH_COMPARISON_INTRO}</Text>
-        {APPROACH_COMPARISON_DETAILS.map((item) => (
-          <Text key={item.id} style={styles.approachDetail}>
-            <Text style={styles.approachDetailTitle}>{item.title} — </Text>
-            {item.body}
-          </Text>
-        ))}
-      </View>
+      <ConfirmDialog
+        visible={!!approachUpdatedLabel}
+        title="Family approach updated"
+        message={`Your family approach is now set to ${approachUpdatedLabel}.`}
+        confirmLabel="OK"
+        hideCancel
+        onConfirm={() => setApproachUpdatedLabel(null)}
+        onCancel={() => setApproachUpdatedLabel(null)}
+      />
     </View>
   );
 }
@@ -152,30 +137,6 @@ const styles = {
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  fieldHintBlock: {
-    marginTop: 12,
-    gap: 10,
-  },
-  fieldHint: {
-    ...SettingsTypography.secondary,
-    color: '#6b7280',
-    lineHeight: 20,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  approachDetail: {
-    ...SettingsTypography.secondary,
-    color: '#6b7280',
-    lineHeight: 20,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  approachDetailTitle: {
-    fontWeight: '600',
-    color: '#374151',
   },
   goalPickerWrap: {
     position: 'relative',
