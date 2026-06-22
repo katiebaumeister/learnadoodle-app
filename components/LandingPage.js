@@ -46,32 +46,64 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
       return undefined;
     }
 
-    const heroUri =
-      typeof LANDING_IMAGE_SOURCES.hero === 'object' && typeof LANDING_IMAGE_SOURCES.hero?.uri === 'string'
-        ? LANDING_IMAGE_SOURCES.hero.uri
-        : typeof Image.resolveAssetSource === 'function'
-          ? Image.resolveAssetSource(LANDING_IMAGE_SOURCES.hero)?.uri
-          : null;
-    if (!heroUri) {
-      return undefined;
-    }
+    const resolveUri = (source) => {
+      if (!source) return null;
+      if (typeof source === 'string') return source;
+      if (typeof source === 'object' && typeof source.uri === 'string') return source.uri;
+      if (typeof Image.resolveAssetSource === 'function') {
+        return Image.resolveAssetSource(source)?.uri || null;
+      }
+      return null;
+    };
 
-    const existingPreload = document.querySelector('link[data-landing-hero-preload="true"]');
-    if (existingPreload) {
-      return undefined;
-    }
+    // Images above the fold should download with the highest priority; the rest
+    // are still preloaded so they're cached before the user scrolls to them.
+    const HIGH_PRIORITY_KEYS = new Set(['logo', 'hero']);
 
-    const preloadLink = document.createElement('link');
-    preloadLink.rel = 'preload';
-    preloadLink.as = 'image';
-    preloadLink.href = heroUri;
-    preloadLink.setAttribute('data-landing-hero-preload', 'true');
-    document.head.appendChild(preloadLink);
+    const addedLinks = [];
+    const warmImages = [];
+
+    Object.entries(LANDING_IMAGE_SOURCES).forEach(([key, source]) => {
+      const uri = resolveUri(source);
+      if (!uri) {
+        return;
+      }
+
+      // Decode the bitmap off the main thread so the image paints instantly
+      // once it scrolls into view (avoids the brief blank flash).
+      const warmImage = new window.Image();
+      warmImage.decoding = 'async';
+      warmImage.src = uri;
+      if (typeof warmImage.decode === 'function') {
+        warmImage.decode().catch(() => {});
+      }
+      warmImages.push(warmImage);
+
+      if (document.querySelector(`link[data-landing-preload="${key}"]`)) {
+        return;
+      }
+
+      const preloadLink = document.createElement('link');
+      preloadLink.rel = 'preload';
+      preloadLink.as = 'image';
+      preloadLink.href = uri;
+      if (HIGH_PRIORITY_KEYS.has(key)) {
+        preloadLink.setAttribute('fetchpriority', 'high');
+      }
+      preloadLink.setAttribute('data-landing-preload', key);
+      document.head.appendChild(preloadLink);
+      addedLinks.push(preloadLink);
+    });
 
     return () => {
-      if (preloadLink.parentNode) {
-        preloadLink.parentNode.removeChild(preloadLink);
-      }
+      addedLinks.forEach((link) => {
+        if (link.parentNode) {
+          link.parentNode.removeChild(link);
+        }
+      });
+      warmImages.forEach((img) => {
+        img.src = '';
+      });
     };
   }, []);
 
