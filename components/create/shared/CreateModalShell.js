@@ -9,9 +9,11 @@ export default function CreateModalShell({
   onClose,
   children,
   onSave,
+  onBlockedSave = null,
   saving = false,
   saveLabel = 'Save changes',
   saveDisabled = false,
+  secondaryActions = [],
   validationBanner = null,
   maxWidth = CREATE_MODAL_MAX_WIDTH,
   footer = null,
@@ -47,9 +49,11 @@ export default function CreateModalShell({
               primaryLabel={saving ? 'Saving…' : saveLabel}
               onCancel={onClose}
               onPrimary={onSave}
+              onBlockedPrimary={onBlockedSave}
               accent="#9ECFFB"
               disabled={saving}
               visuallyDisabled={saveDisabled}
+              secondaryActions={secondaryActions}
               loading={saving}
             />
           )}

@@ -167,9 +167,9 @@ def send_invite_email(
     <meta name="color-scheme" content="light">
     <meta name="supported-color-schemes" content="light">
     <style>
-        html {
+        html {{
             background-color: #ffffff !important;
-        }
+        }}
         body {{
             font-family: 'DM Sans', Arial, Helvetica, sans-serif;
             line-height: 1.6;

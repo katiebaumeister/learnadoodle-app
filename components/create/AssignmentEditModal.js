@@ -255,8 +255,22 @@ export default function AssignmentEditModal({
     if (!validate()) return;
     setSubmitting(true);
     try {
-      let resolvedEventId = eventId;
+      // Source of truth is a real, existing event row — never a stale linked id.
       let resolvedEvent = eventRow;
+      let resolvedEventId = resolvedEvent?.id || null;
+      // If we only have a linked id (modal may not be hydrated, or the link is stale),
+      // confirm the event still exists before deciding to update vs. recreate it.
+      if (!resolvedEventId) {
+        const linkedId = resolveLinkedEventIdFromAssignment(assignment);
+        if (linkedId) {
+          const existing = await fetchEventForAssignmentEdit(linkedId);
+          if (existing) {
+            resolvedEvent = existing;
+            resolvedEventId = existing.id;
+            setEventRow(existing);
+          }
+        }
+      }
       if (!resolvedEventId && assignment?.id) {
         if (!dueDate) {
           toast.push('Add a due date to show this assignment on the planner', 'error');

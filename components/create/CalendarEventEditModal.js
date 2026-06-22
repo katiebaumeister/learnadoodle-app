@@ -13,9 +13,11 @@ import AddMaterialModal from '../materials/AddMaterialModal';
 import { nestedAddMaterialModalProps } from './shared/nestedAddMaterialModalProps';
 import { useFamilySubjects } from './shared/useSubjectsForAssignees';
 import { createModalStyles as styles, PLACEHOLDER, CREATE_EVENT_MODAL_MAX_WIDTH } from './shared/createModalStyles';
-import { updateCalendarEvent, buildEventRecurrenceRule } from '../../lib/create/saveEventHelpers';
-import { validateOptionalEventTimes } from '../../lib/create/eventTimeUtils';
+import { updateCalendarEvent, updateCalendarEventSeries, buildEventRecurrenceRule } from '../../lib/create/saveEventHelpers';
+import { validateOptionalEventTimes, computeEventTimes } from '../../lib/create/eventTimeUtils';
 import { hydrateCalendarEventForm } from '../../lib/create/calendarEventFormUtils';
+import { findEventConflict, isOverlapError, formatTimeForInput } from '../../lib/create/eventConflictHelpers';
+import EventConflictBanner from './shared/EventConflictBanner';
 
 export default function CalendarEventEditModal({
   visible,
@@ -26,8 +28,10 @@ export default function CalendarEventEditModal({
   familyMembers = [],
   readOnly = false,
   loading = false,
+  editScope = 'single',
 }) {
   const toast = useToast();
+  const isSeriesScope = editScope === 'series';
   const [title, setTitle] = useState('');
   const [assigneeIds, setAssigneeIds] = useState([]);
   const [startDate, setStartDate] = useState(new Date());
@@ -38,6 +42,9 @@ export default function CalendarEventEditModal({
   const [notes, setNotes] = useState('');
   const [materialId, setMaterialId] = useState(null);
   const [isRepeating, setIsRepeating] = useState(false);
+  // True when this event is already part of a recurring series. Series-scope edits route
+  // to the legacy modal, so recurrence is read-only here (single occurrence edit).
+  const [recurrenceLocked, setRecurrenceLocked] = useState(false);
   const [recurrenceType, setRecurrenceType] = useState('weekly');
   const [recurrenceWeekdays, setRecurrenceWeekdays] = useState([]);
   const [recurrenceEndType, setRecurrenceEndType] = useState('never');
@@ -48,6 +55,7 @@ export default function CalendarEventEditModal({
   const [submitting, setSubmitting] = useState(false);
   const [validationBanner, setValidationBanner] = useState('');
   const [errors, setErrors] = useState({});
+  const [conflict, setConflict] = useState(null);
   const subjects = useFamilySubjects(familyId);
 
   useEffect(() => {
@@ -67,6 +75,12 @@ export default function CalendarEventEditModal({
     setNotes(form.notes);
     setMaterialId(form.materialId);
     setIsRepeating(form.isRepeating);
+    setRecurrenceLocked(
+      !!form.isRepeating ||
+      !!event.recurrence_id ||
+      !!event.parent_event_id ||
+      !!event.recurrence_rule
+    );
     setRecurrenceType(form.recurrenceType);
     setRecurrenceWeekdays(form.recurrenceWeekdays);
     setRecurrenceEndType(form.recurrenceEndType);
@@ -75,6 +89,7 @@ export default function CalendarEventEditModal({
     setDatePickerTarget(null);
     setValidationBanner('');
     setErrors({});
+    setConflict(null);
   }, [visible, event, familyMembers]);
 
   const selectRepeatMode = useCallback((repeating) => {
@@ -87,8 +102,35 @@ export default function CalendarEventEditModal({
       setRecurrenceEndType('never');
       setRecurrenceEndAfterText('');
       setRecurrenceEndDate(null);
+      setEndDate(null);
+      setErrors((prev) => {
+        if (!prev.endDate) return prev;
+        const next = { ...prev };
+        delete next.endDate;
+        return next;
+      });
     }
   }, [readOnly, startDate]);
+
+  // Switch this modal between single-occurrence and whole-series scope by re-dispatching
+  // the same event with the new editScope (recurrence lock/unlock + single vs series save).
+  const switchEditScope = useCallback((nextScope) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (!event?.id) return;
+    if (typeof onClose === 'function') onClose();
+    window.dispatchEvent(new CustomEvent('openEventModal', {
+      detail: {
+        eventId: event.id,
+        initialEvent: event,
+        schedulingMode: true,
+        editScope: nextScope,
+        skipSummary: true,
+      },
+    }));
+  }, [event, onClose]);
+
+  const handleEditSeries = useCallback(() => switchEditScope('series'), [switchEditScope]);
+  const handleEditThisOccurrence = useCallback(() => switchEditScope('single'), [switchEditScope]);
 
   const handleRecurrenceTypeChange = useCallback((type) => {
     if (readOnly) return;
@@ -106,6 +148,15 @@ export default function CalendarEventEditModal({
     if (assigneeIds.length === 0) next.assignee = 'Select at least one student';
     const timeCheck = validateOptionalEventTimes({ startTime, endTime });
     if (!timeCheck.ok) next.time = timeCheck.error;
+    if (!isRepeating && endDate && startDate) {
+      const startDay = new Date(startDate);
+      startDay.setHours(0, 0, 0, 0);
+      const endDay = new Date(endDate);
+      endDay.setHours(0, 0, 0, 0);
+      if (endDay.getTime() < startDay.getTime()) {
+        next.endDate = 'End date can’t be before the start date.';
+      }
+    }
     if (isRepeating) {
       if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
         next.recurrenceWeekdays = 'Select at least one weekday';
@@ -128,6 +179,7 @@ export default function CalendarEventEditModal({
   }, [
     title,
     startDate,
+    endDate,
     assigneeIds,
     isRepeating,
     recurrenceType,
@@ -139,23 +191,29 @@ export default function CalendarEventEditModal({
     endTime,
   ]);
 
-  const handleSave = async () => {
+  const handleSave = async (overrideTimes = null) => {
     if (readOnly || !event?.id) return;
+    const effectiveStartTime = overrideTimes?.startTime ?? startTime;
+    const effectiveEndTime = overrideTimes?.endTime ?? endTime;
+    // Once a conflict has been surfaced, a second Save (or Ignore) saves anyway.
+    const allowConflict = overrideTimes?.allowConflict ?? !!conflict;
     if (!validate()) return;
     setSubmitting(true);
+    setConflict(null);
     try {
-      const updated = await updateCalendarEvent({
+      const editPayload = {
         eventId: event.id,
         familyId,
         title,
         childIds: assigneeIds,
         date: startDate,
         endDate,
-        startTime,
-        endTime,
+        startTime: effectiveStartTime,
+        endTime: effectiveEndTime,
         location,
         notes,
         materialIds: materialIdsFromSelection(materialId),
+        allowConflict,
         recurrenceRule: isRepeating
           ? buildEventRecurrenceRule({
             recurrenceType,
@@ -166,22 +224,72 @@ export default function CalendarEventEditModal({
             startDate,
           })
           : null,
-      });
-      toast.push('Event updated', 'success');
+      };
+      const updated = isSeriesScope
+        ? await updateCalendarEventSeries(editPayload)
+        : await updateCalendarEvent(editPayload);
+      toast.push(isSeriesScope ? 'Series updated' : 'Event updated', 'success');
       onUpdated?.(updated);
       onClose?.();
     } catch (err) {
       const message = err?.message || 'Failed to update event';
-      const timeCheck = validateOptionalEventTimes({ startTime, endTime });
+      const timeCheck = validateOptionalEventTimes({ startTime: effectiveStartTime, endTime: effectiveEndTime });
       if (!timeCheck.ok || /start time|end time|date or time/i.test(message)) {
         setErrors((prev) => ({ ...prev, time: timeCheck.ok ? message : timeCheck.error }));
         setValidationBanner('Please fix the highlighted fields before saving.');
+      } else if (isOverlapError(message)) {
+        await showConflict(effectiveStartTime, effectiveEndTime);
       } else {
         toast.push(message, 'error');
       }
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const showConflict = async (effectiveStartTime, effectiveEndTime) => {
+    try {
+      const times = computeEventTimes({
+        date: startDate,
+        endDate,
+        startTime: effectiveStartTime,
+        endTime: effectiveEndTime,
+        allowOptionalTime: true,
+      });
+      if (!times.start || !times.end) {
+        toast.push('Event overlaps with an existing event.', 'error');
+        return;
+      }
+      const found = await findEventConflict({
+        familyId,
+        childIds: assigneeIds,
+        startTs: times.start.toISOString(),
+        endTs: times.end.toISOString(),
+        excludeEventId: event?.id || null,
+      });
+      if (found) {
+        setConflict(found);
+      } else {
+        toast.push('Event overlaps with an existing event.', 'error');
+      }
+    } catch {
+      toast.push('Event overlaps with an existing event.', 'error');
+    }
+  };
+
+  const handleUseSuggestion = (suggestion) => {
+    if (!suggestion?.start || !suggestion?.end) return;
+    const nextStart = formatTimeForInput(suggestion.start);
+    const nextEnd = formatTimeForInput(suggestion.end);
+    setStartTime(nextStart);
+    setEndTime(nextEnd);
+    setConflict(null);
+    handleSave({ startTime: nextStart, endTime: nextEnd, allowConflict: false });
+  };
+
+  const handleIgnoreConflict = () => {
+    setConflict(null);
+    handleSave({ allowConflict: true });
   };
 
   if (!visible) return null;
@@ -194,15 +302,27 @@ export default function CalendarEventEditModal({
 
   const disabled = readOnly;
 
+  // Recurrence is read-only only when editing a single occurrence of a series.
+  const lockRecurrence = recurrenceLocked && !isSeriesScope;
+  const scopeSecondaryActions = disabled
+    ? []
+    : isSeriesScope
+      ? [{ key: 'edit-one', label: 'Edit only this event', onPress: handleEditThisOccurrence }]
+      : recurrenceLocked
+        ? [{ key: 'edit-series', label: 'Edit series', onPress: handleEditSeries }]
+        : [];
+
   return (
     <>
       <Modal visible transparent animationType="fade" onRequestClose={onClose}>
         <CreateModalShell
-          title="Calendar Event"
+          title={isSeriesScope ? 'Edit series' : 'Calendar Event'}
           onClose={onClose}
           onSave={handleSave}
+          onBlockedSave={disabled ? undefined : () => validate()}
           saving={submitting}
           saveDisabled={disabled || !title.trim() || assigneeIds.length === 0}
+          secondaryActions={scopeSecondaryActions}
           validationBanner={validationBanner}
           maxWidth={CREATE_EVENT_MODAL_MAX_WIDTH}
           footer={disabled ? (
@@ -247,11 +367,22 @@ export default function CalendarEventEditModal({
                 startDate={startDate}
                 onStartDateChange={setStartDate}
                 endDate={endDate}
-                onEndDateChange={setEndDate}
-                showEndDate
+                onEndDateChange={(value) => {
+                  setEndDate(value);
+                  if (errors.endDate) {
+                    setErrors((prev) => {
+                      const next = { ...prev };
+                      delete next.endDate;
+                      return next;
+                    });
+                    setValidationBanner('');
+                  }
+                }}
+                showEndDate={!isRepeating}
                 startTime={startTime}
                 onStartTimeChange={(value) => {
                   setStartTime(value);
+                  if (conflict) setConflict(null);
                   if (errors.time) {
                     setErrors((prev) => {
                       const next = { ...prev };
@@ -264,6 +395,7 @@ export default function CalendarEventEditModal({
                 endTime={endTime}
                 onEndTimeChange={(value) => {
                   setEndTime(value);
+                  if (conflict) setConflict(null);
                   if (errors.time) {
                     setErrors((prev) => {
                       const next = { ...prev };
@@ -279,62 +411,85 @@ export default function CalendarEventEditModal({
                 timeError={errors.time}
               />
 
+              <EventConflictBanner
+                conflict={conflict}
+                familyChildren={familyMembers}
+                onUseSuggestion={handleUseSuggestion}
+                onIgnore={handleIgnoreConflict}
+                onDismiss={() => setConflict(null)}
+              />
+
               <View style={styles.formGroup}>
                 <Text style={styles.fieldLabel}>Repeat</Text>
-                <View style={styles.chipRow}>
-                  <TouchableOpacity
-                    onPress={() => selectRepeatMode(false)}
-                    disabled={disabled}
-                    style={[
-                      styles.dropdownOption,
-                      !isRepeating && styles.dropdownOptionActive,
-                    ]}
-                    {...(Platform.OS === 'web' && !disabled && { cursor: 'pointer' })}
-                  >
-                    <Text
+                <View
+                  style={lockRecurrence ? { opacity: 0.55 } : null}
+                  pointerEvents={lockRecurrence ? 'none' : 'auto'}
+                >
+                  <View style={styles.chipRow}>
+                    <TouchableOpacity
+                      onPress={() => selectRepeatMode(false)}
+                      disabled={disabled || lockRecurrence}
                       style={[
-                        styles.dropdownOptionText,
-                        !isRepeating && styles.dropdownOptionTextActive,
+                        styles.dropdownOption,
+                        !isRepeating && styles.dropdownOptionActive,
                       ]}
+                      {...(Platform.OS === 'web' && { cursor: (disabled || lockRecurrence) ? 'not-allowed' : 'pointer' })}
                     >
-                      Just once
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => selectRepeatMode(true)}
-                    disabled={disabled}
-                    style={[
-                      styles.dropdownOption,
-                      isRepeating && styles.dropdownOptionActive,
-                    ]}
-                    {...(Platform.OS === 'web' && !disabled && { cursor: 'pointer' })}
-                  >
-                    <Text
+                      <Text
+                        style={[
+                          styles.dropdownOptionText,
+                          !isRepeating && styles.dropdownOptionTextActive,
+                        ]}
+                      >
+                        Just once
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => selectRepeatMode(true)}
+                      disabled={disabled || lockRecurrence}
                       style={[
-                        styles.dropdownOptionText,
-                        isRepeating && styles.dropdownOptionTextActive,
+                        styles.dropdownOption,
+                        isRepeating && styles.dropdownOptionActive,
                       ]}
+                      {...(Platform.OS === 'web' && { cursor: (disabled || lockRecurrence) ? 'not-allowed' : 'pointer' })}
                     >
-                      Repeat
-                    </Text>
-                  </TouchableOpacity>
+                      <Text
+                        style={[
+                          styles.dropdownOptionText,
+                          isRepeating && styles.dropdownOptionTextActive,
+                        ]}
+                      >
+                        Repeat
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
+                {lockRecurrence ? (
+                  <Text style={[styles.fieldHelpText, { marginTop: 6 }]}>
+                    This event repeats. Use “Edit series” below to change repeat settings.
+                  </Text>
+                ) : null}
               </View>
 
               {isRepeating ? (
-                <EventRecurrenceFields
-                  recurrenceType={recurrenceType}
-                  onRecurrenceTypeChange={handleRecurrenceTypeChange}
-                  recurrenceWeekdays={recurrenceWeekdays}
-                  onRecurrenceWeekdaysChange={setRecurrenceWeekdays}
-                  recurrenceEndType={recurrenceEndType}
-                  onRecurrenceEndTypeChange={setRecurrenceEndType}
-                  recurrenceEndAfterText={recurrenceEndAfterText}
-                  onRecurrenceEndAfterTextChange={setRecurrenceEndAfterText}
-                  recurrenceEndDate={recurrenceEndDate}
-                  onOpenRecurrenceEndDatePicker={() => setDatePickerTarget('recurrenceEnd')}
-                  errors={errors}
-                />
+                <View
+                  style={lockRecurrence ? { opacity: 0.55 } : null}
+                  pointerEvents={lockRecurrence ? 'none' : 'auto'}
+                >
+                  <EventRecurrenceFields
+                    recurrenceType={recurrenceType}
+                    onRecurrenceTypeChange={handleRecurrenceTypeChange}
+                    recurrenceWeekdays={recurrenceWeekdays}
+                    onRecurrenceWeekdaysChange={setRecurrenceWeekdays}
+                    recurrenceEndType={recurrenceEndType}
+                    onRecurrenceEndTypeChange={setRecurrenceEndType}
+                    recurrenceEndAfterText={recurrenceEndAfterText}
+                    onRecurrenceEndAfterTextChange={setRecurrenceEndAfterText}
+                    recurrenceEndDate={recurrenceEndDate}
+                    onOpenRecurrenceEndDatePicker={() => setDatePickerTarget('recurrenceEnd')}
+                    errors={errors}
+                  />
+                </View>
               ) : null}
 
               <View style={styles.formGroup}>
@@ -375,6 +530,7 @@ export default function CalendarEventEditModal({
           if (datePickerTarget === 'end') setEndDate(d);
           else if (datePickerTarget === 'recurrenceEnd') setRecurrenceEndDate(d);
           else setStartDate(d);
+          if (conflict) setConflict(null);
           setDatePickerTarget(null);
         }}
       />

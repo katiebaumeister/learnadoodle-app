@@ -36,3 +36,7 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 .vercel
+
+# Android build artifact (do not commit large binaries)
+learnadoodle.aab
+*.aab

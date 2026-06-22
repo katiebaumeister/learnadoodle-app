@@ -3249,23 +3249,21 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 </View>
                 
                 {/* Password actions */}
-                <View style={[styles.profileFieldGroup, !isChildRestrictedView ? styles.profileFieldGroupLast : null]}>
+                <View style={[styles.profileFieldGroup, styles.profileFieldGroupLast]}>
                   <Text style={styles.profileFieldLabel}>Password</Text>
                   <View style={styles.profilePasswordActions}>
-                    {!isChildRestrictedView ? (
-                      <TouchableOpacity
-                        style={styles.profileResetPasswordButton}
-                        onPress={handleSignOut}
-                        disabled={loggingOut}
-                        {...(Platform.OS === 'web' && { cursor: loggingOut ? 'not-allowed' : 'pointer' })}
-                      >
-                        {loggingOut ? (
-                          <ActivityIndicator size="small" color="#374151" />
-                        ) : (
-                          <Text style={styles.profileResetPasswordButtonText}>Log out</Text>
-                        )}
-                      </TouchableOpacity>
-                    ) : null}
+                    <TouchableOpacity
+                      style={styles.profileResetPasswordButton}
+                      onPress={isChildRestrictedView ? () => setShowChildLogoutConfirmModal(true) : handleSignOut}
+                      disabled={loggingOut}
+                      {...(Platform.OS === 'web' && { cursor: loggingOut ? 'not-allowed' : 'pointer' })}
+                    >
+                      {loggingOut ? (
+                        <ActivityIndicator size="small" color="#374151" />
+                      ) : (
+                        <Text style={styles.profileResetPasswordButtonText}>Log out</Text>
+                      )}
+                    </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.profileResetPasswordButton}
                       onPress={handleResetPassword}
@@ -3283,22 +3281,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               </View>
             </View>
 
-            {isChildRestrictedView ? (
-              <View style={styles.dangerZoneAccount}>
-                <TouchableOpacity
-                  style={styles.profileResetPasswordButton}
-                  onPress={() => setShowChildLogoutConfirmModal(true)}
-                  disabled={loggingOut}
-                  {...(Platform.OS === 'web' && { cursor: loggingOut ? 'not-allowed' : 'pointer' })}
-                >
-                  {loggingOut ? (
-                    <ActivityIndicator size="small" color="#374151" />
-                  ) : (
-                    <Text style={styles.profileResetPasswordButtonText}>Log out</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            ) : SHOW_DANGER_ZONE ? (
+            {isChildRestrictedView ? null : SHOW_DANGER_ZONE ? (
               <View style={styles.dangerZoneAccount}>
                 <TouchableOpacity
                   style={[styles.dangerZoneAccountHeader, styles.dangerZoneToggle]}
@@ -5366,7 +5349,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     isChildRestrictedView && styles.mainContentFullWidth,
   ];
 
-  const showSettingsSidebar = !hideInternalSidebar;
+  const showSettingsSidebar = !hideInternalSidebar && !isChildRestrictedView;
 
   const renderSettingsSidebarButton = (key) => {
     const item = settingsItemByKey[key];

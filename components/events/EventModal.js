@@ -383,6 +383,7 @@ export default function EventModal({
         familyMembers={familyMembers}
         readOnly={eventReadOnly}
         loading={loading}
+        editScope={editScope}
       />
     );
   }

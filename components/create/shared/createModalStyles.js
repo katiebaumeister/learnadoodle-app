@@ -251,16 +251,16 @@ export const createModalStyles = StyleSheet.create({
   assignmentModalShell: {
     ...(Platform.OS === 'web'
       ? {
-          height: CREATE_ASSIGNMENT_MODAL_HEIGHT,
-          minHeight: CREATE_ASSIGNMENT_MODAL_HEIGHT,
-          maxHeight: CREATE_ASSIGNMENT_MODAL_HEIGHT,
+          // Prefer the design height, but never exceed the viewport so the footer
+          // (Assign/Schedule) stays visible on shorter laptop screens.
+          height: `min(${CREATE_ASSIGNMENT_MODAL_HEIGHT}px, 92vh)`,
+          maxHeight: '92vh',
           borderRadius: 28,
           boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
         }
       : {
           height: '88%',
           maxHeight: '88%',
-          minHeight: CREATE_ASSIGNMENT_MODAL_HEIGHT,
         }),
     overflow: 'hidden',
   },
@@ -296,7 +296,8 @@ export const createModalStyles = StyleSheet.create({
       ? {
           width: 'auto',
           height: 'auto',
-          minHeight: 680,
+          // Clamp the min height so it can't push the modal taller than the viewport.
+          minHeight: 'min(680px, 90vh)',
           maxHeight: '90vh',
           borderRadius: 28,
           boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',

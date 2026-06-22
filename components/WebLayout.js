@@ -1076,18 +1076,27 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     Alert.alert('Unsupported', 'Google Calendar connection is currently available in the web app.');
   }, [familyId, session?.family_id, googleCalendarConnected, syncGoogleCalendarIntoPlanner]);
   
-  // Get default view from localStorage
+  // Scope the remembered planner view per user so a brand-new user's first
+  // login always falls back to the Week view instead of inheriting a stale
+  // value left in localStorage by a previous session or another account.
+  const getPlannerViewStorageKey = () =>
+    (authUserId ? `plannerDefaultView:${authUserId}` : null);
+
+  // Get default view from localStorage. Returns null (→ Week) until we know
+  // which user is logged in, so the first login can never inherit a stale view.
   const getDefaultView = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-      return window.localStorage.getItem('plannerDefaultView') || null;
+    const key = getPlannerViewStorageKey();
+    if (key && Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      return window.localStorage.getItem(key) || null;
     }
     return null;
   };
   
   // Set default view in localStorage
   const setDefaultView = (view) => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem('plannerDefaultView', view);
+    const key = getPlannerViewStorageKey();
+    if (key && Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(key, view);
     }
   };
   
@@ -1606,6 +1615,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       };
     }
   }, []);
+
+  // Once the logged-in user resolves, apply their per-user remembered view.
+  // First-login users have no saved preference, so this leaves them on Week.
+  // We never override an explicit ?view= deep link or manual selection.
+  useEffect(() => {
+    if (!authUserId || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const urlView = new URLSearchParams(window.location.search).get('view');
+    if (urlView) return;
+    const savedDefault = getDefaultView();
+    setCurrentView(savedDefault || PLANNER_DEFAULT_CALENDAR_VIEW);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUserId]);
 
   // Handle view change
   const handleViewChange = (view) => {
@@ -2566,6 +2587,63 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
       const roleFlags = sessionRef.current?.role_flags || {};
       const isParentViewer = roleFlags.isParent === true && roleFlags.isChild !== true;
+
+      // Restricted students must never reach the parent assignment editor
+      // (edit fields, response type, delete, grade, mark complete). Route any
+      // work-assignment open to the student submit/view modal instead.
+      const isRestrictedStudentViewer =
+        roleFlags.isChild === true && roleFlags.isParent !== true && !isSelfManagedStudent;
+      if (isRestrictedStudentViewer) {
+        (async () => {
+          let eventRow = initialEvent && String(initialEvent.id || '') === String(eventId)
+            ? initialEvent
+            : null;
+          if (!eventRow?.event_type) {
+            try { eventRow = await fetchEventForAssignmentEdit(eventId); } catch (_) { /* noop */ }
+          }
+          if (eventRow && isWorkAssignmentEditEvent(eventRow.event_type)) {
+            const resolvedFamilyId = familyId || sessionRef.current?.family_id || null;
+            let assignment = detail.assignment || null;
+            if (!assignment && resolvedFamilyId) {
+              try {
+                assignment = await fetchPrimaryAssignmentForEvent({
+                  familyId: resolvedFamilyId,
+                  eventId,
+                  childId: detail.childId || eventRow?.child_id || null,
+                });
+              } catch (_) { /* noop */ }
+            }
+            const resolvedChildId =
+              detail.childId ||
+              eventRow?.child_id ||
+              sessionRef.current?.child_id ||
+              activeChildId ||
+              null;
+            setDirectSubmitAssignment(assignment);
+            setDirectSubmitEventContext({
+              id: eventRow.id,
+              title: eventRow.title,
+              start_ts: eventRow.start_ts,
+              end_ts: eventRow.end_ts,
+              subject_id: eventRow.subject_id || null,
+            });
+            setDirectSubmitChildId(resolvedChildId);
+            setDirectSubmitViewOnly(detail.submissionViewOnly === true);
+            setShowDirectSubmitForReviewModal(true);
+            return;
+          }
+          // Non-assignment events fall back to the read-only event modal.
+          setEventModalEventId(eventId);
+          setEventModalInitialEvent(initialEvent);
+          setEventModalSchedulingMode(schedulingMode);
+          setEventModalEditScope(editScope);
+          setEventModalOpenConflictResolution(openConflictResolution);
+          setEventModalConflictResolutionContext(conflictResolutionContext);
+          setShowEventModal(true);
+        })();
+        return;
+      }
+
       const useLegacyModal = shouldUseLegacyEventModal({
         editScope,
         openConflictResolution,
@@ -2620,7 +2698,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 })
                 : null;
 
-              if (shouldSkipPlannerItemSummary(detail)) {
+              if (!denyFamilyEventEdit && shouldSkipPlannerItemSummary(detail)) {
                 setAssignmentEditContext({
                   assignment,
                   linkedEvent: eventRow,
@@ -2634,13 +2712,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 event: eventRow,
                 assignment,
                 category: 'Assignment',
-                readOnly: false,
+                readOnly: denyFamilyEventEdit,
               });
               return;
             }
 
-            if (shouldSkipPlannerItemSummary(detail)) {
-              setCalendarEventEditContext({ event: eventRow });
+            if (!denyFamilyEventEdit && shouldSkipPlannerItemSummary(detail)) {
+              setCalendarEventEditContext({ event: eventRow, editScope });
               setShowCalendarEventEditModal(true);
               return;
             }
@@ -2649,7 +2727,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               event: eventRow,
               assignment: null,
               category: getPlannerEventCategory(eventRow),
-              readOnly: false,
+              readOnly: denyFamilyEventEdit,
             });
           } catch (err) {
             console.warn('[WebLayout] focused event modal redirect failed:', err);
@@ -2771,7 +2849,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       window.removeEventListener('openReviewForAssignment', handleOpenReviewForAssignment);
       window.removeEventListener('openEditAssignment', handleOpenEditAssignment);
     };
-  }, [activeTab, denyFamilyEventEdit, familyId]);
+  }, [activeTab, denyFamilyEventEdit, familyId, isSelfManagedStudent]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
@@ -2799,7 +2877,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         event: row,
       });
 
-      if (detail.skipSummary) {
+      if (!denyFamilyEventEdit && detail.skipSummary) {
         setLearningDayModalState({ visible: true, event: enriched });
         return;
       }
@@ -2808,7 +2886,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         event: enriched,
         assignment: null,
         category: 'Learning day',
-        readOnly: false,
+        readOnly: denyFamilyEventEdit,
       });
     };
 
@@ -2816,7 +2894,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => {
       window.removeEventListener(OPEN_LEARNING_DAY_MODAL_EVENT, handleOpenLearningDayModal);
     };
-  }, [familyId]);
+  }, [familyId, denyFamilyEventEdit]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -5057,6 +5135,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         <CalendarEventCreateModal
           visible
           editEvent={calendarEventEditContext.event}
+          editScope={calendarEventEditContext.editScope || 'single'}
           familyId={familyId}
           familyMembers={familyMembersForEventing}
           onClose={() => {

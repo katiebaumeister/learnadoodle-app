@@ -1853,6 +1853,7 @@ export default function SubjectDetailPage({
   }, [children, assignedChildren, subjectAssignments, gradedItems]);
   const isParentViewer =
     session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true;
+  const isChildViewer = session?.role_flags?.isChild === true;
 
   const classworkModel = useMemo(
     () => buildSubjectClassworkModel({
@@ -3677,7 +3678,7 @@ export default function SubjectDetailPage({
             </TouchableOpacity>
           ) : null}
 
-          <View style={styles.tabBarRow}>
+          <View style={[styles.tabBarRow, isChildViewer && styles.tabBarRowChild]}>
             <View style={styles.tabBarMain}>
               <SubjectClassroomTabs
                 activeTab={classroomTab}
@@ -4715,6 +4716,9 @@ const styles = StyleSheet.create({
     marginTop: 8,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(148, 163, 184, 0.22)',
+  },
+  tabBarRowChild: {
+    marginTop: 20,
   },
   tabBarMain: {
     flex: 1,
