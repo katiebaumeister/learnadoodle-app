@@ -11,7 +11,6 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  ActivityIndicator,
   Platform,
   Modal,
 } from 'react-native';
@@ -396,9 +395,13 @@ const deriveSnapshotCacheKey = (familyId, schoolYearLabel) => {
 const getInitialPlannerSettingsSnapshot = ({
   familyId,
   lockedSchoolYearLabel,
+  initialSchoolYearLabel,
 }) => {
   const normalizedLocked = normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim());
-  const initialYearLabel = deriveInitialSchoolYearLabel(normalizedLocked);
+  const normalizedInitial = normalizeSchoolYearLabel(String(initialSchoolYearLabel || '').trim());
+  // Prefer the year actually being opened so repeat opens hydrate with the correct
+  // year's cached values immediately (no loading flash).
+  const initialYearLabel = normalizedLocked || normalizedInitial || deriveInitialSchoolYearLabel(normalizedLocked);
   const cacheKey = deriveSnapshotCacheKey(familyId, initialYearLabel);
   const inMemory = plannerSettingsSnapshotCache.get(cacheKey);
   if (inMemory && typeof inMemory === 'object') return inMemory;
@@ -428,6 +431,7 @@ export default function PlannerSettingsContent({
   const initialSnapshot = getInitialPlannerSettingsSnapshot({
     familyId,
     lockedSchoolYearLabel,
+    initialSchoolYearLabel,
   });
   const [loading, setLoading] = useState(
     embeddedInModal && !initialData && !initialSnapshot
@@ -2714,14 +2718,9 @@ export default function PlannerSettingsContent({
     </>
   );
 
-  if (loading && embeddedInModal) {
-    return (
-      <View style={assignmentModalStyles.schoolYearSettingsLoadingBody}>
-        <ActivityIndicator size="large" color={ACCENT} />
-        <Text style={{ marginTop: 12, fontSize: 14, color: TEXT_BLACK }}>Loading...</Text>
-      </View>
-    );
-  }
+  // No blocking spinner for the embedded modal: render the form immediately using the
+  // cached snapshot / derived defaults, then hydrate in place once fresh data arrives.
+  // This avoids a visible loading state when transitioning into School Year Settings.
 
   const settingsInner = (
       <View style={{

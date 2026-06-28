@@ -6,7 +6,6 @@ import {
   StyleSheet,
   Platform,
   Modal,
-  ActivityIndicator,
 } from 'react-native';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
@@ -20,7 +19,6 @@ import {
 } from '../create/shared/createModalStyles';
 
 const MODAL_MAX_WIDTH = SCHOOL_YEAR_SETTINGS_MODAL_MAX_WIDTH;
-const MODAL_ACCENT = '#9ECFFB';
 
 export default function SchoolYearSettingsModal({
   visible = false,
@@ -202,7 +200,7 @@ export default function SchoolYearSettingsModal({
               />
             )}
           >
-            {contentReady && activeYear ? (
+            {activeYear ? (
               <PlannerSettingsContent
                 key={`planner-settings-${activeYear}`}
                 familyId={familyId}
@@ -242,12 +240,7 @@ export default function SchoolYearSettingsModal({
                   onSaved?.();
                 }}
               />
-            ) : (
-              <View style={[assignmentModalStyles.schoolYearSettingsLoadingBody, styles.loadingBody]}>
-                <ActivityIndicator size="large" color={MODAL_ACCENT} />
-                <Text style={styles.loadingText}>Loading settings...</Text>
-              </View>
-            )}
+            ) : null}
           </AppModalShell>
         </TouchableOpacity>
       </View>

@@ -283,9 +283,9 @@ export default function DayOffCreateModal({
 
       <AppCalendarDatePickerModal
         visible={!!datePickerTarget}
-        value={datePickerValue}
+        selectedDate={datePickerValue}
         onClose={() => setDatePickerTarget(null)}
-        onSelect={(nextDate) => {
+        onSelectDate={(nextDate) => {
           if (datePickerTarget === 'end') setEndDate(nextDate);
           else if (datePickerTarget === 'recurrenceEnd') setRecurrenceEndDate(nextDate);
           else setStartDate(nextDate);
