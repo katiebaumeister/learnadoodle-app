@@ -29,6 +29,7 @@ function notifyAttendanceUpdated(patchedAttendances = []) {
 }
 import { getAttendanceLogs, createAttendanceLog, updateAttendanceLog, deleteAttendanceLog } from '../../../lib/services/recordsClient';
 import { updateEventStatus } from '../../../lib/services/attendanceClient';
+import { getFamilyPlannerSettings } from '../../../lib/services/plannerSettingsClient';
 import { getAttendanceMode, isClassDayMode } from '../../../lib/attendanceMode';
 import { trackEvent } from '../../../lib/analytics';
 import HeaderSummaryStrip from './HeaderSummaryStrip';
@@ -171,6 +172,31 @@ function formatDateDisplay(ymd) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+/**
+ * Resolve the start date (YYYY-MM-DD) of the term/semester that contains `today`,
+ * using the family planner term dates. Falls back to the most recent term start
+ * on/before today, then the configured year start. Returns null if unknown.
+ */
+function pickCurrentTermStart(settings, today) {
+  if (!settings) return null;
+  const todayKey = toLocalYYYYMMDD(today);
+  const norm = (v) => (v ? String(v).slice(0, 10) : null);
+  const terms = [
+    [norm(settings.default_fall_term_start_date), norm(settings.default_fall_term_end_date)],
+    [norm(settings.default_spring_term_start_date), norm(settings.default_spring_term_end_date)],
+    [norm(settings.default_summer_term_start_date), norm(settings.default_summer_term_end_date)],
+  ];
+  for (const [start, end] of terms) {
+    if (start && end && start <= todayKey && todayKey <= end) return start;
+  }
+  const pastStarts = terms
+    .map(([s]) => s)
+    .filter((s) => s && s <= todayKey)
+    .sort();
+  if (pastStarts.length) return pastStarts[pastStarts.length - 1];
+  return norm(settings.default_year_start_date);
+}
+
 function getDefaultYearRange() {
   const now = new Date();
   const year = now.getFullYear();
@@ -256,6 +282,11 @@ export default function AttendanceView({
   const [selectedHeatmapChildId, setSelectedHeatmapChildId] = useState(null);
   const [yearPlannerInteractionMode, setYearPlannerInteractionMode] = useState(YEAR_PLANNER_MODE_EVENTS);
   const [yearPlannerDayPanelVisible, setYearPlannerDayPanelVisible] = useState(false);
+  // Start of the current term/semester (YYYY-MM-DD); used to bound the year-planner bulk range.
+  const [bulkTermStartKey, setBulkTermStartKey] = useState(null);
+  // Snapshot of the last bulk run so it can be undone.
+  const [lastBulkUndo, setLastBulkUndo] = useState(null);
+  const [undoingBulk, setUndoingBulk] = useState(false);
 
   const toast = useToast();
   const familyIdResolved = familyId || eventsProp[0]?.family_id || eventsProp[0]?.familyId;
@@ -366,6 +397,23 @@ export default function AttendanceView({
     setRangeReady(true);
     setLoading(false);
   }, [isYearPlannerLayout, plannerYearAnchor, familyIdResolved]);
+
+  // Resolve the current term/semester start so the year-planner bulk action defaults
+  // to "term start -> today" instead of the whole calendar year.
+  useEffect(() => {
+    if (!isYearPlannerLayout || !familyIdResolved) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const settings = await getFamilyPlannerSettings(familyIdResolved);
+        const start = pickCurrentTermStart(settings, new Date());
+        if (!cancelled && start) setBulkTermStartKey(start);
+      } catch (_) {
+        // Falls back to academic-year start / calendar-year start at bulk time.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isYearPlannerLayout, familyIdResolved]);
 
   // Fetch attendance and events when year range (or family/children/refresh) changes.
   const yearStartKey = yearRange.start ? toLocalYYYYMMDD(yearRange.start) : '';
@@ -510,12 +558,18 @@ export default function AttendanceView({
 
   const visibleHeatmapChildren = useMemo(() => {
     if (!isYearPlannerLayout) return children;
-    if (!Array.isArray(plannerChildFilterIds) || plannerChildFilterIds.length === 0) {
-      return children;
+    let base = children;
+    if (Array.isArray(plannerChildFilterIds) && plannerChildFilterIds.length > 0) {
+      const idSet = new Set(plannerChildFilterIds.map(String));
+      base = children.filter((child) => idSet.has(String(child?.id)));
     }
-    const idSet = new Set(plannerChildFilterIds.map(String));
-    return children.filter((child) => idSet.has(String(child?.id)));
-  }, [children, isYearPlannerLayout, plannerChildFilterIds]);
+    // An explicit inline child selection (year-planner chips) narrows to that child.
+    if (selectedHeatmapChildId && selectedHeatmapChildId !== FAMILY_HEATMAP_CHILD_ID) {
+      const narrowed = base.filter((child) => String(child?.id) === String(selectedHeatmapChildId));
+      if (narrowed.length > 0) return narrowed;
+    }
+    return base;
+  }, [children, isYearPlannerLayout, plannerChildFilterIds, selectedHeatmapChildId]);
 
   const heatmapSelectedChildId = useMemo(() => {
     if (!isYearPlannerLayout) return selectedHeatmapChildId;
@@ -1112,6 +1166,11 @@ export default function AttendanceView({
   }, [familyIdResolved, eventsByDateChild, events, attendanceRecords, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay, toast, attendanceTrackingMode]);
 
   const handleHeatmapMarkDay = useCallback(async (dateKey, childId) => {
+    // Future days can never be attended.
+    if (String(dateKey).slice(0, 10) > toLocalYYYYMMDD(new Date())) {
+      toast.push("You can't mark attendance for a future day.");
+      return;
+    }
     if (childId === FAMILY_HEATMAP_CHILD_ID) {
       await Promise.all(
         visibleHeatmapChildren.map((child) => handleMarkDayAttended(dateKey, child.id))
@@ -1119,7 +1178,7 @@ export default function AttendanceView({
       return;
     }
     return handleMarkDayAttended(dateKey, childId);
-  }, [handleMarkDayAttended, visibleHeatmapChildren]);
+  }, [handleMarkDayAttended, visibleHeatmapChildren, toast]);
 
   const handleMarkAllRangeAttended = useCallback(async ({
     startDate = yearRange.start,
@@ -1130,8 +1189,17 @@ export default function AttendanceView({
     setMarkingRangeAttended(true);
     try {
       const patchedAttendances = [];
-      const dateKeys = getDateKeysInRange(startDate, endDate);
-      if (dateKeys.length === 0) return;
+      const undoEvents = [];
+      const todayKey = toLocalYYYYMMDD(new Date());
+      // Never mark future days as attended.
+      const dateKeys = getDateKeysInRange(startDate, endDate).filter((k) => k <= todayKey);
+      if (dateKeys.length === 0) {
+        toast.push('Nothing to mark in that range yet.');
+        return;
+      }
+      // In the year planner, only mark days that actually have lessons (teaching days),
+      // so weekends / empty days are never painted attended.
+      const lessonsOnly = isYearPlannerLayout;
 
       let childIds;
       if (childId === FAMILY_HEATMAP_CHILD_ID) {
@@ -1141,6 +1209,7 @@ export default function AttendanceView({
       } else {
         childIds = children.map((c) => String(c.id));
       }
+      const childIdSet = new Set(childIds);
       const existingStandaloneByChildDay = new Map();
       const existingByEventChildDay = new Map();
       attendanceRecords.forEach((r) => {
@@ -1164,44 +1233,51 @@ export default function AttendanceView({
           });
         });
 
-        childIds.forEach((childId) => {
-          const hasEventsForChild = (dayEventsByChild[childId] || []).length > 0;
-          const standaloneKey = `${childId}|${dayKey}`;
-          const standalone = existingStandaloneByChildDay.get(standaloneKey);
-          if (hasEventsForChild) {
-            if (standalone?.id) dayOps.push(deleteAttendanceLog(standalone.id));
-            return;
-          }
-          if (standalone?.id) {
-            if (standalone.status !== 'present') {
-              dayOps.push(updateAttendanceLog(standalone.id, { status: 'present', minutes: STANDALONE_DAY_ATTENDANCE_MINUTES }));
+        if (!lessonsOnly) {
+          childIds.forEach((cid) => {
+            const hasEventsForChild = (dayEventsByChild[cid] || []).length > 0;
+            const standaloneKey = `${cid}|${dayKey}`;
+            const standalone = existingStandaloneByChildDay.get(standaloneKey);
+            if (hasEventsForChild) {
+              if (standalone?.id) dayOps.push(deleteAttendanceLog(standalone.id));
+              return;
             }
-            return;
-          }
-          dayOps.push(createAttendanceLog({
-            family_id: familyIdResolved,
-            child_id: childId,
-            event_id: null,
-            day_date: dayKey,
-            status: 'present',
-            minutes: STANDALONE_DAY_ATTENDANCE_MINUTES,
-          }));
-        });
+            if (standalone?.id) {
+              if (standalone.status !== 'present') {
+                dayOps.push(updateAttendanceLog(standalone.id, { status: 'present', minutes: STANDALONE_DAY_ATTENDANCE_MINUTES }));
+              }
+              return;
+            }
+            dayOps.push(createAttendanceLog({
+              family_id: familyIdResolved,
+              child_id: cid,
+              event_id: null,
+              day_date: dayKey,
+              status: 'present',
+              minutes: STANDALONE_DAY_ATTENDANCE_MINUTES,
+            }));
+          });
+        }
 
         for (const event of uniqueDayEvents.values()) {
-          const assignedIds = getChildIdsForEvent(event);
+          // Include whole-family lessons (no explicit child) by falling back to all children, then
+          // restrict to the bulk target so a child filter is honored.
+          const assignedIds = getEventChildIds(event, children.map((c) => c.id))
+            .filter((id) => childIdSet.has(String(id)));
           if (!assignedIds.length) continue;
+          // Leave already-attended lessons untouched so Undo only reverts what we changed.
+          if (isEventAttendancePresent(event)) continue;
           const minutes = getEventMinutes(event);
           assignedIds.forEach((assignedId) => {
-            const childId = String(assignedId);
-            const recordKey = `${String(event.id)}|${childId}|${dayKey}`;
+            const cid = String(assignedId);
+            const recordKey = `${String(event.id)}|${cid}|${dayKey}`;
             const existing = existingByEventChildDay.get(recordKey);
             if (existing?.id) {
               dayOps.push(updateAttendanceLog(existing.id, { status: 'present', minutes }));
             } else {
               dayOps.push(createAttendanceLog({
                 family_id: familyIdResolved,
-                child_id: childId,
+                child_id: cid,
                 event_id: event.id,
                 day_date: dayKey,
                 status: 'present',
@@ -1209,6 +1285,7 @@ export default function AttendanceView({
               }));
             }
           });
+          undoEvents.push({ eventId: String(event.id), prevStatus: String(event.status || 'scheduled') });
           dayOps.push(
             updateEventStatus(event.id, 'done').then((res) => {
               if (res?.error) {
@@ -1223,6 +1300,7 @@ export default function AttendanceView({
         if (dayOps.length > 0) await Promise.all(dayOps);
       }
 
+      setLastBulkUndo(undoEvents.length > 0 ? { events: undoEvents, at: Date.now() } : null);
       setAttendanceRefreshKey((k) => k + 1);
       notifyAttendanceUpdated(patchedAttendances);
       trackEvent('attendance_marked', {
@@ -1230,7 +1308,12 @@ export default function AttendanceView({
         scope: 'day',
         status: 'present',
       });
-      toast.push('Marked the selected attendance range as attended.', 'success');
+      toast.push(
+        lessonsOnly
+          ? 'Marked scheduled lessons attended through today.'
+          : 'Marked the selected attendance range as attended.',
+        'success'
+      );
     } catch (_) {
       toast.push('Could not mark the selected range attended.', 'error');
       setAttendanceRefreshKey((k) => k + 1);
@@ -1254,6 +1337,33 @@ export default function AttendanceView({
     toast,
     attendanceTrackingMode,
   ]);
+
+  const handleUndoBulk = useCallback(async () => {
+    if (!lastBulkUndo || undoingBulk) return;
+    const events = Array.isArray(lastBulkUndo.events) ? lastBulkUndo.events : [];
+    if (events.length === 0) {
+      setLastBulkUndo(null);
+      return;
+    }
+    setUndoingBulk(true);
+    try {
+      // Reverting each event's status to its prior value clears the attendance rows we wrote for it.
+      await Promise.all(
+        events.map(({ eventId, prevStatus }) =>
+          updateEventStatus(eventId, prevStatus || 'scheduled').catch(() => null)
+        )
+      );
+      setLastBulkUndo(null);
+      setAttendanceRefreshKey((k) => k + 1);
+      notifyAttendanceUpdated(events.map((e) => ({ eventId: e.eventId, status: e.prevStatus || 'scheduled' })));
+      toast.push('Undid the bulk attendance changes.', 'success');
+    } catch (_) {
+      toast.push('Could not undo the bulk changes.', 'error');
+      setAttendanceRefreshKey((k) => k + 1);
+    } finally {
+      setUndoingBulk(false);
+    }
+  }, [lastBulkUndo, undoingBulk, toast]);
 
   const setRangeStart = useCallback((ymd) => {
     const clamped = ymd < minStartKey ? minStartKey : ymd > maxEndKey ? maxEndKey : ymd;
@@ -1289,6 +1399,10 @@ export default function AttendanceView({
   const selectedBulkChildName = bulkTargetChildId === FAMILY_HEATMAP_CHILD_ID
     ? (visibleHeatmapChildren.length === children.length ? 'all children' : 'the filtered children')
     : (selectedBulkChild?.first_name || selectedBulkChild?.name || 'the selected child');
+  // Year-planner bulk is bounded to "current term start -> today" and never touches the future.
+  const bulkTermStart = bulkTermStartKey
+    || (academicYear?.start_date ? String(academicYear.start_date).slice(0, 10) : `${new Date().getFullYear()}-01-01`);
+  const bulkTodayKey = toLocalYYYYMMDD(new Date());
 
   const attendanceDateRangePicker = (options = {}) => {
     const { showLabel = true, style = null } = options;
@@ -1420,6 +1534,53 @@ export default function AttendanceView({
       <Text style={styles.yearPlannerModeHelp}>
         {YEAR_PLANNER_MODE_COPY[yearPlannerInteractionMode].help}
       </Text>
+      {children.length > 1 || (lastBulkUndo && !readOnly) ? (
+        <View style={styles.yearPlannerControlsRow}>
+          {children.length > 1 ? (
+            <View style={styles.childFilterChips}>
+              <TouchableOpacity
+                style={[styles.childFilterChip, !selectedHeatmapChildId && styles.childFilterChipSelected]}
+                onPress={() => setSelectedHeatmapChildId(null)}
+                activeOpacity={0.8}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={[styles.childFilterChipText, !selectedHeatmapChildId && styles.childFilterChipTextSelected]}>
+                  All children
+                </Text>
+              </TouchableOpacity>
+              {children.map((child) => {
+                const selected = String(selectedHeatmapChildId) === String(child.id);
+                const childName = child.first_name || child.name || 'Child';
+                return (
+                  <TouchableOpacity
+                    key={child.id}
+                    style={[styles.childFilterChip, selected && styles.childFilterChipSelected]}
+                    onPress={() => setSelectedHeatmapChildId(child.id)}
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={[styles.childFilterChipText, selected && styles.childFilterChipTextSelected]}>
+                      {childName}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : <View />}
+          {lastBulkUndo && !readOnly ? (
+            <TouchableOpacity
+              style={[styles.rangeBulkChip, undoingBulk && styles.rangeBulkChipDisabled]}
+              onPress={handleUndoBulk}
+              disabled={undoingBulk}
+              {...(Platform.OS === 'web' && { cursor: undoingBulk ? 'default' : 'pointer' })}
+            >
+              <Text style={styles.rangeBulkChipText}>
+                {undoingBulk ? 'Undoing…' : 'Undo bulk'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 
@@ -1737,11 +1898,15 @@ export default function AttendanceView({
                 <X size={18} color="#6B7280" />
               </TouchableOpacity>
             </View>
-            <View style={styles.confirmRangePickerWrap}>
-              {attendanceDateRangePicker({ showLabel: false })}
-            </View>
+            {!isYearPlannerLayout ? (
+              <View style={styles.confirmRangePickerWrap}>
+                {attendanceDateRangePicker({ showLabel: false })}
+              </View>
+            ) : null}
             <Text style={[styles.confirmBody, styles.confirmRangeBody]}>
-              This will mark all days in the selected range as attended for {bulkTargetChildId ? selectedBulkChildName : 'all children'}.
+              {isYearPlannerLayout
+                ? `This marks scheduled lessons as attended from ${formatDateDisplay(bulkTermStart)} through today (${formatDateDisplay(bulkTodayKey)}) for ${bulkTargetChildId ? selectedBulkChildName : 'all children'}. Future days and days with no lessons are left untouched.`
+                : `This will mark all days in the selected range as attended for ${bulkTargetChildId ? selectedBulkChildName : 'all children'}.`}
             </Text>
             <View style={[styles.confirmActions, styles.confirmRangeActions]}>
               <TouchableOpacity
@@ -1755,12 +1920,19 @@ export default function AttendanceView({
               <TouchableOpacity
                 style={[
                   styles.confirmPrimaryBtn,
-                  (markingRangeAttended || !rangeStartStr || !rangeEndStr) && styles.confirmPrimaryBtnDisabled,
+                  (markingRangeAttended || (!isYearPlannerLayout && (!rangeStartStr || !rangeEndStr))) && styles.confirmPrimaryBtnDisabled,
                 ]}
-                disabled={markingRangeAttended || !rangeStartStr || !rangeEndStr}
+                disabled={markingRangeAttended || (!isYearPlannerLayout && (!rangeStartStr || !rangeEndStr))}
                 onPress={async () => {
                   setConfirmRangeVisible(false);
-                  await handleMarkAllRangeAttended();
+                  if (isYearPlannerLayout) {
+                    await handleMarkAllRangeAttended({
+                      startDate: dateStringToDate(bulkTermStart),
+                      endDate: new Date(),
+                    });
+                  } else {
+                    await handleMarkAllRangeAttended();
+                  }
                 }}
                 {...(Platform.OS === 'web' && { cursor: markingRangeAttended ? 'default' : 'pointer' })}
               >
@@ -1934,6 +2106,14 @@ const styles = StyleSheet.create({
     color: TOKENS.textMuted,
     lineHeight: 18,
     maxWidth: 760,
+  },
+  yearPlannerControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
   },
   yearPlannerDayModal: {
     width: '100%',

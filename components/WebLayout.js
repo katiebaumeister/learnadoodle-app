@@ -1832,7 +1832,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             .from('children')
             .select('*')
             .eq('family_id', resolvedFamilyId)
-            .eq('archived', false);
+            // Treat NULL archived as not-archived; `.eq('archived', false)` alone drops
+            // rows where archived was never backfilled, hiding a child from the planner.
+            .or('archived.eq.false,archived.is.null');
           
           if (childrenError) {
             // Try without archived filter if that fails

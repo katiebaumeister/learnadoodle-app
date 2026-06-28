@@ -9366,7 +9366,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           .from('children')
           .select('*')
           .eq('family_id', profile.family_id)
-          .eq('archived', false)
+          // Treat NULL archived as not-archived so a child with an un-backfilled
+          // archived value isn't silently dropped from the planner.
+          .or('archived.eq.false,archived.is.null')
 
         if (activeError) {
           // Log the full error details for debugging
