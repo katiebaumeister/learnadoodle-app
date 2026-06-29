@@ -405,7 +405,7 @@ export default function AttendanceView({
     let cancelled = false;
     (async () => {
       try {
-        const settings = await getFamilyPlannerSettings(familyIdResolved);
+        const { data: settings } = await getFamilyPlannerSettings(familyIdResolved);
         const start = pickCurrentTermStart(settings, new Date());
         if (!cancelled && start) setBulkTermStartKey(start);
       } catch (_) {
