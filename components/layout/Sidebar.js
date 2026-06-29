@@ -31,6 +31,7 @@ export default function Sidebar({
   onReservedWidthChange = null,
   onHoverOverlayChange = null,
   familyPlanningMode = null,
+  unreadMessagesCount = 0,
 }) {
   React.useEffect(() => {
     onReservedWidthChange?.(RAIL_EXPANDED_WIDTH);
@@ -65,6 +66,7 @@ export default function Sidebar({
           hideBrandLogo={false}
           permanentSidebar
           familyPlanningMode={familyPlanningMode}
+          unreadMessagesCount={unreadMessagesCount}
         />
       </View>
     </View>

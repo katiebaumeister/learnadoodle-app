@@ -132,12 +132,24 @@ export default function FamilyDmChat({
 
   const canAttachEvent = Boolean(childCtx?.childId && familyId && attachmentsSupported && !isMultiRecipient);
 
+  // If the child has actually sent a direct message in this thread, they
+  // demonstrably have a working, connected account — so the parent must be able
+  // to reply even if invite-status resolution (RLS/self-signup) reads as 'none'.
+  const childHasSentDirectMessage = useMemo(() => {
+    if (!Array.isArray(messages) || messages.length === 0) return false;
+    return messages.some(
+      (m) => m && m.source === 'dm' && !isUnifiedMessageMine(m, viewerRole, currentUserId)
+    );
+  }, [messages, viewerRole, currentUserId]);
+
   const childInviteGate = useMemo(() => {
     if (isMultiRecipient) return null;
     if (participant?.type !== 'child') return null;
     if (viewerRole !== 'parent' && viewerRole !== 'tutor') return null;
     const childId = String(participant?.id || '').trim();
     if (!childId) return null;
+    // The child is clearly an active, connected account if they've messaged us.
+    if (childHasSentDirectMessage) return null;
     const summaries = childInviteSummaries && typeof childInviteSummaries === 'object'
       ? childInviteSummaries
       : null;
@@ -149,7 +161,19 @@ export default function FamilyDmChat({
       childName,
       status: status === 'pending' ? 'pending' : 'none',
     };
-  }, [participant, viewerRole, childInviteSummaries, isMultiRecipient]);
+  }, [participant, viewerRole, childInviteSummaries, isMultiRecipient, childHasSentDirectMessage]);
+
+  // Map child id -> real first name so the "not joined yet" banner names the
+  // specific child (e.g. "Lilly") instead of a generic "Child" placeholder.
+  const childNameById = useMemo(() => {
+    const map = new Map();
+    (Array.isArray(familyChildren) ? familyChildren : []).forEach((c) => {
+      if (c?.id == null) return;
+      const name = String(c.first_name || c.name || c.full_name || '').trim();
+      if (name) map.set(String(c.id).trim(), name);
+    });
+    return map;
+  }, [familyChildren]);
 
   const groupUnconnectedMembers = useMemo(() => {
     if (!isMultiRecipient) return [];
@@ -163,15 +187,17 @@ export default function FamilyDmChat({
       .map((member) => {
         const childId = String(member.id).trim();
         const status = String(summaries?.[childId]?.invite_status || 'none').trim().toLowerCase();
+        const resolvedName =
+          childNameById.get(childId) || String(member.name || '').trim() || 'this child';
         return {
           childId,
-          childName: String(member.name || '').trim() || 'this child',
+          childName: resolvedName,
           status: status === 'pending' ? 'pending' : 'none',
           connected: status === 'accepted' || status === 'connected',
         };
       })
       .filter((member) => !member.connected);
-  }, [isMultiRecipient, participant, viewerRole, childInviteSummaries]);
+  }, [isMultiRecipient, participant, viewerRole, childInviteSummaries, childNameById]);
 
   const openInviteChildModal = useCallback((childIdOverride) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -249,29 +275,23 @@ export default function FamilyDmChat({
     const showLoadingUi = !silent && !chatReadyRef.current;
     if (showLoadingUi) setLoading(true);
     try {
-      let activeParticipant = await resolveGroupThreadParticipant(supabase, {
+      // Run the independent lookups concurrently instead of awaiting them in
+      // series — this is the main reason the pane felt slow to open.
+      const isAssignmentlessThread =
+        isGroupThread || participantType === 'multicast' || !childCtx?.childId;
+
+      const participantPromise = resolveGroupThreadParticipant(supabase, {
         familyId,
         participant: baseParticipant,
         children: familyChildren,
         members: familyMembers,
       });
-      if (activeParticipant?.threadId && activeParticipant.threadId !== participantRef.current?.threadId) {
-        participantRef.current = activeParticipant;
-      }
-
-      const { data: dmRows, error: dmError, attachmentsSupported: dmAttachmentsSupported } =
-        await queryFamilyDirectMessages(supabase, {
+      const dmPromise = queryFamilyDirectMessages(supabase, {
         familyId,
         limit: 300,
         ascending: false,
       });
-      setAttachmentsSupported(dmAttachmentsSupported);
-
-      const assignmentsPromise = (
-        isGroupThread
-        || participantType === 'multicast'
-        || !childCtx?.childId
-      )
+      const assignmentsPromise = isAssignmentlessThread
         ? Promise.resolve({ data: [], error: null })
         : supabase
           .from('assignments')
@@ -281,7 +301,20 @@ export default function FamilyDmChat({
           .order('updated_at', { ascending: false })
           .limit(200);
 
-      const { data: assignmentRows, error: asgError } = await assignmentsPromise;
+      const [resolvedParticipant, dmResult, asgResult] = await Promise.all([
+        participantPromise,
+        dmPromise,
+        assignmentsPromise,
+      ]);
+
+      const activeParticipant = resolvedParticipant || baseParticipant;
+      if (activeParticipant?.threadId && activeParticipant.threadId !== participantRef.current?.threadId) {
+        participantRef.current = activeParticipant;
+      }
+
+      const { data: dmRows, error: dmError, attachmentsSupported: dmAttachmentsSupported } = dmResult || {};
+      setAttachmentsSupported(dmAttachmentsSupported);
+      const { data: assignmentRows, error: asgError } = asgResult || {};
 
       if (dmError) {
         console.warn('[FamilyDmChat] direct messages unavailable:', dmError.message);
@@ -299,16 +332,23 @@ export default function FamilyDmChat({
         .filter((row) => !row.read_at)
         .filter((row) => isDirectMessageRecipient(row, currentUserId, viewerChildId, activeParticipant));
 
+      // Optimistically mark read locally and persist in the background — don't
+      // block rendering the thread on the mark-read round trip.
       if (unreadForMe.length > 0) {
-        try {
-          const markedAt = new Date().toISOString();
-          await markDirectMessagesRead(unreadForMe.map((row) => row.id));
-          unreadForMe.forEach((row) => {
-            row.read_at = markedAt;
+        const markedAt = new Date().toISOString();
+        unreadForMe.forEach((row) => {
+          row.read_at = markedAt;
+        });
+        markDirectMessagesRead(unreadForMe.map((row) => row.id))
+          .then(() => {
+            // Let the Messages nav badge recompute now that these are read.
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('familyDirectMessagesUpdated'));
+            }
+          })
+          .catch((markErr) => {
+            console.warn('[FamilyDmChat] mark read:', markErr?.message || markErr);
           });
-        } catch (markErr) {
-          console.warn('[FamilyDmChat] mark read:', markErr?.message || markErr);
-        }
       }
 
       const linkedEventIds = [...new Set(
@@ -340,9 +380,18 @@ export default function FamilyDmChat({
         viewerChildId,
         eventDatesById,
       });
-      const enriched = await enrichMessages(unified, assignmentList);
-      setMessages(enriched);
+      // Show message text immediately, then fill in event/material attachment
+      // chips once they resolve, so first paint isn't blocked on enrichment.
+      setMessages(unified);
       chatReadyRef.current = true;
+      if (showLoadingUi) setLoading(false);
+
+      try {
+        const enriched = await enrichMessages(unified, assignmentList);
+        setMessages(enriched);
+      } catch (enrichErr) {
+        console.warn('[FamilyDmChat] enrich messages:', enrichErr?.message || enrichErr);
+      }
     } catch (error) {
       console.error('[FamilyDmChat] loadMessages exception:', error);
       if (!chatReadyRef.current) setMessages([]);

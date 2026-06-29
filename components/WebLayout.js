@@ -614,6 +614,22 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     userRole,
   ]);
 
+  // For a child/student, the planner and child filters must be locked to their
+  // OWN child record(s). Without this, a child sees every sibling's to-dos.
+  const viewerScopedChildIds = useMemo(() => {
+    if (!sessionIsChild) return null;
+    const ids = [];
+    if (session?.child_id) ids.push(String(session.child_id));
+    if (Array.isArray(session?.accessible_children)) {
+      session.accessible_children.forEach((c) => {
+        const id = c?.id ?? c;
+        if (id) ids.push(String(id));
+      });
+    }
+    const unique = Array.from(new Set(ids.filter(Boolean)));
+    return unique.length > 0 ? unique : null;
+  }, [sessionIsChild, session?.child_id, session?.accessible_children]);
+
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const familyUserControls = useOptionalFamilyUserControls();
@@ -798,6 +814,49 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   const [selectedCalendarChildren, setSelectedCalendarChildren] = useState(null);
   const [selectedEventTypes, setSelectedEventTypes] = useState(null);
+  // Unread direct-message count for the signed-in user (drives the Messages nav badge,
+  // so a parent is notified when a child sends a message / asks a question).
+  const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
+  useEffect(() => {
+    if (!authUserId) {
+      setUnreadMessagesCount(0);
+      return undefined;
+    }
+    let cancelled = false;
+    const loadUnread = async () => {
+      try {
+        const { count, error } = await supabase
+          .from('family_direct_messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('recipient_user_id', authUserId)
+          .is('read_at', null)
+          .neq('sender_user_id', authUserId);
+        if (!cancelled && !error) {
+          setUnreadMessagesCount(count || 0);
+        }
+      } catch (_) {
+        /* ignore (table/RLS unavailable) */
+      }
+    };
+    loadUnread();
+    const interval = setInterval(loadUnread, 60000);
+    let onRefresh;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      onRefresh = () => loadUnread();
+      window.addEventListener('refreshRightRail', onRefresh);
+      window.addEventListener('familyDirectMessagesUpdated', onRefresh);
+      window.addEventListener('focus', onRefresh);
+    }
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      if (onRefresh && Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.removeEventListener('refreshRightRail', onRefresh);
+        window.removeEventListener('familyDirectMessagesUpdated', onRefresh);
+        window.removeEventListener('focus', onRefresh);
+      }
+    };
+  }, [authUserId, isMessagesPaneOpen]);
   const [filterExpanded, setFilterExpanded] = useState(false);
   const filterButtonRef = useRef(null);
   const [filterDropdownPosition, setFilterDropdownPosition] = useState({ top: 0, left: 0 });
@@ -1827,6 +1886,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       }
       if (resolvedFamilyId) {
         setFamilyId(resolvedFamilyId);
+        // A child/student must only ever see their own child record(s), never siblings'.
+        const scopeChildrenToViewer = (list) => {
+          if (!sessionIsChild || !Array.isArray(viewerScopedChildIds) || viewerScopedChildIds.length === 0) {
+            return list;
+          }
+          const allowed = new Set(viewerScopedChildIds.map(String));
+          return (list || []).filter((c) => allowed.has(String(c?.id)));
+        };
         try {
           const { data: childrenData, error: childrenError } = await supabase
             .from('children')
@@ -1849,7 +1916,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 avatar_url: validateChildAvatarUrl(child.avatar_url || child.avatar),
                 avatar: validateChildAvatarUrl(child.avatar) ?? null
               }));
-              setChildren(cleaned);
+              setChildren(scopeChildrenToViewer(cleaned));
             } else {
               console.warn('[WebLayout] Error fetching children:', childrenError);
               setChildren([]);
@@ -1861,7 +1928,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               avatar_url: validateChildAvatarUrl(child.avatar_url || child.avatar),
               avatar: validateChildAvatarUrl(child.avatar) ?? null
             }));
-            setChildren(cleaned);
+            setChildren(scopeChildrenToViewer(cleaned));
           }
           
           // Also fetch subjects for diff modal (only if not already loaded)
@@ -3418,7 +3485,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
       return;
     }
-    const childIds = Array.isArray(selectedCalendarChildren) ? selectedCalendarChildren : [];
+    // A child creating an event must attribute it to themselves, not the whole family.
+    const childIds = sessionIsChild && viewerScopedChildIds
+      ? viewerScopedChildIds
+      : (Array.isArray(selectedCalendarChildren) ? selectedCalendarChildren : []);
     openCreateModal(kind, {
       date: currentMonth,
       childIds,
@@ -3426,7 +3496,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       eventType: kind === 'assignment' ? 'Assignment' : null,
     });
     setShowPlannerCreateMenu(false);
-  }, [currentMonth, familyUserControls, openCreateModal, selectedCalendarChildren, sessionRestricted]);
+  }, [currentMonth, familyUserControls, openCreateModal, selectedCalendarChildren, sessionRestricted, sessionIsChild, viewerScopedChildIds]);
 
   const handleLearningDaySubjectSelect = useCallback((subject) => {
     setShowLearningDaySubjectPicker(false);
@@ -4034,6 +4104,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             user: user,
             userRole: resolvedShellUserRole,
             familyPlanningMode: familyPlanningMode ?? family?.default_planning_mode ?? null,
+            unreadMessagesCount,
           }}
           onOpenSettings={(section = 'profile') => {
             handleTabChange('settings', section);
@@ -4308,7 +4379,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                       }}
                     >
-                      {children && children.length > 1 ? (
+                      {/* A child/student never picks another child; the filter is locked to them. */}
+                      {!sessionIsChild && children && children.length > 1 ? (
                         <>
                       <View style={{
                         paddingVertical: 6,
@@ -4784,7 +4856,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   setShowEditChildModal(true);
                 }}
                 onAddSyllabus={() => setShowSyllabusUpload(true)}
-                selectedCalendarChildren={selectedCalendarChildren}
+                selectedCalendarChildren={
+                  sessionIsChild && viewerScopedChildIds
+                    ? viewerScopedChildIds
+                    : selectedCalendarChildren
+                }
                 onSelectedCalendarChildrenChange={setSelectedCalendarChildren}
                 selectedEventTypes={selectedEventTypes}
                 onSelectedEventTypesChange={setSelectedEventTypes}

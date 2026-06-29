@@ -9449,11 +9449,26 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
       if (childrenData) {
         // Validate and clean avatar URLs before setting
-        const cleanedChildren = childrenData.map(child => ({
+        let cleanedChildren = childrenData.map(child => ({
           ...child,
           avatar_url: validateAvatarUrl(child.avatar_url || child.avatar),
           avatar: validateAvatarUrl(child.avatar) ?? null
         }));
+        // A child/student must only ever see their own record, never siblings'.
+        if (propSession?.role_flags?.isChild === true) {
+          const ownIds = new Set(
+            [
+              propSession?.child_id,
+              ...((Array.isArray(propSession?.accessible_children) ? propSession.accessible_children : [])
+                .map((c) => c?.id ?? c)),
+            ]
+              .filter(Boolean)
+              .map(String)
+          );
+          if (ownIds.size > 0) {
+            cleanedChildren = cleanedChildren.filter((child) => ownIds.has(String(child.id)));
+          }
+        }
         setChildren(cleanedChildren)
         // Initialize selectedChildren with all children selected
         setSelectedChildren(cleanedChildren.map(child => child.id))

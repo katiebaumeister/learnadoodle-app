@@ -71,7 +71,22 @@ export default function FamilyMessagesPane({
     const showLoadingUi = !silent && !inboxReadyRef.current;
     if (showLoadingUi) setLoading(true);
     try {
-      const { data: familyData } = await getFamilyMembers();
+      // Run the family-members API call concurrently with the message/thread
+      // queries — none of the DB queries depend on the members payload, so there
+      // is no reason to wait for it first (this was an extra sequential round trip).
+      const [familyResult, dmResult, assignmentsResult, threadsResult] = await Promise.all([
+        getFamilyMembers(),
+        queryFamilyDirectMessages(supabase, { familyId, limit: 300, ascending: false }),
+        supabase
+          .from('assignments')
+          .select(ASSIGNMENT_SELECT)
+          .eq('family_id', familyId)
+          .order('updated_at', { ascending: false })
+          .limit(300),
+        queryFamilyDmThreads(supabase, { familyId, limit: 50 }),
+      ]);
+
+      const familyData = familyResult?.data;
       const members = Array.isArray(familyData?.members) ? familyData.members : [];
       const childrenList = (Array.isArray(familyChildren) && familyChildren.length > 0)
         ? familyChildren.filter((c) => c?.archived !== true)
@@ -92,17 +107,6 @@ export default function FamilyMessagesPane({
         viewerRole,
         viewerChildId,
       });
-
-      const [dmResult, assignmentsResult, threadsResult] = await Promise.all([
-        queryFamilyDirectMessages(supabase, { familyId, limit: 300, ascending: false }),
-        supabase
-          .from('assignments')
-          .select(ASSIGNMENT_SELECT)
-          .eq('family_id', familyId)
-          .order('updated_at', { ascending: false })
-          .limit(300),
-        queryFamilyDmThreads(supabase, { familyId, limit: 50 }),
-      ]);
 
       const messages = !dmResult.error && Array.isArray(dmResult.data) ? dmResult.data : [];
       if (dmResult.error) {

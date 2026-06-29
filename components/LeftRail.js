@@ -104,6 +104,7 @@ export default function LeftRail({
   iconRailMode = false,
   permanentSidebar = false,
   familyPlanningMode = null,
+  unreadMessagesCount = 0,
 }) {
   const [expandedChildren, setExpandedChildren] = useState(new Set());
   const [hoveredItem, setHoveredItem] = useState(null);
@@ -187,6 +188,10 @@ export default function LeftRail({
     if (item.key === 'planning-preferences' && effectivePermissions.canViewPlanner === false) return false;
     if ((userRole === 'child' || userRole === 'student') && item.key === 'create') return false;
     if ((userRole === 'child' || userRole === 'student') && item.key === 'family') return false;
+    // Child experience is intentionally minimal: Home (checklist), Planner, Messages.
+    // Subjects and Materials are hidden for child/student to reduce surface area.
+    if ((userRole === 'child' || userRole === 'student')
+      && (item.key === 'subjects' || item.key === 'learning' || item.key === 'materials')) return false;
     if (item.key === 'planner' && effectivePermissions.canViewPlanner === false) return false;
     if ((item.key === 'subjects' || item.key === 'learning') && effectivePermissions.canViewSubjects === false) return false;
     if (item.key === 'materials' && effectivePermissions.canViewLibrary === false) return false;
@@ -277,6 +282,8 @@ export default function LeftRail({
     const isHovered = hoveredItem === item.key && !active;
     const isPlanner = item.key === 'planner';
     const isMore = item.key === 'more';
+    const unreadBadgeCount = item.key === 'messages' ? Number(unreadMessagesCount) || 0 : 0;
+    const showUnreadBadge = unreadBadgeCount > 0;
     const iconColor = active
       ? SIDEBAR_COLORS.activeText
       : isHovered
@@ -300,6 +307,13 @@ export default function LeftRail({
                 color={iconColor}
                 strokeWidth={2}
               />
+              {showUnreadBadge ? (
+                <View style={styles.navUnreadBadge}>
+                  <Text style={styles.navUnreadBadgeText} numberOfLines={1}>
+                    {unreadBadgeCount > 9 ? '9+' : String(unreadBadgeCount)}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           ) : null}
         </View>
@@ -908,6 +922,30 @@ const styles = StyleSheet.create({
     height: 24,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  navUnreadBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -7,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 0 0 2px #FFFFFF',
+    }),
+  },
+  navUnreadBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '700',
+    lineHeight: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });
 
