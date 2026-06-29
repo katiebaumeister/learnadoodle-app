@@ -69,6 +69,7 @@ function MonthMiniCalendar({
   month,
   selectedChildId,
   dayStatusByChild,
+  offDayKeys,
   onMarkDayAttended,
   onDayPress,
   interactionMode = 'attendance',
@@ -110,13 +111,15 @@ function MonthMiniCalendar({
               const inRange = day >= firstDay && day <= lastDay;
               const key = getDayKey(year, monthIndex, day);
               const cellKey = `${selectedChildId}-${key}`;
+              const isOffDay = inRange && !!offDayKeys && offDayKeys.has(key);
               const status = inRange ? (statusMap[key] || 'noEvents') : null;
               const color = status
                 ? (ATTENDANCE_COLORS[status] || (status === 'partial' ? ATTENDANCE_COLORS.present : ATTENDANCE_COLORS.noEvents))
                 : ATTENDANCE_COLORS.noEvents;
               const isNone = status === 'noEvents';
               const isEventsMode = interactionMode === 'events';
-              const isDisabled = !inRange || !selectedChildId || (isEventsMode ? !onDayPress : !onMarkDayAttended);
+              // Days off (holidays/breaks) are informational only — never clickable.
+              const isDisabled = !inRange || isOffDay || !selectedChildId || (isEventsMode ? !onDayPress : !onMarkDayAttended);
               const isSelected = isEventsMode && selectedDateKey === key;
 
               return (
@@ -131,7 +134,8 @@ function MonthMiniCalendar({
                       marginBottom: 2,
                       backgroundColor: inRange ? color : 'transparent',
                     },
-                    inRange && isNone && styles.cellNone,
+                    inRange && isNone && !isOffDay && styles.cellNone,
+                    inRange && isOffDay && styles.cellOffDay,
                     !inRange && styles.cellOutOfRange,
                     isSelected && styles.cellSelected,
                     isWeb && !isDisabled && styles.cellWeb,
@@ -139,7 +143,9 @@ function MonthMiniCalendar({
                   ]}
                   activeOpacity={0.8}
                   disabled={isDisabled}
+                  {...(isWeb && isOffDay && { title: 'Day off' })}
                   onPress={() => {
+                    if (isOffDay) return;
                     if (isEventsMode && onDayPress) {
                       onDayPress(key);
                       return;
@@ -191,6 +197,10 @@ export function YearHeatmapLegend({ style }) {
         <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.noEvents }]} />
         <Text style={styles.legendPillText}>No events</Text>
       </View>
+      <View style={styles.legendPill}>
+        <View style={[styles.legendDot, styles.legendDotOffDay]} />
+        <Text style={styles.legendPillText}>Day off</Text>
+      </View>
     </View>
   );
 }
@@ -200,6 +210,7 @@ export default function YearHeatmapGrid({
   yearEnd,
   selectedChildId = null,
   dayStatusByChild = {},
+  offDayKeys = null,
   onMarkDayAttended,
   onDayPress = null,
   interactionMode = 'attendance',
@@ -226,6 +237,7 @@ export default function YearHeatmapGrid({
             month={m}
             selectedChildId={selectedChildId}
             dayStatusByChild={dayStatusByChild}
+            offDayKeys={offDayKeys}
             onMarkDayAttended={onMarkDayAttended}
             onDayPress={onDayPress}
             interactionMode={interactionMode}
@@ -294,6 +306,14 @@ const styles = StyleSheet.create({
     backgroundColor: ATTENDANCE_COLORS.noEvents,
     borderColor: 'rgba(15,23,42,0.06)',
   },
+  cellOffDay: {
+    // Days off (holidays/breaks) — neutral, clearly non-interactive.
+    backgroundColor: 'rgba(15,23,42,0.05)',
+    borderColor: 'rgba(15,23,42,0.06)',
+    borderStyle: 'dashed',
+    opacity: 0.7,
+    ...(Platform.OS === 'web' && { cursor: 'default' }),
+  },
   cellOutOfRange: {
     backgroundColor: 'transparent',
     borderColor: 'transparent',
@@ -338,4 +358,10 @@ const styles = StyleSheet.create({
   },
   legendPillText: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted, opacity: 0.9 },
   legendDot: { width: 8, height: 8, borderRadius: 4, opacity: 0.9 },
+  legendDotOffDay: {
+    backgroundColor: 'rgba(15,23,42,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.35)',
+    borderStyle: 'dashed',
+  },
 });

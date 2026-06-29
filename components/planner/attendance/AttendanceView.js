@@ -227,6 +227,12 @@ function getDateKeysInRange(startDate, endDate) {
   return keys;
 }
 
+/** Days off (holidays, breaks, vacations) are never instructional and must not be markable. */
+const OFF_DAY_EVENT_TYPES = new Set(['break', 'day off', 'holiday', 'vacation']);
+function isOffDayEvent(e) {
+  return OFF_DAY_EVENT_TYPES.has(String(e?.event_type || '').trim().toLowerCase());
+}
+
 /** Only events marked as counting toward instructional time are used for attendance. */
 function isInstructionalEvent(e) {
   if (String(e?.event_type || '').trim().toLowerCase() === 'classday') return true;
@@ -287,6 +293,10 @@ export default function AttendanceView({
   // Snapshot of the last bulk run so it can be undone.
   const [lastBulkUndo, setLastBulkUndo] = useState(null);
   const [undoingBulk, setUndoingBulk] = useState(false);
+  // Family for which the live (full-range) fetch has populated records/events.
+  // Prevents a late-arriving prefetch snapshot (which only covers the narrower
+  // academic-year range) from clobbering full calendar-year data.
+  const liveDataLoadedFamilyRef = React.useRef(null);
 
   const toast = useToast();
   const familyIdResolved = familyId || eventsProp[0]?.family_id || eventsProp[0]?.familyId;
@@ -326,8 +336,13 @@ export default function AttendanceView({
           end: new Date(snap.yearRange.end),
         });
       }
-      setAttendanceRecords(snap.attendanceRecords ?? []);
-      setYearEvents(snap.yearEvents ?? []);
+      // Skip seeding from the snapshot once the live fetch has loaded the full
+      // range — otherwise the (narrower) snapshot overwrites earlier-year data
+      // and those days vanish until the next refetch.
+      if (liveDataLoadedFamilyRef.current !== familyIdResolved) {
+        setAttendanceRecords(snap.attendanceRecords ?? []);
+        setYearEvents(snap.yearEvents ?? []);
+      }
       if (!isYearPlannerLayout) {
         setRangeReady(true);
       }
@@ -449,6 +464,7 @@ export default function AttendanceView({
               }),
         ]);
         if (!cancelled) {
+          liveDataLoadedFamilyRef.current = familyIdResolved;
           setAttendanceRecords(logs || []);
           setYearEvents(Array.isArray(eventsData) ? eventsData : []);
         }
@@ -489,8 +505,27 @@ export default function AttendanceView({
     return (source || []).filter(inRangeByDate);
   }, [yearStartKey, yearEndKey, isYearPlannerLayout, mergedPlannerEvents, yearEvents, eventsProp]);
 
+  // Dates that are days off (holiday/break/vacation) and have no real lesson — these
+  // must not be clickable or counted for attendance in the year planner.
+  const offDayKeys = useMemo(() => {
+    const byDate = new Map();
+    (eventsInRange || []).forEach((eventItem) => {
+      const key = eventLocalDateKey(eventItem);
+      if (!key) return;
+      const entry = byDate.get(key) || { hasOff: false, hasLesson: false };
+      if (isOffDayEvent(eventItem)) entry.hasOff = true;
+      else entry.hasLesson = true;
+      byDate.set(key, entry);
+    });
+    const set = new Set();
+    byDate.forEach((entry, key) => {
+      if (entry.hasOff && !entry.hasLesson) set.add(key);
+    });
+    return set;
+  }, [eventsInRange]);
+
   const events = useMemo(() => {
-    if (isYearPlannerLayout) return eventsInRange;
+    if (isYearPlannerLayout) return eventsInRange.filter((eventItem) => !isOffDayEvent(eventItem));
     return eventsInRange.filter((eventItem) => isInstructionalEventForMode(eventItem, attendanceTrackingMode));
   }, [eventsInRange, isYearPlannerLayout, attendanceTrackingMode]);
 
@@ -1166,6 +1201,10 @@ export default function AttendanceView({
   }, [familyIdResolved, eventsByDateChild, events, attendanceRecords, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay, toast, attendanceTrackingMode]);
 
   const handleHeatmapMarkDay = useCallback(async (dateKey, childId) => {
+    // Days off (holidays/breaks/vacations) are not markable.
+    if (offDayKeys.has(String(dateKey).slice(0, 10))) {
+      return;
+    }
     // Future days can never be attended.
     if (String(dateKey).slice(0, 10) > toLocalYYYYMMDD(new Date())) {
       toast.push("You can't mark attendance for a future day.");
@@ -1178,7 +1217,7 @@ export default function AttendanceView({
       return;
     }
     return handleMarkDayAttended(dateKey, childId);
-  }, [handleMarkDayAttended, visibleHeatmapChildren, toast]);
+  }, [handleMarkDayAttended, visibleHeatmapChildren, toast, offDayKeys]);
 
   const handleMarkAllRangeAttended = useCallback(async ({
     startDate = yearRange.start,
@@ -1592,6 +1631,7 @@ export default function AttendanceView({
         yearEnd={yearEndKey}
         selectedChildId={heatmapSelectedChildId}
         dayStatusByChild={heatmapDayStatusByChild}
+        offDayKeys={offDayKeys}
         showLegend={!isYearPlannerLayout}
         onMarkDayAttended={
           readOnly
