@@ -52,6 +52,7 @@ export default function SubjectScheduleFields({
   onOpenStartDatePicker,
   onOpenEndDatePicker,
   embeddedInForm = false,
+  datesRequired = true,
 }) {
   const schoolYearTriggerRef = useRef(null);
   const schoolTermTriggerRef = useRef(null);
@@ -89,7 +90,7 @@ export default function SubjectScheduleFields({
       date={startDate}
       onDateChange={onStartDateChange}
       onOpenDatePicker={onOpenStartDatePicker}
-      required
+      required={datesRequired}
     />
   );
   const endDateField = (
@@ -98,7 +99,7 @@ export default function SubjectScheduleFields({
       date={endDate}
       onDateChange={onEndDateChange}
       onOpenDatePicker={onOpenEndDatePicker}
-      required
+      required={datesRequired}
     />
   );
 
@@ -190,8 +191,10 @@ export default function SubjectScheduleFields({
         </Dropdown>
           </View>
 
-          {startDateField}
-          {endDateField}
+          <View style={[styles.dateTimeInlineRow, { flexWrap: 'nowrap' }]}>
+            <View style={[styles.scheduleColumn, { flex: 1 }]}>{startDateField}</View>
+            <View style={[styles.scheduleColumn, { flex: 1 }]}>{endDateField}</View>
+          </View>
         </>
       ) : null}
 
@@ -207,6 +210,7 @@ export default function SubjectScheduleFields({
                 style={[
                   styles.dropdownOption,
                   styles.compactChip,
+                  localStyles.dayChip,
                   active && styles.dropdownOptionActive,
                 ]}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -261,7 +265,13 @@ export default function SubjectScheduleFields({
 
 const localStyles = StyleSheet.create({
   compactChipRow: {
-    gap: 6,
+    gap: 5,
+    flexWrap: 'nowrap',
+  },
+  dayChip: {
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: 4,
   },
   scopeField: {
     marginBottom: 14,

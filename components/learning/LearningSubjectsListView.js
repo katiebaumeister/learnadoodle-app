@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 28,
-    paddingTop: 24,
+    paddingTop: 12,
     paddingBottom: 24,
   },
   pageHeader: {

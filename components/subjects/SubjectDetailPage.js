@@ -279,9 +279,10 @@ function isDateWithinPlanBlockRange(dateKey, block) {
 function normalizeSubjectTerm(scopeId) {
   const raw = String(scopeId || '').trim().toLowerCase();
   if (!raw) return 'full_year';
-  if (raw === 'fall_term' || raw === 'spring_term' || raw === 'full_year') return raw;
+  if (raw === 'fall_term' || raw === 'spring_term' || raw === 'summer_term' || raw === 'full_year') return raw;
   if (raw.includes('fall')) return 'fall_term';
   if (raw.includes('spring')) return 'spring_term';
+  if (raw.includes('summer')) return 'summer_term';
   return 'full_year';
 }
 
@@ -324,6 +325,7 @@ function getSubjectTermLabel(term) {
   if (raw === 'full_year') return 'Full year';
   if (raw === 'fall_term') return 'Fall term';
   if (raw === 'spring_term') return 'Spring term';
+  if (raw === 'summer_term') return 'Summer term';
   return '';
 }
 
@@ -1701,6 +1703,9 @@ export default function SubjectDetailPage({
         : null,
       spring_term: Number.isFinite(schoolEndYear)
         ? { start_date: `${schoolEndYear}-01-01`, end_date: `${schoolEndYear}-05-31` }
+        : null,
+      summer_term: Number.isFinite(schoolEndYear)
+        ? { start_date: `${schoolEndYear}-06-01`, end_date: `${schoolEndYear}-08-31` }
         : null,
     };
     const plannedCapacityDays = Object.entries(weekdaysByScope).reduce((sum, [scopeId, weekdays]) => {

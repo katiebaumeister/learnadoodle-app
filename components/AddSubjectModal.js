@@ -70,6 +70,7 @@ const TERM_OPTIONS = [
   { id: 'full_year', label: 'Full year' },
   { id: 'fall_term', label: 'Fall term' },
   { id: 'spring_term', label: 'Spring term' },
+  { id: 'summer_term', label: 'Summer term' },
 ];
 const normalizeCalendarTargets = (raw) => {
   if (Array.isArray(raw)) return raw.map((v) => String(v).toLowerCase()).filter(Boolean);
@@ -771,8 +772,8 @@ export default function AddSubjectModal({
             <View style={sharedStyles.subjectSettingsFormRow}>
               <View style={sharedStyles.subjectSettingsFormColumnMain}>
                 <ScrollView
-                  style={sharedStyles.subjectSettingsMainColumnScroll}
-                  contentContainerStyle={sharedStyles.subjectSettingsMainColumnScrollInner}
+                  style={[sharedStyles.subjectSettingsMainColumnScroll, { flexGrow: 1 }]}
+                  contentContainerStyle={[sharedStyles.subjectSettingsMainColumnScrollInner, { flexGrow: 1 }]}
                   showsVerticalScrollIndicator
                   keyboardShouldPersistTaps="handled"
                   nestedScrollEnabled
@@ -884,7 +885,7 @@ export default function AddSubjectModal({
                 </View>
 
                 {familyId ? (
-                  <View style={[sharedStyles.assignmentAttachPanel, sharedStyles.subjectSettingsStackedPanel]}>
+                  <View style={[sharedStyles.assignmentAttachPanel, sharedStyles.subjectSettingsStackedPanel, { flexGrow: 1, marginBottom: 0 }]}>
                     <SubjectAttachmentsFields
                       familyId={familyId}
                       syllabusMaterialId={syllabusMaterialId}
@@ -908,8 +909,12 @@ export default function AddSubjectModal({
               <View style={sharedStyles.subjectSettingsFormColumnSide}>
                 <View style={sharedStyles.subjectSettingsSidePanel}>
                   <SectionHeading>Schedule</SectionHeading>
+                  <Text style={localStyles.scheduleOptionalNote}>
+                    Optional: Set a structured repeating class schedule.
+                  </Text>
                   <SubjectScheduleFields
                     embeddedInForm
+                    datesRequired={false}
                     schoolYear={schoolYear}
                     schoolYearOptions={schoolYearOptions}
                     onSchoolYearChange={handleSchoolYearChange}
@@ -1021,6 +1026,16 @@ const localStyles = StyleSheet.create({
     fontSize: 14,
     color: '#6b7280',
     fontStyle: 'italic',
+  },
+  scheduleOptionalNote: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#6b7280',
+    marginTop: -4,
+    marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });
 

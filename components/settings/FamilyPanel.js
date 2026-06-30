@@ -1287,6 +1287,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
+  // Keep a live ref so the global refreshSubjects listener (stable, empty-deps)
+  // always calls the latest loadSubjects without capturing a stale familyId.
+  const loadSubjectsRef = useRef(null);
+  loadSubjectsRef.current = loadSubjects;
+
   // Preload subjects when familyId is available so Courses section shows instantly when navigating
   useEffect(() => {
     if (!familyId) return;
@@ -1329,12 +1334,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   }, [familyId]);
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const handler = () => loadPlannerDataRef.current?.();
-    window.addEventListener('refreshPlanDefaults', handler);
-    window.addEventListener('refreshSubjects', handler);
+    const handlePlanDefaults = () => loadPlannerDataRef.current?.();
+    // refreshSubjects must also refetch the subjects list itself, not just planner
+    // data — otherwise a subject added via the Add Subject modal won't show in the
+    // settings courses list until a full page reload.
+    const handleSubjectsRefresh = () => {
+      loadPlannerDataRef.current?.();
+      loadSubjectsRef.current?.(true);
+    };
+    window.addEventListener('refreshPlanDefaults', handlePlanDefaults);
+    window.addEventListener('refreshSubjects', handleSubjectsRefresh);
     return () => {
-      window.removeEventListener('refreshPlanDefaults', handler);
-      window.removeEventListener('refreshSubjects', handler);
+      window.removeEventListener('refreshPlanDefaults', handlePlanDefaults);
+      window.removeEventListener('refreshSubjects', handleSubjectsRefresh);
     };
   }, []);
 

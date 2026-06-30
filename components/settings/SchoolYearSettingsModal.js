@@ -275,43 +275,37 @@ const styles = StyleSheet.create({
     }),
   },
   scroller: {
-    flexGrow: 0,
-    flexShrink: 0,
     width: '100%',
     ...(Platform.OS === 'web' && {
-      flex: 'none',
-      minHeight: 'auto',
+      flex: 1,
+      minHeight: 0,
     }),
   },
   body: {
-    flexGrow: 0,
-    flexShrink: 0,
     width: '100%',
     paddingTop: 0,
     ...(Platform.OS === 'web' && {
-      flex: 'none',
-      minHeight: 'auto',
-      overflow: 'visible',
+      flex: 1,
+      minHeight: 0,
+      overflow: 'hidden',
     }),
   },
   scrollBody: {
-    flexGrow: 0,
-    flexShrink: 0,
     width: '100%',
     ...(Platform.OS === 'web' && {
-      flex: 'none',
-      overflow: 'visible',
+      flex: 1,
+      minHeight: 0,
+      overflow: 'hidden',
     }),
   },
   bodyContent: {
-    flexGrow: 0,
-    flexShrink: 0,
     width: '100%',
     paddingBottom: 8,
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
-      flex: 'none',
+      flex: 1,
+      minHeight: 0,
     }),
   },
   loadingBody: {

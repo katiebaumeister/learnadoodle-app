@@ -22,6 +22,7 @@ import {
   getPlanDefaultsFromSettings,
   syncFamilyHolidayBreakExclusions,
 } from '../../lib/services/plannerSettingsClient';
+import { getPublicHolidaysForRange } from '../../lib/services/academicYearClient';
 import { PLANNING_PREFERENCES_UI, SCHOOL_YEAR_SETTINGS_UI } from '../planner/planningPreferencesUiCopy';
 import DayOffCreateModal from '../create/DayOffCreateModal';
 import {
@@ -484,6 +485,9 @@ export default function PlannerSettingsContent({
   );
   const countryCode = 'US';
   const regionCode = null;
+  // Followed public-holiday dates for the selected year range, so the
+  // "learning days available" readout can subtract them exactly.
+  const [publicHolidayDates, setPublicHolidayDates] = useState([]);
 
   // Custom days & ranges (stored as holiday / break exclusions in API; managed via calendar events)
   const [customHolidays, setCustomHolidays] = useState(
@@ -769,6 +773,95 @@ export default function PlannerSettingsContent({
     () => mergeDayOffRows(customHolidays, customBreaks),
     [customHolidays, customBreaks]
   );
+
+  // How many learning days the school year actually has, so the goal can be set
+  // against a real number. Counts selected weekdays in the year range, then
+  // discounts the days off (custom holidays + break ranges).
+  const availableLearningDaysInfo = useMemo(() => {
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const startYmd = String(defaultYearStartDate || '').slice(0, 10);
+    const endYmd = String(defaultYearEndDate || '').slice(0, 10);
+    if (!DATE_RE.test(startYmd) || !DATE_RE.test(endYmd) || startYmd > endYmd) return null;
+    const allowed = new Set((preferredLearningDayNums || []).map((d) => Number(d)));
+    if (allowed.size === 0) return { total: 0, daysOff: 0 };
+
+    const offDates = new Set();
+    (customHolidays || []).forEach((h) => {
+      const d = String(h?.date || '').slice(0, 10);
+      if (DATE_RE.test(d)) offDates.add(d);
+    });
+    // Followed public holidays (minus any the family chose to keep as learning days).
+    if (followGlobalHolidays) {
+      const excluded = new Set(
+        (excludedPublicHolidayDates || []).map((d) => String(d || '').slice(0, 10))
+      );
+      (publicHolidayDates || []).forEach((d) => {
+        const ymd = String(d || '').slice(0, 10);
+        if (DATE_RE.test(ymd) && !excluded.has(ymd)) offDates.add(ymd);
+      });
+    }
+    const breakRanges = (customBreaks || [])
+      .map((b) => ({
+        start: String(b?.start || '').slice(0, 10),
+        end: String(b?.end || '').slice(0, 10),
+      }))
+      .filter((b) => DATE_RE.test(b.start) && DATE_RE.test(b.end));
+
+    const toYmd = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    let total = 0;
+    let daysOff = 0;
+    const cur = new Date(`${startYmd}T12:00:00`);
+    const end = new Date(`${endYmd}T12:00:00`);
+    while (cur <= end) {
+      if (allowed.has(cur.getDay())) {
+        const ymd = toYmd(cur);
+        const isOff = offDates.has(ymd) || breakRanges.some((r) => ymd >= r.start && ymd <= r.end);
+        if (isOff) daysOff += 1;
+        else total += 1;
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+    return { total, daysOff };
+  }, [
+    defaultYearStartDate,
+    defaultYearEndDate,
+    preferredLearningDayNums,
+    customHolidays,
+    customBreaks,
+    followGlobalHolidays,
+    publicHolidayDates,
+    excludedPublicHolidayDates,
+  ]);
+
+  // Pull the followed public-holiday dates for the selected year range so the
+  // available-days readout is exact (not just "about"). Cheap, cached server-side,
+  // and de-duped per country|range so it won't spam the API while editing.
+  const publicHolidayFetchKeyRef = useRef(null);
+  useEffect(() => {
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const startYmd = String(defaultYearStartDate || '').slice(0, 10);
+    const endYmd = String(defaultYearEndDate || '').slice(0, 10);
+    if (!followGlobalHolidays || !DATE_RE.test(startYmd) || !DATE_RE.test(endYmd) || startYmd > endYmd) {
+      publicHolidayFetchKeyRef.current = null;
+      setPublicHolidayDates([]);
+      return;
+    }
+    const key = `${countryCode}|${startYmd}|${endYmd}`;
+    if (publicHolidayFetchKeyRef.current === key) return;
+    publicHolidayFetchKeyRef.current = key;
+    let cancelled = false;
+    (async () => {
+      const { data } = await getPublicHolidaysForRange(countryCode, startYmd, endYmd);
+      if (cancelled) return;
+      const dates = (data?.holidays || [])
+        .map((h) => String(h?.date || '').slice(0, 10))
+        .filter((d) => DATE_RE.test(d));
+      setPublicHolidayDates(dates);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [followGlobalHolidays, defaultYearStartDate, defaultYearEndDate, countryCode]);
 
   useEffect(() => {
     if (!familyId || !selectedSchoolYearLabel || readOnly || isSchoolYearLocked || embeddedInModal) return;
@@ -1120,6 +1213,12 @@ export default function PlannerSettingsContent({
   const subjectTargetsExternalReloadTimerRef = useRef(null);
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return;
+    // While embedded in the School Year Settings modal, this component owns the
+    // in-progress edit state and reloads from initialData on open/save. Reacting
+    // to refresh events here re-runs loadDefaults/reloadSubjectTargetsFromDb,
+    // which clobbers what the user is typing (wiping the days field and snapping
+    // the days/hours toggle back to "days"). Skip it for the modal.
+    if (embeddedInModal) return;
     const scheduleReload = () => {
       if (subjectTargetsExternalReloadTimerRef.current) {
         clearTimeout(subjectTargetsExternalReloadTimerRef.current);
@@ -1142,7 +1241,7 @@ export default function PlannerSettingsContent({
         clearTimeout(subjectTargetsExternalReloadTimerRef.current);
       }
     };
-  }, [familyId, reloadSubjectTargetsFromDb, loadDefaults, initialData]);
+  }, [familyId, reloadSubjectTargetsFromDb, loadDefaults, initialData, embeddedInModal]);
 
   useEffect(() => {
     if (initialData) return; // Use preloaded data from FamilyPanel, skip fetch
@@ -1510,13 +1609,21 @@ export default function PlannerSettingsContent({
     queuePersist(300);
   };
   const handleTargetDaysChange = (v) => {
-    stateRef.current = { ...(stateRef.current || {}), targetDays: v };
-    setTargetDays(v);
+    // Keep digits only so the field accepts typing cleanly (and can be cleared).
+    const clean = String(v ?? '').replace(/[^0-9]/g, '');
+    stateRef.current = { ...(stateRef.current || {}), targetDays: clean };
+    setTargetDays(clean);
     queuePersist(400);
   };
   const handleTargetHoursChange = (v) => {
-    stateRef.current = { ...(stateRef.current || {}), targetHours: v };
-    setTargetHours(v);
+    // Allow digits and a single decimal point for hours.
+    let clean = String(v ?? '').replace(/[^0-9.]/g, '');
+    const firstDot = clean.indexOf('.');
+    if (firstDot !== -1) {
+      clean = clean.slice(0, firstDot + 1) + clean.slice(firstDot + 1).replace(/\./g, '');
+    }
+    stateRef.current = { ...(stateRef.current || {}), targetHours: clean };
+    setTargetHours(clean);
     queuePersist(400);
   };
   const persistLearningTimes = useCallback((startDisplayInput, endDisplayInput) => {
@@ -2472,7 +2579,13 @@ export default function PlannerSettingsContent({
             No days off yet. Add holidays, breaks, or other non-learning days for this school year.
           </Text>
         ) : (
-          <View style={{ gap: 8 }}>
+          <ScrollView
+            style={useTwoColumnModalLayout ? { maxHeight: 240 } : undefined}
+            contentContainerStyle={{ gap: 8 }}
+            showsVerticalScrollIndicator
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+          >
             {dayOffRows.map((row) => (
               <TouchableOpacity
                 key={row.id}
@@ -2520,7 +2633,7 @@ export default function PlannerSettingsContent({
                 {!readOnly ? <ChevronRight size={16} color="#9CA3AF" /> : null}
               </TouchableOpacity>
             ))}
-          </View>
+          </ScrollView>
         )}
       </View>
     </View>
@@ -2585,6 +2698,14 @@ export default function PlannerSettingsContent({
                 </TouchableOpacity>
               </View>
           </View>
+          {goalMode === 'days' && availableLearningDaysInfo ? (
+            <Text style={[modalMutedMetaStyle, { marginTop: 8 }]}>
+              {`This year has ${availableLearningDaysInfo.total} learning ${availableLearningDaysInfo.total === 1 ? 'day' : 'days'} available`}
+              {availableLearningDaysInfo.daysOff > 0
+                ? ` (after removing ${availableLearningDaysInfo.daysOff} ${availableLearningDaysInfo.daysOff === 1 ? 'day' : 'days'} off).`
+                : ' (weekends and days off removed).'}
+            </Text>
+          ) : null}
         </View>
       ) : visibleSubjects.length === 0 ? (
         <Text style={modalMutedMetaStyle}>
@@ -2947,7 +3068,20 @@ export default function PlannerSettingsContent({
   );
 
   if (useTwoColumnModalLayout && embeddedInModal) {
-    return settingsInner;
+    // Scroll within the modal frame so tall content (e.g. lots of holidays)
+    // stays reachable instead of overflowing past the fixed shell height.
+    return (
+      <ScrollView
+        scrollEnabled
+        style={{ flex: 1, minHeight: 0 }}
+        contentContainerStyle={{ paddingBottom: 8 }}
+        showsVerticalScrollIndicator
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+      >
+        {settingsInner}
+      </ScrollView>
+    );
   }
 
   return (

@@ -635,6 +635,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const familyUserControls = useOptionalFamilyUserControls();
   const allowedRef = useRef(familyUserControls.allowed);
   allowedRef.current = familyUserControls.allowed;
+
+  // Mirror the subject lists so window-event listeners (empty deps) can resolve a
+  // full subject object by id (e.g. opening the schedule editor from a planner event).
+  const subjectsRef = useRef([]);
+  subjectsRef.current = (Array.isArray(fullSubjects) && fullSubjects.length > 0) ? fullSubjects : subjects;
   const isSelfManagedStudent = familyUserControls?.isSelfManagedStudent === true;
   const showPlannerHeaderQuickActions =
     session?.role_flags?.isChild !== true || isSelfManagedStudent;
@@ -1167,8 +1172,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const urlParams = new URLSearchParams(window.location.search);
       const urlView = urlParams.get('view');
       if (urlView) return sanitizeLegacyPlanYearView(urlView);
-      const savedDefault = getDefaultView();
-      if (savedDefault) return savedDefault;
+      // Always default to Week on load; ignore any previously remembered view.
       return PLANNER_DEFAULT_CALENDAR_VIEW;
     }
     return PLANNER_DEFAULT_CALENDAR_VIEW;
@@ -1630,16 +1634,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const updateView = () => {
         const urlParams = new URLSearchParams(window.location.search);
         const urlView = urlParams.get('view');
-        // If URL has a view param, use it; otherwise check localStorage default
+        // If URL has a view param (deep link), use it; otherwise default to Week.
         if (urlView) {
           setCurrentView(sanitizeLegacyPlanYearView(urlView));
         } else {
-          const savedDefault = getDefaultView();
-          if (savedDefault) {
-            setCurrentView(savedDefault);
-          } else {
-            setCurrentView(PLANNER_DEFAULT_CALENDAR_VIEW);
-          }
+          setCurrentView(PLANNER_DEFAULT_CALENDAR_VIEW);
         }
       };
       
@@ -1675,15 +1674,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, []);
 
-  // Once the logged-in user resolves, apply their per-user remembered view.
-  // First-login users have no saved preference, so this leaves them on Week.
+  // Once the logged-in user resolves, default the planner to Week on login.
   // We never override an explicit ?view= deep link or manual selection.
   useEffect(() => {
     if (!authUserId || Platform.OS !== 'web' || typeof window === 'undefined') return;
     const urlView = new URLSearchParams(window.location.search).get('view');
     if (urlView) return;
-    const savedDefault = getDefaultView();
-    setCurrentView(savedDefault || PLANNER_DEFAULT_CALENDAR_VIEW);
+    setCurrentView(PLANNER_DEFAULT_CALENDAR_VIEW);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUserId]);
 
@@ -2480,8 +2477,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         Alert.alert('Not available', 'Your family admin has disabled adding or editing subjects.');
         return;
       }
-      // If event has detail (subject object), it's edit mode
-      const subject = e.detail?.subject || null;
+      // If event has detail (subject object), it's edit mode. Callers may also pass
+      // just a subjectId (e.g. the planner right-click menu), which we resolve to the
+      // full subject record so the settings/schedule editor has complete data.
+      let subject = e.detail?.subject || null;
+      if (!subject && e.detail?.subjectId) {
+        const wantedId = String(e.detail.subjectId);
+        subject = (subjectsRef.current || []).find((s) => String(s?.id) === wantedId) || null;
+      }
       const incomingSchoolYear = e.detail?.schoolYear || null;
       const incomingSchoolTerm = e.detail?.schoolTerm || null;
       const incomingChildIds = Array.isArray(e.detail?.childIds) ? e.detail.childIds.filter(Boolean) : [];
@@ -4308,6 +4311,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           key={view.key}
                           onLayout={(e) => {
                             const { x, width } = e.nativeEvent.layout;
+                            // Ignore measurements taken while the bar is hidden (width 0),
+                            // otherwise the active-tab pill never positions on first visit.
+                            if (!width) return;
                             viewChipLayouts.current[view.key] = { x, width };
                             if (currentView === view.key) {
                               setViewChipSlider({ left: x, width });
@@ -4328,12 +4334,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                               window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: viewValue }));
                             }
                           }}
-                          style={{
-                            paddingVertical: 8,
-                            paddingHorizontal: 14,
-                            borderRadius: 9999,
-                            zIndex: 10,
-                          }}
+                          style={[
+                            {
+                              paddingVertical: 8,
+                              paddingHorizontal: 14,
+                              borderRadius: 9999,
+                              zIndex: 10,
+                            },
+                            // Fallback active pill until the sliding highlight is measured
+                            // (guarantees the active tab shows on first planner visit).
+                            isActive && viewChipSlider.width === 0 && {
+                              backgroundColor: 'rgba(139, 92, 246, 0.15)',
+                              borderWidth: 1,
+                              borderColor: 'rgba(139, 92, 246, 0.5)',
+                            },
+                          ]}
                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                         >
                           <Text style={{

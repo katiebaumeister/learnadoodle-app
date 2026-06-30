@@ -6267,6 +6267,21 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               });
             },
           });
+          const learningDaySubjectId = resolveEventSubjectId(ev);
+          if (learningDaySubjectId) {
+            menuItems.push({
+              text: 'Add/Edit subject schedule',
+              iconKey: 'calendar',
+              action: () => {
+                if (typeof window === 'undefined') return;
+                window.dispatchEvent(
+                  new CustomEvent('openAddSubjectModal', {
+                    detail: { subjectId: learningDaySubjectId, initialTab: 'schedule' },
+                  })
+                );
+              },
+            });
+          }
         } else if (isSeriesGroup) {
           menuItems.push({
             text: 'Edit This Event',

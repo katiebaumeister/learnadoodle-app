@@ -1,10 +1,6 @@
 import React from 'react';
 import EventAttachmentsField from '../../create/shared/EventAttachmentsField';
 import { SectionHeading } from '../../create/shared/assignmentFormParts';
-import {
-  materialEligibleForSyllabusPicker,
-  materialEligibleForLessonPicker,
-} from '../../../lib/services/subjectMaterialLinks';
 
 export default function SubjectAttachmentsFields({
   familyId,
@@ -13,30 +9,27 @@ export default function SubjectAttachmentsFields({
   onSyllabusChange,
   onLessonPlanChange,
   onAddSyllabus,
-  onAddLessonPlan,
 }) {
   if (!familyId) return null;
+
+  // Combined into one picker: "Syllabus or lesson plan". We hold the selection in
+  // the syllabus slot and clear the lesson slot; the link layer re-categorizes by
+  // the material's own type when reloading, so either kind round-trips correctly.
+  const selectedMaterialId = syllabusMaterialId || lessonPlanMaterialId || null;
 
   return (
     <>
       <SectionHeading>Attachments</SectionHeading>
       <EventAttachmentsField
         familyId={familyId}
-        selectedMaterialId={syllabusMaterialId}
-        onMaterialChange={onSyllabusChange}
+        selectedMaterialId={selectedMaterialId}
+        onMaterialChange={(materialId) => {
+          onSyllabusChange?.(materialId || null);
+          onLessonPlanChange?.(null);
+        }}
         onAddNew={onAddSyllabus}
-        label="Syllabus"
-        placeholder="Select syllabus…"
-        materialFilter={materialEligibleForSyllabusPicker}
-      />
-      <EventAttachmentsField
-        familyId={familyId}
-        selectedMaterialId={lessonPlanMaterialId}
-        onMaterialChange={onLessonPlanChange}
-        onAddNew={onAddLessonPlan}
-        label="Lesson plan"
-        placeholder="Select lesson plan…"
-        materialFilter={materialEligibleForLessonPicker}
+        label="Syllabus or lesson plan"
+        placeholder="Select syllabus or lesson plan…"
       />
     </>
   );

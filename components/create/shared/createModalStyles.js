@@ -6,7 +6,7 @@ export const CREATE_ASSIGNMENT_MODAL_MAX_WIDTH = 1160;
 export const CREATE_ASSIGNMENT_MODAL_HEIGHT = 820;
 export const SCHOOL_YEAR_SETTINGS_MODAL_MAX_WIDTH = 900;
 export const SCHOOL_YEAR_SETTINGS_MODAL_HEIGHT = 800;
-export const SUBJECT_SETTINGS_MODAL_MAX_WIDTH = 1000;
+export const SUBJECT_SETTINGS_MODAL_MAX_WIDTH = 1110;
 export const SUBJECT_SETTINGS_MODAL_MAX_HEIGHT = 820;
 export const FG = '#111827';
 export const MUTED = '#6b7280';
@@ -317,9 +317,6 @@ export const createModalStyles = StyleSheet.create({
     paddingVertical: 48,
   },
   schoolYearSettingsModalBody: {
-    flexGrow: 0,
-    flexShrink: 0,
-    overflow: 'visible',
     paddingHorizontal: 24,
     paddingTop: 4,
     paddingBottom: 8,
@@ -327,8 +324,9 @@ export const createModalStyles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
-      flex: 'none',
-      minHeight: 'auto',
+      flex: 1,
+      minHeight: 0,
+      overflow: 'hidden',
     }),
   },
   subjectSettingsModalShell: {
@@ -388,8 +386,8 @@ export const createModalStyles = StyleSheet.create({
   subjectSettingsFormColumnSide: {
     flexGrow: 0,
     flexShrink: 0,
-    flexBasis: 260,
-    width: 260,
+    flexBasis: 400,
+    width: 400,
     maxWidth: '100%',
     alignSelf: 'stretch',
     ...(Platform.OS === 'web' && {
@@ -432,8 +430,8 @@ export const createModalStyles = StyleSheet.create({
   subjectSettingsFormColumnMain: {
     flex: 1,
     flexGrow: 1,
-    flexBasis: 320,
-    minWidth: 280,
+    flexBasis: 300,
+    minWidth: 220,
     maxWidth: '100%',
     alignSelf: 'stretch',
     overflow: 'visible',

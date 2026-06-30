@@ -1,6 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { View, Text, TouchableOpacity, Modal, Platform, StyleSheet } from 'react-native';
 import { Check, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useModalStackElevation } from '../hooks/useModalStackElevation';
+
+// Sit above the highest app modal layer (nested-over-parent = 10100) so the
+// calendar is always clickable in front of whatever opened it (e.g. Add Subject).
+const DATE_PICKER_STACK_Z = 10200;
 
 /** Match TaskCreateModal mini calendar (light purple selected day, month/year nav). */
 const FG = '#111827';
@@ -135,6 +140,9 @@ export function AppCalendarDatePickerModal({
     onClose();
   };
 
+  const overlayRef = useRef(null);
+  useModalStackElevation(overlayRef, visible, DATE_PICKER_STACK_Z);
+
   const titleFont = Platform.OS === 'web'
     ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
     : {};
@@ -150,6 +158,7 @@ export function AppCalendarDatePickerModal({
   return (
     <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
       <TouchableOpacity
+        ref={overlayRef}
         style={{
           flex: 1,
           backgroundColor: 'rgba(0, 0, 0, 0.3)',

@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { useToast } from '../Toast';
 import { supabase } from '../../lib/supabase';
@@ -62,6 +63,7 @@ const TERM_OPTIONS = [
   { id: 'full_year', label: 'Full year' },
   { id: 'fall_term', label: 'Fall term' },
   { id: 'spring_term', label: 'Spring term' },
+  { id: 'summer_term', label: 'Summer term' },
 ];
 
 const formatSchoolYearLabel = (startYear) => `${startYear}/${String(startYear + 1).slice(-2)}`;
@@ -134,6 +136,7 @@ export default function EditSubjectSettingsModal({
   const scheduleTouchedRef = useRef(false);
   const datesCustomizedRef = useRef(false);
   const [detailsReady, setDetailsReady] = useState(false);
+  const [scheduleReady, setScheduleReady] = useState(false);
   const [resolvedPlanData, setResolvedPlanData] = useState(null);
   const [resolvedAcademicYearId, setResolvedAcademicYearId] = useState(null);
   const [loadingPlanData, setLoadingPlanData] = useState(false);
@@ -194,6 +197,7 @@ export default function EditSubjectSettingsModal({
     scheduleTouchedRef.current = false;
     datesCustomizedRef.current = false;
     setDetailsReady(false);
+    setScheduleReady(false);
     if (!visible) {
       setResolvedPlanData(null);
       setResolvedAcademicYearId(null);
@@ -380,9 +384,20 @@ export default function EditSubjectSettingsModal({
   }, [visible, subject, initialGradingSettings, familyId]);
 
   useEffect(() => {
-    if (!visible || !subject || !detailsReady || loadingPlanData) return;
-    if (scheduleTouchedRef.current) return;
-    if (scheduleHydratedKeyRef.current === schedulePlanKey) return;
+    if (!visible || !subject || !detailsReady) return;
+    // Hydrate as soon as we have plan data (e.g. from the in-memory cache) instead
+    // of waiting for the slow academic-year revalidation fetch — that wait is what
+    // made the schedule fields appear blank for a moment, then "pop" into place.
+    // Only block when there is genuinely nothing to hydrate from yet.
+    if (loadingPlanData && !effectivePlanData) return;
+    if (scheduleTouchedRef.current) {
+      if (!scheduleReady) setScheduleReady(true);
+      return;
+    }
+    if (scheduleHydratedKeyRef.current === schedulePlanKey) {
+      if (!scheduleReady) setScheduleReady(true);
+      return;
+    }
     let cancelled = false;
 
     const hydrateSchedule = async () => {
@@ -401,6 +416,7 @@ export default function EditSubjectSettingsModal({
         plannerSettings,
       );
       scheduleHydratedKeyRef.current = schedulePlanKey;
+      setScheduleReady(true);
     };
 
     hydrateSchedule();
@@ -418,6 +434,7 @@ export default function EditSubjectSettingsModal({
     plannerSettings,
     applyScheduleFormState,
     familyId,
+    scheduleReady,
   ]);
 
   useEffect(() => {
@@ -725,8 +742,8 @@ export default function EditSubjectSettingsModal({
                 <View style={styles.subjectSettingsFormColumnMain}>
                   <ScrollView
                     ref={formScrollRef}
-                    style={styles.subjectSettingsMainColumnScroll}
-                    contentContainerStyle={styles.subjectSettingsMainColumnScrollInner}
+                    style={[styles.subjectSettingsMainColumnScroll, { flexGrow: 1 }]}
+                    contentContainerStyle={[styles.subjectSettingsMainColumnScrollInner, { flexGrow: 1 }]}
                     showsVerticalScrollIndicator
                     keyboardShouldPersistTaps="handled"
                     nestedScrollEnabled
@@ -841,7 +858,7 @@ export default function EditSubjectSettingsModal({
                   </View>
 
                   {familyId ? (
-                    <View style={[styles.assignmentAttachPanel, styles.subjectSettingsStackedPanel]}>
+                    <View style={[styles.assignmentAttachPanel, styles.subjectSettingsStackedPanel, { flexGrow: 1, marginBottom: 0 }]}>
                       <SubjectAttachmentsFields
                         familyId={familyId}
                         syllabusMaterialId={syllabusMaterialId}
@@ -870,27 +887,37 @@ export default function EditSubjectSettingsModal({
                     }}
                   >
                     <SectionHeading>Schedule</SectionHeading>
-                    <SubjectScheduleFields
-                      embeddedInForm
-                      schoolYear={schoolYear}
-                      schoolYearOptions={schoolYearOptions}
-                      onSchoolYearChange={handleSchoolYearChangeWithTouch}
-                      schoolTerm={schoolTerm}
-                      termOptions={TERM_OPTIONS}
-                      onSchoolTermChange={handleSchoolTermChangeWithTouch}
-                      weekdays={weekdays}
-                      onWeekdaysChange={handleWeekdaysChange}
-                      startTime={startTime}
-                      onStartTimeChange={handleStartTimeChange}
-                      durationMinutes={durationMinutes}
-                      onDurationMinutesChange={handleDurationMinutesChange}
-                      startDate={startDate}
-                      onStartDateChange={handleStartDateChange}
-                      endDate={endDate}
-                      onEndDateChange={handleEndDateChange}
-                      onOpenStartDatePicker={() => setDatePickerTarget('start')}
-                      onOpenEndDatePicker={() => setDatePickerTarget('end')}
-                    />
+                    <Text style={localStyles.scheduleOptionalNote}>
+                      Optional: Set a structured repeating class schedule.
+                    </Text>
+                    {scheduleReady ? (
+                      <SubjectScheduleFields
+                        embeddedInForm
+                        datesRequired={false}
+                        schoolYear={schoolYear}
+                        schoolYearOptions={schoolYearOptions}
+                        onSchoolYearChange={handleSchoolYearChangeWithTouch}
+                        schoolTerm={schoolTerm}
+                        termOptions={TERM_OPTIONS}
+                        onSchoolTermChange={handleSchoolTermChangeWithTouch}
+                        weekdays={weekdays}
+                        onWeekdaysChange={handleWeekdaysChange}
+                        startTime={startTime}
+                        onStartTimeChange={handleStartTimeChange}
+                        durationMinutes={durationMinutes}
+                        onDurationMinutesChange={handleDurationMinutesChange}
+                        startDate={startDate}
+                        onStartDateChange={handleStartDateChange}
+                        endDate={endDate}
+                        onEndDateChange={handleEndDateChange}
+                        onOpenStartDatePicker={() => setDatePickerTarget('start')}
+                        onOpenEndDatePicker={() => setDatePickerTarget('end')}
+                      />
+                    ) : (
+                      <View style={localStyles.scheduleLoading}>
+                        <ActivityIndicator size="small" color="#8B5CF6" />
+                      </View>
+                    )}
                   </View>
                 </View>
               </View>
@@ -972,5 +999,20 @@ const localStyles = StyleSheet.create({
     fontSize: 14,
     color: '#6b7280',
     fontStyle: 'italic',
+  },
+  scheduleLoading: {
+    paddingVertical: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scheduleOptionalNote: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#6b7280',
+    marginTop: -4,
+    marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });
