@@ -51,7 +51,7 @@ export default function SubjectWelcomeBulletinBody({ subjectName, textStyle = nu
             </View>
             <View style={styles.copy}>
               <Text style={[bodyStyle, styles.itemTitle]}>{title}</Text>
-              <Text style={styles.itemDescription}>{description}</Text>
+              <Text style={[bodyStyle, styles.itemDescription]}>{description}</Text>
             </View>
           </View>
         ))}
@@ -111,8 +111,6 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   itemTitle: {
-    fontSize: 14,
-    lineHeight: 20,
     fontWeight: '600',
     color: '#374151',
     ...(Platform.OS === 'web' && {
@@ -120,8 +118,6 @@ const styles = StyleSheet.create({
     }),
   },
   itemDescription: {
-    fontSize: 14,
-    lineHeight: 21,
     fontWeight: '400',
     color: '#475569',
     ...(Platform.OS === 'web' && {
