@@ -40,9 +40,9 @@ export default function SubjectWelcomeBulletinBody({ subjectName, textStyle = nu
   return (
     <View style={styles.wrap}>
       <Text style={bodyStyle}>
-        {`This is the Bulletin Board for ${name}.`}
+        {`Welcome to ${name}! This is the Bulletin Board for ${name}.`}
       </Text>
-      <Text style={[bodyStyle, styles.sectionHeading]}>Use it to:</Text>
+      <Text style={[bodyStyle, styles.sectionHeading]}>This is where you can:</Text>
       <View style={styles.list}>
         {USE_CASES.map(({ Icon, iconColor, iconBg, title, description }) => (
           <View key={title} style={styles.row}>
@@ -51,14 +51,14 @@ export default function SubjectWelcomeBulletinBody({ subjectName, textStyle = nu
             </View>
             <View style={styles.copy}>
               <Text style={[bodyStyle, styles.itemTitle]}>{title}</Text>
-              <Text style={[bodyStyle, styles.itemDescription]}>{description}</Text>
+              <Text style={styles.itemDescription}>{description}</Text>
             </View>
           </View>
         ))}
       </View>
       <View style={styles.tipRow}>
         <View style={styles.tipIconWrap}>
-          <Lightbulb size={16} color="#8B5CF6" strokeWidth={2.25} />
+          <Lightbulb size={14} color="#334155" strokeWidth={2.25} />
         </View>
         <Text style={[bodyStyle, styles.tipText]}>
           <Text style={styles.tipLabel}>Tip: </Text>
@@ -71,24 +71,25 @@ export default function SubjectWelcomeBulletinBody({ subjectName, textStyle = nu
 
 const styles = StyleSheet.create({
   wrap: {
-    gap: 12,
-    marginTop: 4,
+    marginTop: 0,
   },
   bodyText: {
     fontSize: 14,
     lineHeight: 20,
     fontWeight: '400',
-    color: '#475569',
+    color: '#334155',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   sectionHeading: {
-    fontWeight: '600',
-    color: '#374151',
+    fontWeight: '500',
+    color: '#334155',
+    marginTop: 7,
   },
   list: {
-    gap: 14,
+    gap: 22,
+    marginTop: 6,
   },
   row: {
     flexDirection: 'row',
@@ -110,36 +111,45 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   itemTitle: {
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '600',
     color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   itemDescription: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: '#64748B',
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: '400',
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   tipRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginTop: 8,
+    marginTop: 12,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
   },
   tipIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(139, 92, 246, 0.1)',
     flexShrink: 0,
   },
   tipText: {
     flex: 1,
     minWidth: 0,
-    color: '#64748B',
   },
   tipLabel: {
-    fontWeight: '700',
-    color: '#475569',
+    fontWeight: '600',
   },
 });

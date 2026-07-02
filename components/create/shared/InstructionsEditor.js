@@ -365,6 +365,23 @@ function WebInstructionsEditor({
       const style = document.createElement('style');
       style.id = styleId;
       style.textContent = `
+        .instructions-wysiwyg-editor {
+          margin: 0;
+        }
+        .instructions-wysiwyg-editor p,
+        .instructions-wysiwyg-editor div,
+        .instructions-wysiwyg-editor ul,
+        .instructions-wysiwyg-editor ol {
+          margin: 0;
+          padding: 0;
+        }
+        .instructions-wysiwyg-editor ul,
+        .instructions-wysiwyg-editor ol {
+          padding-left: 1.25em;
+        }
+        .instructions-wysiwyg-editor li {
+          margin: 0;
+        }
         .instructions-wysiwyg-editor[data-placeholder]:empty:before {
           content: attr(data-placeholder);
           color: ${PLACEHOLDER};

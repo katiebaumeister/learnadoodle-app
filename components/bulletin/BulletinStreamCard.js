@@ -13,9 +13,16 @@ import {
 import {
   ArrowUpRight,
 } from 'lucide-react';
-import { buildStreamPreviewDisplay } from '../../lib/bulletinStreamModel';
+import {
+  buildStreamPreviewDisplay,
+  formatRelativeStreamMeta,
+  isRelativeStreamTime,
+  streamCardSecondaryMeta,
+} from '../../lib/bulletinStreamModel';
 import { resolveStreamCardIcon } from './bulletinStreamIcons';
 import BulletinLearnadoodleBody from './BulletinLearnadoodleBody';
+import BulletinPostAttachmentList from './BulletinPostAttachmentList';
+import FormattedInstructionText from '../create/shared/FormattedInstructionText';
 import { ACCENT_TEXT } from '../create/shared/createModalStyles';
 
 export default function BulletinStreamCard({
@@ -26,6 +33,7 @@ export default function BulletinStreamCard({
   onSubjectPress = null,
   headerRight = null,
   contextMenuHandlers = null,
+  cardStyle = null,
 }) {
   const { Icon, color: iconColor, backgroundColor: iconBg } = resolveStreamCardIcon(entry.cardType);
   const clickable = Boolean(onPress && (preview || entry.clickable));
@@ -40,6 +48,30 @@ export default function BulletinStreamCard({
       <Text style={styles.subjectPillText}>{entry.subjectName}</Text>
     </View>
   );
+
+  const relativeWhen = formatRelativeStreamMeta(entry?.createdAt);
+  const secondaryMeta = streamCardSecondaryMeta(entry);
+
+  const labelWithTime = (label, when, { numberOfLines = undefined } = {}) => {
+    if (!label) return null;
+    return (
+      <View style={styles.labelMetaRow}>
+        <Text style={styles.typeLabel} numberOfLines={numberOfLines}>
+          {label}
+        </Text>
+        {when ? (
+          <>
+            <Text style={styles.labelMetaDot} accessibilityElementsHidden importantForAccessibility="no">
+              ·
+            </Text>
+            <Text style={styles.labelWhen} numberOfLines={numberOfLines}>
+              {when}
+            </Text>
+          </>
+        ) : null}
+      </View>
+    );
+  };
 
   const subjectChip = showSubjectChip ? (
     subjectChipClickable ? (
@@ -72,9 +104,11 @@ export default function BulletinStreamCard({
         </View>
         <View style={styles.previewCopy}>
           {lines.label ? (
-            <Text style={styles.previewLabel} numberOfLines={1}>
-              {lines.label}
-            </Text>
+            labelWithTime(
+              lines.label,
+              lines.meta && isRelativeStreamTime(lines.meta) ? lines.meta : relativeWhen,
+              { numberOfLines: 1 },
+            )
           ) : null}
           {lines.title ? (
             <Text style={styles.previewTitle} numberOfLines={2}>
@@ -86,11 +120,12 @@ export default function BulletinStreamCard({
               {lines.subtitle}
             </Text>
           ) : null}
-          {lines.meta ? (
+          {lines.meta && (!lines.label || !isRelativeStreamTime(lines.meta)) ? (
             <Text style={styles.previewMeta} numberOfLines={1}>
               {lines.meta}
             </Text>
           ) : null}
+          <BulletinPostAttachmentList materials={entry.payload?.materials} />
         </View>
       </View>
     );
@@ -123,12 +158,12 @@ export default function BulletinStreamCard({
 
   const cardBody = (
     <>
-      {entry.title ? (
-        <Text style={styles.title} numberOfLines={entry.showFormattedBody ? undefined : 2}>
+      {entry.title && entry.showFormattedBody ? (
+        <Text style={styles.title} numberOfLines={undefined}>
           {entry.title}
         </Text>
       ) : null}
-      {entry.meta ? <Text style={styles.meta}>{entry.meta}</Text> : null}
+      {secondaryMeta ? <Text style={styles.meta}>{secondaryMeta}</Text> : null}
       {entry.showFormattedBody && entry.fullBody ? (
         <BulletinLearnadoodleBody
           body={entry.fullBody}
@@ -137,11 +172,14 @@ export default function BulletinStreamCard({
           textStyle={styles.cardBodyText}
         />
       ) : null}
-      {!entry.showFormattedBody && entry.excerpt ? (
-        <Text style={styles.excerpt} numberOfLines={3}>
-          {entry.excerpt.startsWith('"') ? entry.excerpt : `"${entry.excerpt}"`}
-        </Text>
+      {!entry.showFormattedBody && (entry.fullBody || entry.payload?.body) ? (
+        <FormattedInstructionText
+          text={entry.fullBody || entry.payload?.body}
+          style={styles.cardBodyText}
+          wrapStyle={styles.announcementBodyWrap}
+        />
       ) : null}
+      <BulletinPostAttachmentList materials={entry.payload?.materials} />
       {clickable && entry.actionHint ? (
         <Text style={styles.actionHint}>{entry.actionHint}</Text>
       ) : null}
@@ -150,7 +188,7 @@ export default function BulletinStreamCard({
 
   return (
     <View style={styles.wrap} {...(contextMenuHandlers || {})}>
-      <View style={[styles.card, clickable && styles.cardClickable]}>
+      <View style={[styles.card, clickable && styles.cardClickable, cardStyle]}>
         {headerRight ? (
           <View style={styles.cardHeaderMenu}>{headerRight}</View>
         ) : null}
@@ -160,7 +198,7 @@ export default function BulletinStreamCard({
           </View>
           <View style={[styles.cardMain, headerRight ? styles.cardMainWithMenu : null]}>
             <View style={styles.labelRow}>
-              <Text style={styles.typeLabel}>{entry.label}</Text>
+              {labelWithTime(entry.label, relativeWhen)}
               {subjectChip ? (
                 <View style={styles.labelRowTrailing}>{subjectChip}</View>
               ) : null}
@@ -235,16 +273,6 @@ const styles = StyleSheet.create({
     minWidth: 0,
     gap: 3,
   },
-  previewLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-    textTransform: 'uppercase',
-    letterSpacing: 0.35,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
   previewTitle: {
     fontSize: 16,
     fontWeight: '600',
@@ -283,7 +311,8 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
-    paddingVertical: 11,
+    paddingTop: 18,
+    paddingBottom: 11,
     ...(Platform.OS === 'web' && {
       boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
       transition: 'border-color 0.12s ease, box-shadow 0.12s ease',
@@ -291,7 +320,7 @@ const styles = StyleSheet.create({
   },
   cardHeaderMenu: {
     position: 'absolute',
-    top: 7,
+    top: 11,
     right: 10,
     zIndex: 2,
   },
@@ -321,7 +350,7 @@ const styles = StyleSheet.create({
   cardMain: {
     flex: 1,
     minWidth: 0,
-    gap: 3,
+    gap: 8,
   },
   cardPressArea: {
     alignSelf: 'stretch',
@@ -332,9 +361,16 @@ const styles = StyleSheet.create({
   },
   labelRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
+  },
+  labelMetaRow: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    flexWrap: 'wrap',
   },
   labelRowTrailing: {
     flexDirection: 'row',
@@ -345,15 +381,34 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   typeLabel: {
-    flex: 1,
-    minWidth: 0,
     fontSize: 12,
-    fontWeight: '700',
-    color: '#64748B',
+    lineHeight: 16,
+    fontWeight: '600',
+    color: ACCENT_TEXT,
     textTransform: 'uppercase',
-    letterSpacing: 0.35,
+    letterSpacing: 0.2,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  labelMetaDot: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '400',
+    color: '#CBD5E1',
+    marginLeft: 4,
+    marginRight: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  labelWhen: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '400',
+    color: '#94A3B8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   title: {
@@ -377,7 +432,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     color: '#475569',
-    fontStyle: 'italic',
     marginTop: 2,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -387,10 +441,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     fontWeight: '400',
-    color: '#475569',
+    color: '#334155',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  announcementBodyWrap: {
+    marginTop: 0,
   },
   subjectPill: {
     flexDirection: 'row',

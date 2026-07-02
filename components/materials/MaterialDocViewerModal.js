@@ -147,7 +147,7 @@ function WebMediaMount({ viewerKind, url, title }) {
         img.alt = title || 'Preview';
         Object.assign(img.style, {
           maxWidth: '100%',
-          maxHeight: 'calc(85vh - 120px)',
+          maxHeight: 'calc(92vh - 120px)',
           objectFit: 'contain',
           display: 'block',
           margin: '0 auto',
@@ -161,7 +161,7 @@ function WebMediaMount({ viewerKind, url, title }) {
         v.src = url;
         v.controls = true;
         v.setAttribute('playsinline', '');
-        Object.assign(v.style, { width: '100%', maxHeight: 'calc(85vh - 120px)', backgroundColor: '#000' });
+        Object.assign(v.style, { width: '100%', maxHeight: 'calc(92vh - 120px)', backgroundColor: '#000' });
         if (typeof native.appendChild === 'function') native.appendChild(v);
         return;
       }
@@ -189,7 +189,7 @@ function WebMediaMount({ viewerKind, url, title }) {
         Object.assign(iframe.style, {
           width: '100%',
           height: '100%',
-          minHeight: 'min(480px, 70vh)',
+          minHeight: 'min(680px, calc(92vh - 80px))',
           border: 'none',
           flex: '1',
         });
@@ -361,7 +361,8 @@ const styles = StyleSheet.create({
   webMediaHost: {
     flex: 1,
     width: '100%',
-    minHeight: 400,
+    minHeight: 0,
+    height: '100%',
     alignSelf: 'stretch',
   },
   viewerHint: {
@@ -426,9 +427,10 @@ const styles = StyleSheet.create({
   pdfModalContainer: {
     backgroundColor: '#ffffff',
     borderRadius: 16,
-    width: Platform.OS === 'web' ? '90%' : '100%',
+    width: Platform.OS === 'web' ? '92%' : '100%',
     maxWidth: 1200,
-    maxHeight: '85%',
+    height: Platform.OS === 'web' ? '92vh' : undefined,
+    maxHeight: Platform.OS === 'web' ? '92vh' : '100%',
     overflow: 'hidden',
     position: 'relative',
     zIndex: 1,
@@ -437,6 +439,7 @@ const styles = StyleSheet.create({
         boxShadow: '0 20px 60px rgba(0, 0, 0, 0.15)',
         display: 'flex',
         flexDirection: 'column',
+        flex: 1,
       },
       ios: {
         shadowColor: '#000',
@@ -504,14 +507,17 @@ const styles = StyleSheet.create({
   },
   pdfViewerContainer: {
     flex: 1,
-    height: Platform.OS === 'web' ? 'calc(85vh - 80px)' : 480,
-    minHeight: 400,
+    minHeight: 0,
     backgroundColor: '#f9fafb',
     ...Platform.select({
       web: {
-        maxHeight: 'calc(85vh - 80px)',
         display: 'flex',
         flexDirection: 'column',
+        height: '100%',
+      },
+      default: {
+        height: 560,
+        minHeight: 480,
       },
     }),
   },

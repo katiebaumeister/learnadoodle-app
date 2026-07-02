@@ -46,6 +46,7 @@ import { getChildColorFromAvatar, hexToRgba } from '../../utils/avatarColors';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import ConfirmDialog from '../ConfirmDialog';
 import CreateModalShell from '../create/shared/CreateModalShell';
+import { ModalFooter } from '../ui/ModalFooter';
 import {
   createModalStyles as modalFieldStyles,
   CREATE_EVENT_MODAL_MAX_WIDTH,
@@ -59,6 +60,10 @@ import BulletinStreamCard from './BulletinStreamCard';
 import BulletinStreamDetailModal from './BulletinStreamDetailModal';
 import { mergeBulletinStreamItems, STREAM_CARD_TYPE } from '../../lib/bulletinStreamModel';
 import { SUBJECT_GETTING_STARTED_SYSTEM_KIND } from '../../lib/subjectGettingStartedBulletin';
+import {
+  formatAttachmentLabel,
+  normalizeBulletinAttachmentMaterial,
+} from '../../lib/bulletinAttachmentLabel';
 import { fetchAssignment, openBulletinActivityItem } from '../../lib/bulletinFeedNavigation';
 import { dispatchOpenEditAssignment } from '../../lib/openAssignmentWorkflow';
 import {
@@ -232,7 +237,7 @@ function BulletinPostCard({
         accessibilityLabel="Post options"
         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
       >
-        <MoreVertical size={16} color="#94A3B8" />
+        <MoreVertical size={18} color="#64748B" />
       </TouchableOpacity>
       <Dropdown
         visible={menuOpen}
@@ -401,7 +406,7 @@ function BulletinPostCard({
               accessibilityLabel="Post options"
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <MoreVertical size={16} color="#94A3B8" />
+              <MoreVertical size={18} color="#64748B" />
             </TouchableOpacity>
             <Dropdown
               visible={menuOpen}
@@ -513,7 +518,7 @@ const StreamPostMenu = forwardRef(function StreamPostMenu({
         accessibilityLabel="Post options"
         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
       >
-        <MoreVertical size={14} color="#94A3B8" />
+        <MoreVertical size={18} color="#64748B" />
       </TouchableOpacity>
       <Dropdown
         visible={menuOpen}
@@ -591,6 +596,7 @@ function SystemBulletinPostCard({
       onPress={onPress}
       onSubjectPress={onSubjectPress}
       contextMenuHandlers={contextMenuHandlers}
+      cardStyle={styles.systemWelcomeCard}
       headerRight={(
         <StreamPostMenu
           ref={menuRef}
@@ -979,11 +985,11 @@ export default function BulletinBoardSection({
     setSelectedChildIds((post.audienceChildIds || []).map(String));
     setPendingMaterials(
       (post.materials || [])
-        .map((entry) => ({
-          id: entry.materialId || entry.material?.id,
-          title: entry.material?.title || 'Attachment',
+        .map((entry) => normalizeBulletinAttachmentMaterial(entry.material || {
+          id: entry.materialId,
+          title: 'Attachment',
         }))
-        .filter((material) => material.id)
+        .filter(Boolean)
     );
     setError(null);
     setComposerOpenState(true);
@@ -1006,7 +1012,10 @@ export default function BulletinBoardSection({
         });
         if (uploadError) throw uploadError;
         if (data?.id) {
-          setPendingMaterials((prev) => [...prev, data]);
+          const normalized = normalizeBulletinAttachmentMaterial(data);
+          if (normalized) {
+            setPendingMaterials((prev) => [...prev, normalized]);
+          }
         }
       } catch (err) {
         setError(err?.message || 'Could not upload file');
@@ -1102,6 +1111,9 @@ export default function BulletinBoardSection({
         persistPostsCache(next, profileMap, currentUserId, familyMembers);
         return next;
       });
+      if (editingPost?.id === pendingDeletePost.id) {
+        resetComposer();
+      }
       setPendingDeletePost(null);
     } catch (err) {
       setError(err?.message || 'Could not delete post');
@@ -1260,14 +1272,10 @@ export default function BulletinBoardSection({
             selectedMaterialIds={pendingMaterials.map((material) => material.id)}
             onAddExistingMaterial={(material) => {
               setPendingMaterials((prev) => {
-                if (prev.some((entry) => String(entry.id) === String(material.id))) return prev;
-                return [
-                  ...prev,
-                  {
-                    id: material.id,
-                    title: material.title || material.name || 'Attachment',
-                  },
-                ];
+                const normalized = normalizeBulletinAttachmentMaterial(material);
+                if (!normalized?.id) return prev;
+                if (prev.some((entry) => String(entry.id) === String(normalized.id))) return prev;
+                return [...prev, normalized];
               });
             }}
             onAddNew={uploading ? null : handleAttachFile}
@@ -1276,17 +1284,21 @@ export default function BulletinBoardSection({
             <View style={styles.pendingAttachments}>
               {pendingMaterials.map((material) => (
                 <View key={material.id} style={styles.pendingAttachmentChip}>
-                  <FileText size={14} color="#6BB3E8" />
+                  <View style={styles.pendingAttachmentIconWrap}>
+                    <FileText size={14} color="#64748B" strokeWidth={2.25} />
+                  </View>
                   <Text style={styles.pendingAttachmentText} numberOfLines={1}>
-                    {material.title}
+                    {formatAttachmentLabel(material)}
                   </Text>
                   <TouchableOpacity
+                    style={styles.pendingAttachmentRemove}
                     onPress={() =>
                       setPendingMaterials((prev) => prev.filter((m) => m.id !== material.id))
                     }
+                    accessibilityLabel={`Remove ${formatAttachmentLabel(material)}`}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <X size={14} color="#94A3B8" />
+                    <X size={14} color="#94A3B8" strokeWidth={2.25} />
                   </TouchableOpacity>
                 </View>
               ))}
@@ -1345,6 +1357,20 @@ export default function BulletinBoardSection({
             saveDisabled={!body.trim()}
             validationBanner={error || null}
             maxWidth={CREATE_EVENT_MODAL_MAX_WIDTH}
+            footer={editingPost ? (
+              <ModalFooter
+                mode="edit"
+                primaryLabel={posting ? 'Saving…' : 'Save'}
+                destructiveLabel="Delete announcement"
+                onCancel={resetComposer}
+                onDelete={() => setPendingDeletePost(editingPost)}
+                onPrimary={handleSavePost}
+                accent="#9ECFFB"
+                disabled={posting || deletingPost}
+                visuallyDisabled={!body.trim()}
+                loading={posting || deletingPost}
+              />
+            ) : null}
           >
             {composerFormFields}
           </CreateModalShell>
@@ -1451,8 +1477,8 @@ export default function BulletinBoardSection({
 
       <ConfirmDialog
         visible={!!pendingDeletePost}
-        title="Delete note?"
-        message="This note and its comments will be removed for your family."
+        title="Delete announcement?"
+        message="This announcement and its comments will be removed for your family."
         confirmLabel={deletingPost ? 'Deleting…' : 'Delete'}
         cancelLabel="Cancel"
         destructive
@@ -1565,17 +1591,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: '#F8FAFC',
+    borderRadius: 999,
+    backgroundColor: '#F1F5F9',
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.18)',
+    borderColor: '#E2E8F0',
+  },
+  pendingAttachmentIconWrap: {
+    width: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   },
   pendingAttachmentText: {
     flex: 1,
-    fontSize: 13,
+    minWidth: 0,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '500',
     color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  pendingAttachmentRemove: {
+    flexShrink: 0,
+    padding: 2,
   },
   errorText: {
     fontSize: 13,
@@ -1705,14 +1748,18 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   postMenuBtn: {
-    width: 28,
-    height: 28,
+    width: 30,
+    height: 30,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
   postMenuBtnActive: {
     backgroundColor: '#F1F5F9',
+  },
+  systemWelcomeCard: {
+    paddingTop: 18,
+    paddingBottom: 14,
   },
   systemMenuMessage: {
     paddingVertical: 12,

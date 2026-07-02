@@ -11,7 +11,9 @@ import {
 } from 'react-native';
 import { X } from 'lucide-react';
 import BulletinLearnadoodleBody from './BulletinLearnadoodleBody';
+import BulletinPostAttachmentList from './BulletinPostAttachmentList';
 import { formatRelativeStreamMeta } from '../../lib/bulletinStreamModel';
+import { ACCENT_TEXT } from '../create/shared/createModalStyles';
 import { resolveStreamCardIcon } from './bulletinStreamIcons';
 
 export default function BulletinStreamDetailModal({
@@ -25,7 +27,7 @@ export default function BulletinStreamDetailModal({
 
   const post = entry.kind === 'post' ? entry.payload : null;
   const when = formatRelativeStreamMeta(entry.createdAt);
-  const detailTitle = entry.title || entry.label || 'Bulletin';
+  const detailTitle = entry.title || null;
   const { Icon, color: iconColor, backgroundColor: iconBg } = resolveStreamCardIcon(entry.cardType);
 
   return (
@@ -46,9 +48,18 @@ export default function BulletinStreamDetailModal({
                 <Icon size={18} color={iconColor} strokeWidth={2.25} />
               </View>
               <View style={styles.headerCopy}>
-                <Text style={styles.label}>{entry.label}</Text>
-                <Text style={styles.title}>{detailTitle}</Text>
-                {when ? <Text style={styles.meta}>{when}</Text> : null}
+                <View style={styles.labelMetaRow}>
+                  <Text style={styles.label}>{entry.label}</Text>
+                  {when ? (
+                    <>
+                      <Text style={styles.labelMetaDot} accessibilityElementsHidden importantForAccessibility="no">
+                        ·
+                      </Text>
+                      <Text style={styles.labelWhen}>{when}</Text>
+                    </>
+                  ) : null}
+                </View>
+                {detailTitle ? <Text style={styles.title}>{detailTitle}</Text> : null}
               </View>
             </View>
             <View style={styles.headerActions}>
@@ -85,9 +96,10 @@ export default function BulletinStreamDetailModal({
             ) : (
               <>
                 {entry.meta ? <Text style={styles.bodyText}>{entry.meta}</Text> : null}
-                {entry.excerpt ? <Text style={styles.excerpt}>{entry.excerpt}</Text> : null}
+                {entry.excerpt ? <Text style={styles.cardBodyText}>{entry.excerpt}</Text> : null}
               </>
             )}
+            <BulletinPostAttachmentList materials={post?.materials} />
           </ScrollView>
         </View>
         </View>
@@ -168,14 +180,40 @@ const styles = StyleSheet.create({
     gap: 6,
     flexShrink: 0,
   },
+  labelMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    flexWrap: 'wrap',
+  },
   label: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#64748B',
+    lineHeight: 16,
+    fontWeight: '600',
+    color: ACCENT_TEXT,
     textTransform: 'uppercase',
-    letterSpacing: 0.35,
+    letterSpacing: 0.2,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  labelMetaDot: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '400',
+    color: '#CBD5E1',
+    marginLeft: 4,
+    marginRight: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  labelWhen: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '400',
+    color: '#94A3B8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   title: {
@@ -220,13 +258,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  excerpt: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#475569',
-    fontStyle: 'italic',
-    marginTop: 8,
   },
   cardBodyText: {
     fontSize: 14,
