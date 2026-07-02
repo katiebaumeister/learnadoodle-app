@@ -57,8 +57,11 @@ export default function CenterPane({
   academicYears = null,
   /** Tutor / observer: view events, no drag-create-complete ownership */
   readOnly = false,
+  /** Allow checking events done even when read-only (e.g. children marking their own work). */
+  allowComplete = !readOnly,
   plannerShellVisible = true,
 }) {
+  const completeHandler = allowComplete ? onEventComplete : undefined;
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== 'web' || width < 768;
   const [mode, setMode] = useState(() => normalizeViewMode(externalViewMode));
@@ -199,8 +202,9 @@ export default function CenterPane({
           onSelectDate={onSelectDate}
           onEventPress={onEventSelect}
           onEventRightClick={onEventRightClick}
-          onEventComplete={readOnly ? undefined : onEventComplete}
+          onEventComplete={completeHandler}
           readOnly={readOnly}
+          allowComplete={allowComplete}
         />
       ) : (
         <>
@@ -220,7 +224,7 @@ export default function CenterPane({
                 onSelectDate={onSelectDate}
                 onEventPress={onEventSelect}
                 onEventRightClick={onEventRightClick}
-                onEventComplete={readOnly ? undefined : onEventComplete}
+                onEventComplete={completeHandler}
                 blackoutDates={blackoutDates}
                 children={children}
                 onSwitchToBoardView={() => setMode('Board')}
@@ -237,7 +241,7 @@ export default function CenterPane({
                 onSelectDate={onSelectDate}
                 onEventPress={onEventSelect}
                 onEventRightClick={onEventRightClick}
-                onEventComplete={readOnly ? undefined : onEventComplete}
+                onEventComplete={completeHandler}
                 blackoutDates={blackoutDates}
                 children={children}
                 onSwitchToBoardView={() => setMode('Board')}
@@ -273,7 +277,7 @@ export default function CenterPane({
               events={filtered}
               onEventPress={onEventSelect}
               onEventRightClick={onEventRightClick}
-              onEventComplete={readOnly ? undefined : onEventComplete}
+              onEventComplete={completeHandler}
               children={children}
             />
           )}
@@ -294,7 +298,7 @@ export default function CenterPane({
                 events={filtered}
                 onEventPress={onEventSelect}
                 onEventRightClick={onEventRightClick}
-                onEventComplete={readOnly ? undefined : onEventComplete}
+                onEventComplete={completeHandler}
                 children={children}
                 familyId={familyId}
               />
@@ -313,7 +317,7 @@ export default function CenterPane({
                 monthDate={viewDate}
                 onEventPress={onEventSelect}
                 onEventRightClick={onEventRightClick}
-                onEventComplete={readOnly ? undefined : onEventComplete}
+                onEventComplete={completeHandler}
                 onCreateTask={readOnly ? undefined : onCreateTask}
                 children={children}
                 familyId={familyId}
@@ -333,7 +337,7 @@ export default function CenterPane({
                 monthDate={viewDate}
                 onEventPress={onEventSelect}
                 onEventRightClick={onEventRightClick}
-                onEventComplete={readOnly ? undefined : onEventComplete}
+                onEventComplete={completeHandler}
                 onCreateTask={readOnly ? undefined : onCreateTask}
                 children={children}
                 familyId={familyId}

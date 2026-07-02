@@ -5,9 +5,22 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, Platform } from 'react-native';
 import FormattedInstructionText from '../create/shared/FormattedInstructionText';
-import { normalizeSubjectGettingStartedBulletinBody } from '../../lib/subjectGettingStartedBulletin';
+import SubjectWelcomeBulletinBody from './SubjectWelcomeBulletinBody';
+import {
+  normalizeSubjectGettingStartedBulletinBody,
+  SUBJECT_GETTING_STARTED_SYSTEM_KIND,
+} from '../../lib/subjectGettingStartedBulletin';
 
-export default function BulletinLearnadoodleBody({ body, textStyle = null }) {
+export default function BulletinLearnadoodleBody({
+  body,
+  textStyle = null,
+  systemKind = null,
+  subjectName = null,
+}) {
+  if (systemKind === SUBJECT_GETTING_STARTED_SYSTEM_KIND) {
+    return <SubjectWelcomeBulletinBody subjectName={subjectName} textStyle={textStyle} />;
+  }
+
   const displayBody = useMemo(
     () => normalizeSubjectGettingStartedBulletinBody(body),
     [body],

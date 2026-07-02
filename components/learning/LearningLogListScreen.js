@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import PlannerEventsListTable from '../planner/PlannerEventsListTable';
+import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
+import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
 
 function eventMatchesChildIds(entity, childIds) {
   if (!Array.isArray(childIds) || childIds.length === 0) return true;
@@ -150,6 +152,52 @@ export default function LearningLogListScreen({
     );
   }, []);
 
+  const handleEventComplete = useCallback(async (event) => {
+    if (!event?.id) return;
+    const et = String(event.event_type || event.type || '').toLowerCase();
+    if (et === 'holiday') return;
+    const cleanEventId = cleanPlannerEventId(String(event.id || ''));
+    if (!cleanEventId) return;
+    const isCurrentlyDone = String(event.status || '').trim().toLowerCase() === 'done';
+    const nextStatus = isCurrentlyDone ? 'scheduled' : 'done';
+
+    setEvents((prev) =>
+      prev.map((row) =>
+        String(row.id) === String(event.id) ? { ...row, status: nextStatus } : row
+      )
+    );
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('eventAttendancePatched', {
+          detail: { eventId: cleanEventId, status: nextStatus },
+        })
+      );
+    }
+
+    try {
+      const result = isCurrentlyDone
+        ? await updateEventStatus(cleanEventId, 'scheduled')
+        : await completeEvent(cleanEventId);
+      if (result.error) throw result.error;
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipCacheClear: true } }));
+      }
+    } catch (err) {
+      setEvents((prev) =>
+        prev.map((row) =>
+          String(row.id) === String(event.id) ? { ...row, status: event.status } : row
+        )
+      );
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('eventAttendancePatched', {
+            detail: { eventId: cleanEventId, status: isCurrentlyDone ? 'done' : 'scheduled' },
+          })
+        );
+      }
+    }
+  }, []);
+
   return (
     <View style={styles.container}>
       <PlannerEventsListTable
@@ -159,6 +207,7 @@ export default function LearningLogListScreen({
         monthDate={new Date()}
         onEventPress={openEvent}
         onEventRightClick={openEventContextMenu}
+        onEventComplete={handleEventComplete}
         listRefreshEpoch={listRefreshEpoch}
         plannerShellVisible={false}
         embedded

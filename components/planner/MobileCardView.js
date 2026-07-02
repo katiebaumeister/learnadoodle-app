@@ -45,6 +45,7 @@ export default function MobileCardView({
   selectedDate,
   onSelectDate,
   readOnly = false,
+  allowComplete = !readOnly,
 }) {
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== 'web' || width < 768;
@@ -168,7 +169,7 @@ export default function MobileCardView({
                     event={event}
                     onPress={() => onEventPress && onEventPress(event)}
                     onLongPress={() => onEventRightClick && onEventRightClick(event)}
-                    onComplete={readOnly || !onEventComplete ? undefined : () => onEventComplete(event)}
+                    onComplete={!allowComplete || !onEventComplete ? undefined : () => onEventComplete(event)}
                     formatTime={formatTime}
                     getEventTime={getEventTime}
                   />

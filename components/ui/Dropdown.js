@@ -17,6 +17,33 @@ import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { View, StyleSheet, Platform, Modal, TouchableOpacity, Text } from 'react-native';
 import { colors, shadows } from '../../theme/colors';
 
+function flattenDropdownChildren(children) {
+  const items = [];
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child)) {
+      if (child != null && child !== false) items.push(child);
+      return;
+    }
+    if (child.type === React.Fragment) {
+      items.push(...flattenDropdownChildren(child.props.children));
+      return;
+    }
+    items.push(child);
+  });
+  return items;
+}
+
+function renderDropdownChildren(children, variant) {
+  const items = flattenDropdownChildren(children);
+  return items.map((child, index) => {
+    if (!React.isValidElement(child)) return child;
+    return React.cloneElement(child, {
+      variant,
+      isLast: index === items.length - 1,
+    });
+  });
+}
+
 export default function Dropdown({
   visible,
   triggerRef,
@@ -41,11 +68,12 @@ export default function Dropdown({
     }
     
     const updatePosition = () => {
+      const itemCount = flattenDropdownChildren(children).length;
+
       if (anchorPoint) {
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
         const resolvedWidth = width;
-        const itemCount = React.Children.count(children);
         const estimatedHeight = Math.min(maxHeight, Math.max(itemCount * 44, 44));
         let top = anchorPoint.y + offset;
         let left = anchorPoint.x;
@@ -86,7 +114,6 @@ export default function Dropdown({
       } else if (placement === 'right-up') {
         // Position to the right and above the trigger
         // Estimate height: ~48px per item (padding + border) × number of items
-        const itemCount = React.Children.count(children);
         const estimatedHeight = itemCount * 48; // Approximate height per item
         left = triggerRect.right + window.scrollX + offset;
         // Position dropdown so its bottom edge is just above the button's top
@@ -122,7 +149,6 @@ export default function Dropdown({
         left = 16;
       }
       
-      const itemCount = React.Children.count(children);
       const estimatedHeight = Math.min(maxHeight, Math.max(itemCount * 44, 44));
 
       if (placement.startsWith('bottom') && top + estimatedHeight > viewportHeight) {
@@ -225,13 +251,7 @@ export default function Dropdown({
           },
         ]}
       >
-        {React.Children.map(children, (child, index) => {
-          if (!React.isValidElement(child)) return child;
-          return React.cloneElement(child, {
-            variant,
-            isLast: index === React.Children.count(children) - 1,
-          });
-        })}
+        {renderDropdownChildren(children, variant)}
       </View>
     );
     
@@ -257,13 +277,7 @@ export default function Dropdown({
         onPress={onClose}
       >
         <View style={[styles.dropdown, variant === 'context' && styles.dropdownContext, { width, maxHeight }]}>
-          {React.Children.map(children, (child, index) => {
-            if (!React.isValidElement(child)) return child;
-            return React.cloneElement(child, {
-              variant,
-              isLast: index === React.Children.count(children) - 1,
-            });
-          })}
+          {renderDropdownChildren(children, variant)}
         </View>
       </TouchableOpacity>
     </Modal>

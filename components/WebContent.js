@@ -23,6 +23,7 @@ import { prefetchAllSubjectProgressPlans, prefetchSubjectProgressPlanEntry } fro
 import { getHolidaysForRange, getEventForPlanSlot, invalidateHolidaysForRangeCache } from '../lib/services/academicYearClient'
 import { completeEvent, updateEventStatus } from '../lib/services/attendanceClient'
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext'
+import { canViewerMarkEventsComplete } from '../lib/permissions/userPermissionProfiles'
 import { isSchoolWorkEventType } from './child/childHomeRailHelpers'
 import {
   isDeletableSeriesGroup,
@@ -4179,6 +4180,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     roleForHome === 'tutor' ||
     propSession?.role_flags?.isTutor === true ||
     isRestrictedChildForPlanner;
+  const canMarkEventsComplete = useMemo(
+    () => canViewerMarkEventsComplete(propSession, familyUserControls?.effectivePermissions),
+    [propSession, familyUserControls?.effectivePermissions],
+  );
   const accessibleForHome = Array.isArray(propSession?.accessible_children) && propSession.accessible_children.length > 0
     ? propSession.accessible_children
     : accessibleChildren;
@@ -10231,6 +10236,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         events={plannerEventsForMonth}
         selectedDate={date}
         readOnly={plannerReadOnly}
+        allowComplete={canMarkEventsComplete}
         onSelectDate={(d) => {
           setPlannerDate(d);
           if (onCurrentMonthChange) onCurrentMonthChange(d);
@@ -10306,7 +10312,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           }
           window.dispatchEvent(new CustomEvent('plannerEventContextMenu', { detail: { event: ev, position: { x, y } } }));
         }}
-        onEventComplete={plannerReadOnly ? undefined : async (event) => {
+        onEventComplete={!canMarkEventsComplete ? undefined : async (event) => {
           if (!event?.id) return;
           if (event?.type === 'holiday' || event?.event_type === 'holiday') return;
           const rawEventId = String(event.id);

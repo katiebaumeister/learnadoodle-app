@@ -58,6 +58,7 @@ import BulletinLearnadoodleBody from './BulletinLearnadoodleBody';
 import BulletinStreamCard from './BulletinStreamCard';
 import BulletinStreamDetailModal from './BulletinStreamDetailModal';
 import { mergeBulletinStreamItems, STREAM_CARD_TYPE } from '../../lib/bulletinStreamModel';
+import { SUBJECT_GETTING_STARTED_SYSTEM_KIND } from '../../lib/subjectGettingStartedBulletin';
 import { fetchAssignment, openBulletinActivityItem } from '../../lib/bulletinFeedNavigation';
 import { dispatchOpenEditAssignment } from '../../lib/openAssignmentWorkflow';
 import {
@@ -465,6 +466,7 @@ function resolveContextMenuPoint(nativeEvent) {
 }
 
 const ANNOUNCEMENT_STREAM_MENU_WIDTH = 248;
+const SYSTEM_POST_MENU_WIDTH = 280;
 
 const StreamPostMenu = forwardRef(function StreamPostMenu({
   post,
@@ -473,6 +475,7 @@ const StreamPostMenu = forwardRef(function StreamPostMenu({
   editLabel = 'Edit',
   deleteLabel = 'Delete',
   menuWidth = 168,
+  readOnly = false,
 }, ref) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [anchorPoint, setAnchorPoint] = useState(null);
@@ -521,23 +524,33 @@ const StreamPostMenu = forwardRef(function StreamPostMenu({
         width={menuWidth}
         variant="context"
       >
-        <DropdownItem
-          icon={Pencil}
-          label={editLabel}
-          onPress={() => {
-            closeMenu();
-            onEdit?.(post);
-          }}
-        />
-        <DropdownItem
-          icon={Trash2}
-          label={deleteLabel}
-          danger
-          onPress={() => {
-            closeMenu();
-            onDelete?.(post);
-          }}
-        />
+        {readOnly ? (
+          <View style={styles.systemMenuMessage}>
+            <Text style={styles.systemMenuMessageText}>
+              This post is system-generated and not editable.
+            </Text>
+          </View>
+        ) : (
+          <>
+            <DropdownItem
+              icon={Pencil}
+              label={editLabel}
+              onPress={() => {
+                closeMenu();
+                onEdit?.(post);
+              }}
+            />
+            <DropdownItem
+              icon={Trash2}
+              label={deleteLabel}
+              danger
+              onPress={() => {
+                closeMenu();
+                onDelete?.(post);
+              }}
+            />
+          </>
+        )}
       </Dropdown>
     </View>
   );
@@ -558,6 +571,35 @@ function useStreamContextMenuHandlers(menuRef) {
       menuRef.current?.openAt(e?.nativeEvent || e);
     },
   } : {};
+}
+
+function SystemBulletinPostCard({
+  entry,
+  preview,
+  showSubjectName,
+  onPress,
+  onSubjectPress,
+}) {
+  const menuRef = useRef(null);
+  const contextMenuHandlers = useStreamContextMenuHandlers(menuRef);
+
+  return (
+    <BulletinStreamCard
+      entry={entry}
+      preview={preview}
+      showSubjectName={showSubjectName}
+      onPress={onPress}
+      onSubjectPress={onSubjectPress}
+      contextMenuHandlers={contextMenuHandlers}
+      headerRight={(
+        <StreamPostMenu
+          ref={menuRef}
+          readOnly
+          menuWidth={SYSTEM_POST_MENU_WIDTH}
+        />
+      )}
+    />
+  );
 }
 
 function AuthorBulletinPostCard({
@@ -776,7 +818,10 @@ export default function BulletinBoardSection({
   }, [filterSubjectId]);
 
   const visiblePosts = useMemo(() => {
-    if (!filterSubjectId) return posts;
+    if (!filterSubjectId) {
+      // Home feed: keep the family welcome post, hide per-subject getting-started seeds.
+      return posts.filter((post) => post?.systemKind !== SUBJECT_GETTING_STARTED_SYSTEM_KIND);
+    }
     const filterKey = String(filterSubjectId);
     return posts.filter((post) => String(post.subjectId || '') === filterKey);
   }, [posts, filterSubjectId]);
@@ -1327,14 +1372,31 @@ export default function BulletinBoardSection({
           mergedStreamItems.map((entry) => {
                 const post = entry.kind === 'post' ? entry.payload : null;
                 const activityItem = entry.kind === 'activity' ? entry.payload : null;
+                const isSystemPost = post?.source === 'learnadoodle';
                 const isPostAuthor = post
-                  && post.source !== 'learnadoodle'
+                  && !isSystemPost
                   && String(post.authorUserId) === String(currentUserId);
                 const isManageableAssignment = Boolean(
                   canDeleteAny
                     && activityItem?.assignmentId
                     && entry.cardType === STREAM_CARD_TYPE.ASSIGNMENT_POSTED,
                 );
+                if (isSystemPost) {
+                  return (
+                    <SystemBulletinPostCard
+                      key={entry.id}
+                      entry={entry}
+                      preview={usePreviewFeed}
+                      showSubjectName={!filterSubjectId}
+                      onPress={
+                        entry.kind === 'activity' || usePreviewFeed
+                          ? handleStreamCardPress
+                          : undefined
+                      }
+                      onSubjectPress={onSubjectPress}
+                    />
+                  );
+                }
                 if (isPostAuthor) {
                   return (
                     <AuthorBulletinPostCard
@@ -1438,6 +1500,12 @@ export default function BulletinBoardSection({
                 setDetailEntry(null);
                 setPendingDeletePost(post);
               }}
+            />
+          ) : detailPost?.source === 'learnadoodle' ? (
+            <StreamPostMenu
+              ref={detailMenuRef}
+              readOnly
+              menuWidth={SYSTEM_POST_MENU_WIDTH}
             />
           ) : null
         }
@@ -1645,6 +1713,19 @@ const styles = StyleSheet.create({
   },
   postMenuBtnActive: {
     backgroundColor: '#F1F5F9',
+  },
+  systemMenuMessage: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  systemMenuMessageText: {
+    fontSize: 16,
+    lineHeight: 22,
+    color: '#94A3B8',
+    fontStyle: 'italic',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   subjectBadge: {
     alignSelf: 'flex-start',

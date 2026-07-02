@@ -69,9 +69,19 @@ export default function BulletinStreamDetailModal({
             showsVerticalScrollIndicator={false}
           >
             {entry.showFormattedBody && entry.fullBody ? (
-              <BulletinLearnadoodleBody body={entry.fullBody} />
+              <BulletinLearnadoodleBody
+                body={entry.fullBody}
+                systemKind={entry.payload?.systemKind || post?.systemKind || null}
+                subjectName={entry.subjectName}
+                textStyle={styles.cardBodyText}
+              />
             ) : post?.body ? (
-              <BulletinLearnadoodleBody body={post.body} textStyle={styles.bodyText} />
+              <BulletinLearnadoodleBody
+                body={post.body}
+                textStyle={styles.bodyText}
+                systemKind={post?.systemKind || null}
+                subjectName={entry.subjectName}
+              />
             ) : (
               <>
                 {entry.meta ? <Text style={styles.bodyText}>{entry.meta}</Text> : null}
@@ -217,5 +227,14 @@ const styles = StyleSheet.create({
     color: '#475569',
     fontStyle: 'italic',
     marginTop: 8,
+  },
+  cardBodyText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '400',
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

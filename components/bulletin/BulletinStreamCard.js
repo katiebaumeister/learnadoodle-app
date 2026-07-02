@@ -130,7 +130,12 @@ export default function BulletinStreamCard({
       ) : null}
       {entry.meta ? <Text style={styles.meta}>{entry.meta}</Text> : null}
       {entry.showFormattedBody && entry.fullBody ? (
-        <BulletinLearnadoodleBody body={entry.fullBody} />
+        <BulletinLearnadoodleBody
+          body={entry.fullBody}
+          systemKind={entry.payload?.systemKind || null}
+          subjectName={entry.subjectName}
+          textStyle={styles.cardBodyText}
+        />
       ) : null}
       {!entry.showFormattedBody && entry.excerpt ? (
         <Text style={styles.excerpt} numberOfLines={3}>
@@ -374,6 +379,15 @@ const styles = StyleSheet.create({
     color: '#475569',
     fontStyle: 'italic',
     marginTop: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  cardBodyText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '400',
+    color: '#475569',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

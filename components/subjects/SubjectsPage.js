@@ -271,8 +271,8 @@ export default function SubjectsPage({
   const canManageAttendanceActions = !isChildView
     ? true
     : childPermissionsResolved
-      ? effectivePermissions?.canManageEvents === true
-      : false;
+      ? effectivePermissions?.canMarkComplete === true
+      : true;
   const canShowEditChildButton = !isChildView;
   const canShowEditSubjectButton = !isChildView;
   const showChildModeToggle =

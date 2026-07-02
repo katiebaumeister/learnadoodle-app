@@ -3,6 +3,8 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator
 import { Calendar, CheckCircle, Clock, Flame, BookOpen, Sparkles, ExternalLink, Video, FileText, Award, Target, MessageSquare, Star, Play, AlertCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { getChildOverview, getLearningSuggestions } from '../../lib/apiClient';
+import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
+import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
 import { useToast } from '../Toast';
 import ContinueLearningStrip from '../content/ContinueLearningStrip';
 import { getAssignments } from '../../lib/services/assignmentsClient';
@@ -211,22 +213,31 @@ export default function ChildDashboard({ childId, childName, familyId: propFamil
   };
 
   const handleEventComplete = async (eventId) => {
-    try {
-      const { error } = await supabase
-        .from('events')
-        .update({ status: 'done' })
-        .eq('id', eventId);
+    const cleanEventId = cleanPlannerEventId(String(eventId || ''));
+    if (!cleanEventId) return;
+    const event = todayEvents.find((e) => String(e.id) === String(eventId));
+    const wasDone = event?.status === 'done';
 
-      if (error) throw error;
-      
-      toast.push('Event marked as complete!', 'success');
+    try {
+      const result = wasDone
+        ? await updateEventStatus(cleanEventId, 'scheduled')
+        : await completeEvent(cleanEventId);
+      if (result.error) throw result.error;
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('eventAttendancePatched', {
+            detail: { eventId: cleanEventId, status: wasDone ? 'scheduled' : 'done' },
+          })
+        );
+      }
+
+      toast.push(wasDone ? 'Event marked as not done' : 'Event marked as complete!', 'success');
       loadOverview();
       loadDailyFocus();
       loadPendingReflections();
-      
-      // Show reflection prompt if enabled
-      const event = todayEvents.find(e => e.id === eventId);
-      if (event) {
+
+      if (!wasDone && event) {
         setSelectedEventForReflection(event);
         setShowReflectionModal(true);
       }
