@@ -4082,7 +4082,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 children={children}
                 active={isMessagesPaneOpen}
                 placement="left"
-                childInviteSummaries={family?.child_invite_summaries ?? null}
                 onClosePane={() => {
                   setIsMessagesPaneOpen(false);
                   syncTopNavFromActiveTab();

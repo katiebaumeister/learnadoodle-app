@@ -37,7 +37,6 @@ export default function FamilyMessagesPane({
   children: familyChildren = [],
   active = false,
   placement = 'left',
-  childInviteSummaries = null,
   onClosePane = null,
 }) {
   const showPaneClose = placement === 'left' && typeof onClosePane === 'function';
@@ -264,7 +263,6 @@ export default function FamilyMessagesPane({
           viewerChildId={viewerChildId}
           familyChildren={familyChildren}
           familyMembers={familyMembersList}
-          childInviteSummaries={childInviteSummaries}
           onClosePane={showPaneClose ? onClosePane : null}
           onBack={handleBackFromChat}
           onGroupThreadCreated={(threadId) => {

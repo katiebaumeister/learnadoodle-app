@@ -35,7 +35,7 @@ export default function BulletinStreamCard({
   contextMenuHandlers = null,
   cardStyle = null,
 }) {
-  const { Icon, color: iconColor, backgroundColor: iconBg } = resolveStreamCardIcon(entry.cardType);
+  const { Icon, color: iconColor, backgroundColor: iconBg } = resolveStreamCardIcon(entry.cardType, entry);
   const clickable = Boolean(onPress && (preview || entry.clickable));
   const showSubjectChip = Boolean(
     !preview && showSubjectName && entry.subjectName && entry.subjectId,
@@ -111,28 +111,28 @@ export default function BulletinStreamCard({
             )
           ) : null}
           {lines.title ? (
-            <Text style={styles.previewTitle} numberOfLines={2}>
+            <Text
+              style={[
+                lines.titleVariant === 'body' ? styles.previewBody : styles.previewTitle,
+                lines.titleLead ? styles.previewLead : null,
+              ]}
+              numberOfLines={lines.titleVariant === 'body' ? 3 : 2}
+            >
               {lines.title}
             </Text>
           ) : null}
           {lines.subtitle ? (
-            <Text style={styles.previewSubtitle} numberOfLines={2}>
+            <Text style={styles.previewSubtitle} numberOfLines={1}>
               {lines.subtitle}
             </Text>
           ) : null}
-          {lines.meta && (!lines.label || !isRelativeStreamTime(lines.meta)) ? (
-            <Text style={styles.previewMeta} numberOfLines={1}>
-              {lines.meta}
-            </Text>
-          ) : null}
-          <BulletinPostAttachmentList materials={entry.payload?.materials} />
         </View>
       </View>
     );
 
     return (
       <View style={styles.previewWrap}>
-        <View style={styles.previewCard}>
+        <View style={[styles.previewCard, cardStyle]}>
           <View style={styles.previewRowOuter} {...(contextMenuHandlers || {})}>
             {clickable ? (
               <TouchableOpacity
@@ -271,22 +271,35 @@ const styles = StyleSheet.create({
   previewCopy: {
     flex: 1,
     minWidth: 0,
-    gap: 3,
+    gap: 8,
   },
   previewTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#0F172A',
-    lineHeight: 22,
+    lineHeight: 21,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  previewSubtitle: {
-    fontSize: 12,
+  previewBody: {
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '400',
-    color: '#64748B',
-    lineHeight: 16,
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  previewLead: {
+    fontWeight: '600',
+  },
+  previewSubtitle: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#334155',
+    lineHeight: 20,
+    marginTop: -4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

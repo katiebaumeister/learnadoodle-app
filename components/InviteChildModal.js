@@ -330,7 +330,7 @@ export default function InviteChildModal({
                 isAccepted ? (
                   <View style={styles.alreadyConnectedBox}>
                     <View style={styles.alreadyConnectedTitleRow}>
-                      <AlertTriangle size={18} color="#b45309" />
+                      <AlertTriangle size={18} color="#64748B" />
                       <Text style={styles.alreadyConnectedTitle}>This child is already connected</Text>
                     </View>
                     <Text style={styles.alreadyConnectedBody}>
@@ -607,10 +607,10 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     paddingVertical: 14,
     paddingHorizontal: 14,
-    backgroundColor: '#fffbeb',
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#fde68a',
+    borderColor: '#E2E8F0',
   },
   alreadyConnectedTitleRow: {
     flexDirection: 'row',
@@ -622,14 +622,14 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontWeight: '600',
-    color: '#92400e',
+    color: '#334155',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   alreadyConnectedBody: {
     fontSize: 13,
-    color: '#78350f',
+    color: '#64748B',
     lineHeight: 20,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',

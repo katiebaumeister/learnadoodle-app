@@ -11,8 +11,9 @@ import {
 } from 'react-native';
 import { X } from 'lucide-react';
 import BulletinLearnadoodleBody from './BulletinLearnadoodleBody';
+import FormattedInstructionText from '../create/shared/FormattedInstructionText';
 import BulletinPostAttachmentList from './BulletinPostAttachmentList';
-import { formatRelativeStreamMeta } from '../../lib/bulletinStreamModel';
+import { formatRelativeStreamMeta, streamCardSecondaryMeta } from '../../lib/bulletinStreamModel';
 import { ACCENT_TEXT } from '../create/shared/createModalStyles';
 import { resolveStreamCardIcon } from './bulletinStreamIcons';
 
@@ -27,8 +28,58 @@ export default function BulletinStreamDetailModal({
 
   const post = entry.kind === 'post' ? entry.payload : null;
   const when = formatRelativeStreamMeta(entry.createdAt);
-  const detailTitle = entry.title || null;
-  const { Icon, color: iconColor, backgroundColor: iconBg } = resolveStreamCardIcon(entry.cardType);
+  const secondaryMeta = streamCardSecondaryMeta(entry);
+  const { Icon, color: iconColor, backgroundColor: iconBg } = resolveStreamCardIcon(entry.cardType, entry);
+  const hasHeaderActions = Boolean(headerRight);
+
+  const renderBody = () => {
+    if (entry.title && entry.showFormattedBody) {
+      return (
+        <Text style={styles.detailTitle}>{entry.title}</Text>
+      );
+    }
+    return null;
+  };
+
+  const renderMainContent = () => {
+    if (entry.showFormattedBody && entry.fullBody) {
+      return (
+        <BulletinLearnadoodleBody
+          body={entry.fullBody}
+          systemKind={entry.payload?.systemKind || post?.systemKind || null}
+          subjectName={entry.subjectName}
+          textStyle={styles.cardBodyText}
+        />
+      );
+    }
+
+    if (post?.body) {
+      return (
+        <FormattedInstructionText
+          text={post.body}
+          style={styles.cardBodyText}
+          wrapStyle={styles.plainBodyWrap}
+        />
+      );
+    }
+
+    return (
+      <>
+        {secondaryMeta ? <Text style={styles.secondaryMeta}>{secondaryMeta}</Text> : null}
+        {entry.meta && !secondaryMeta ? <Text style={styles.secondaryMeta}>{entry.meta}</Text> : null}
+        {entry.excerpt ? (
+          <FormattedInstructionText
+            text={entry.excerpt}
+            style={styles.cardBodyText}
+            wrapStyle={styles.plainBodyWrap}
+          />
+        ) : null}
+        {!entry.excerpt && entry.title && !entry.showFormattedBody ? (
+          <Text style={styles.detailTitle}>{entry.title}</Text>
+        ) : null}
+      </>
+    );
+  };
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -41,67 +92,48 @@ export default function BulletinStreamDetailModal({
           {...(Platform.OS === 'web' && { cursor: 'default' })}
         />
         <View style={styles.cardWrap}>
-        <View style={styles.card} {...(contextMenuHandlers || {})}>
-          <View style={styles.header}>
-            <View style={styles.headerMain}>
-              <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
-                <Icon size={18} color={iconColor} strokeWidth={2.25} />
-              </View>
-              <View style={styles.headerCopy}>
-                <View style={styles.labelMetaRow}>
-                  <Text style={styles.label}>{entry.label}</Text>
-                  {when ? (
-                    <>
-                      <Text style={styles.labelMetaDot} accessibilityElementsHidden importantForAccessibility="no">
-                        ·
-                      </Text>
-                      <Text style={styles.labelWhen}>{when}</Text>
-                    </>
-                  ) : null}
-                </View>
-                {detailTitle ? <Text style={styles.title}>{detailTitle}</Text> : null}
-              </View>
-            </View>
-            <View style={styles.headerActions}>
+          <View style={styles.card} {...(contextMenuHandlers || {})}>
+            <View style={styles.cardActions}>
               {headerRight}
               <TouchableOpacity
-              onPress={onClose}
-              style={styles.closeBtn}
-              accessibilityLabel="Close"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <X size={18} color="#64748B" strokeWidth={2.25} />
-            </TouchableOpacity>
+                onPress={onClose}
+                style={styles.closeBtn}
+                accessibilityLabel="Close"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={18} color="#64748B" strokeWidth={2.25} />
+              </TouchableOpacity>
             </View>
+            <ScrollView
+              style={styles.bodyScroll}
+              contentContainerStyle={styles.cardInner}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.cardTop}>
+                <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
+                  <Icon size={20} color={iconColor} strokeWidth={2.25} />
+                </View>
+                <View style={[styles.cardMain, hasHeaderActions ? styles.cardMainWithMenu : null]}>
+                  <View style={styles.labelMetaRow}>
+                    <Text style={styles.label}>{entry.label}</Text>
+                    {when ? (
+                      <>
+                        <Text style={styles.labelMetaDot} accessibilityElementsHidden importantForAccessibility="no">
+                          ·
+                        </Text>
+                        <Text style={styles.labelWhen}>{when}</Text>
+                      </>
+                    ) : null}
+                  </View>
+                  <View style={styles.cardBody}>
+                    {renderBody()}
+                    {renderMainContent()}
+                    <BulletinPostAttachmentList materials={post?.materials} />
+                  </View>
+                </View>
+              </View>
+            </ScrollView>
           </View>
-          <ScrollView
-            style={styles.bodyScroll}
-            contentContainerStyle={styles.bodyContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {entry.showFormattedBody && entry.fullBody ? (
-              <BulletinLearnadoodleBody
-                body={entry.fullBody}
-                systemKind={entry.payload?.systemKind || post?.systemKind || null}
-                subjectName={entry.subjectName}
-                textStyle={styles.cardBodyText}
-              />
-            ) : post?.body ? (
-              <BulletinLearnadoodleBody
-                body={post.body}
-                textStyle={styles.bodyText}
-                systemKind={post?.systemKind || null}
-                subjectName={entry.subjectName}
-              />
-            ) : (
-              <>
-                {entry.meta ? <Text style={styles.bodyText}>{entry.meta}</Text> : null}
-                {entry.excerpt ? <Text style={styles.cardBodyText}>{entry.excerpt}</Text> : null}
-              </>
-            )}
-            <BulletinPostAttachmentList materials={post?.materials} />
-          </ScrollView>
-        </View>
         </View>
       </View>
     </Modal>
@@ -114,7 +146,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 24,
     ...(Platform.OS === 'web' && {
       position: 'fixed',
       top: 0,
@@ -131,54 +163,59 @@ const styles = StyleSheet.create({
   },
   cardWrap: {
     width: '100%',
-    maxWidth: 520,
+    maxWidth: 625,
     zIndex: 1,
   },
   card: {
+    position: 'relative',
     width: '100%',
     maxHeight: Platform.OS === 'web' ? '80vh' : '86%',
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
+      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 12px 24px -8px rgba(0, 0, 0, 0.08)',
     }),
   },
-  header: {
+  cardActions: {
+    position: 'absolute',
+    top: 24,
+    right: 24,
+    zIndex: 2,
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(148, 163, 184, 0.16)',
+    alignItems: 'center',
+    gap: 8,
   },
-  headerMain: {
-    flex: 1,
-    minWidth: 0,
+  cardInner: {
+    paddingHorizontal: 32,
+    paddingTop: 32,
+    paddingBottom: 32,
+  },
+  cardTop: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 12,
+    gap: 16,
   },
   iconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
-  headerCopy: {
+  cardMain: {
     flex: 1,
     minWidth: 0,
-    gap: 4,
+    gap: 12,
   },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 6,
-    flexShrink: 0,
+  cardMainWithMenu: {
+    paddingRight: 72,
+  },
+  cardBody: {
+    gap: 8,
   },
   labelMetaRow: {
     flexDirection: 'row',
@@ -186,8 +223,8 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   label: {
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '600',
     color: ACCENT_TEXT,
     textTransform: 'uppercase',
@@ -197,8 +234,8 @@ const styles = StyleSheet.create({
     }),
   },
   labelMetaDot: {
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 13,
+    lineHeight: 18,
     fontWeight: '400',
     color: '#CBD5E1',
     marginLeft: 4,
@@ -208,28 +245,31 @@ const styles = StyleSheet.create({
     }),
   },
   labelWhen: {
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 13,
+    lineHeight: 18,
     fontWeight: '400',
     color: '#94A3B8',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
+  detailTitle: {
+    fontSize: 16,
+    fontWeight: '600',
     color: '#0F172A',
-    lineHeight: 24,
+    lineHeight: 22,
+    marginBottom: 4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  meta: {
-    fontSize: 13,
+  secondaryMeta: {
+    fontSize: 15,
+    lineHeight: 22,
     color: '#64748B',
+    marginBottom: 4,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   closeBtn: {
@@ -241,29 +281,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
+    backgroundColor: '#FFFFFF',
   },
   bodyScroll: {
     flexGrow: 0,
     flexShrink: 1,
   },
-  bodyContent: {
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 20,
-  },
-  bodyText: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: '#334155',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+  plainBodyWrap: {
+    marginTop: 0,
   },
   cardBodyText: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 16,
+    lineHeight: 24,
     fontWeight: '400',
-    color: '#475569',
+    color: '#334155',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

@@ -9,7 +9,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { ArrowLeft, ArrowUp, Calendar, Paperclip, Plus, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, ArrowUp, Calendar, Paperclip, Plus, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { openAssignmentForParent } from '../../lib/openAssignmentWorkflow';
 import { createFileMaterial } from '../../lib/services/materialsClient';
@@ -40,21 +40,6 @@ import useSwipeBackGesture from './useSwipeBackGesture';
 const LEARNADOODLE_CREATE_BLUE = '#9ECFFB';
 /** @deprecated HMR/back-compat alias */
 const BRAND_SKY_BLUE_TEXT = LEARNADOODLE_CREATE_BLUE;
-
-function formatGroupInviteBannerText(members) {
-  if (!members?.length) return '';
-  const names = members.map((member) => member.childName).filter(Boolean);
-  if (names.length === 0) {
-    return 'Some members have not joined yet. You can still send messages — they will see this conversation once they accept their invites.';
-  }
-  const nameList = names.length === 1
-    ? names[0]
-    : names.length === 2
-      ? `${names[0]} and ${names[1]}`
-      : `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
-  const verb = names.length === 1 ? "hasn't" : "haven't";
-  return `${nameList} ${verb} joined yet. You can still send messages — they will see this conversation once they accept their invites.`;
-}
 
 function formatMessageTime(createdAt) {
   if (!createdAt) return '';
@@ -89,7 +74,6 @@ export default function FamilyDmChat({
   viewerChildId = null,
   familyChildren = [],
   familyMembers = [],
-  childInviteSummaries = null,
   onClosePane = null,
   onBack,
   onGroupThreadCreated = null,
@@ -131,83 +115,6 @@ export default function FamilyDmChat({
   );
 
   const canAttachEvent = Boolean(childCtx?.childId && familyId && attachmentsSupported && !isMultiRecipient);
-
-  // If the child has actually sent a direct message in this thread, they
-  // demonstrably have a working, connected account — so the parent must be able
-  // to reply even if invite-status resolution (RLS/self-signup) reads as 'none'.
-  const childHasSentDirectMessage = useMemo(() => {
-    if (!Array.isArray(messages) || messages.length === 0) return false;
-    return messages.some(
-      (m) => m && m.source === 'dm' && !isUnifiedMessageMine(m, viewerRole, currentUserId)
-    );
-  }, [messages, viewerRole, currentUserId]);
-
-  const childInviteGate = useMemo(() => {
-    if (isMultiRecipient) return null;
-    if (participant?.type !== 'child') return null;
-    if (viewerRole !== 'parent' && viewerRole !== 'tutor') return null;
-    const childId = String(participant?.id || '').trim();
-    if (!childId) return null;
-    // The child is clearly an active, connected account if they've messaged us.
-    if (childHasSentDirectMessage) return null;
-    const summaries = childInviteSummaries && typeof childInviteSummaries === 'object'
-      ? childInviteSummaries
-      : null;
-    const status = String(summaries?.[childId]?.invite_status || 'none').trim().toLowerCase();
-    if (status === 'accepted' || status === 'connected') return null;
-    const childName = String(participant?.name || '').trim() || 'this child';
-    return {
-      childId,
-      childName,
-      status: status === 'pending' ? 'pending' : 'none',
-    };
-  }, [participant, viewerRole, childInviteSummaries, isMultiRecipient, childHasSentDirectMessage]);
-
-  // Map child id -> real first name so the "not joined yet" banner names the
-  // specific child (e.g. "Lilly") instead of a generic "Child" placeholder.
-  const childNameById = useMemo(() => {
-    const map = new Map();
-    (Array.isArray(familyChildren) ? familyChildren : []).forEach((c) => {
-      if (c?.id == null) return;
-      const name = String(c.first_name || c.name || c.full_name || '').trim();
-      if (name) map.set(String(c.id).trim(), name);
-    });
-    return map;
-  }, [familyChildren]);
-
-  const groupUnconnectedMembers = useMemo(() => {
-    if (!isMultiRecipient) return [];
-    if (viewerRole !== 'parent' && viewerRole !== 'tutor') return [];
-    const summaries = childInviteSummaries && typeof childInviteSummaries === 'object'
-      ? childInviteSummaries
-      : null;
-    if (!summaries) return [];
-    return (participant?.members || [])
-      .filter((member) => member?.type === 'child' && member?.id != null)
-      .map((member) => {
-        const childId = String(member.id).trim();
-        const status = String(summaries?.[childId]?.invite_status || 'none').trim().toLowerCase();
-        const resolvedName =
-          childNameById.get(childId) || String(member.name || '').trim() || 'this child';
-        return {
-          childId,
-          childName: resolvedName,
-          status: status === 'pending' ? 'pending' : 'none',
-          connected: status === 'accepted' || status === 'connected',
-        };
-      })
-      .filter((member) => !member.connected);
-  }, [isMultiRecipient, participant, viewerRole, childInviteSummaries, childNameById]);
-
-  const openInviteChildModal = useCallback((childIdOverride) => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const childId = String(
-      childIdOverride || childInviteGate?.childId || participant?.id || '',
-    ).trim() || null;
-    window.dispatchEvent(new CustomEvent('openInviteChildModal', {
-      detail: { childId },
-    }));
-  }, [childInviteGate?.childId, participant?.id]);
 
   const enrichMessages = useCallback(async (unified, assignmentList) => {
     const eventIds = new Set();
@@ -577,7 +484,7 @@ export default function FamilyDmChat({
   handleSendRef.current = handleSend;
 
   useEffect(() => {
-    if (Platform.OS !== 'web' || childInviteGate) return undefined;
+    if (Platform.OS !== 'web') return undefined;
     let cleanup = () => {};
     const id = window.setTimeout(() => {
       const node = composerInputRef.current;
@@ -600,7 +507,7 @@ export default function FamilyDmChat({
       window.clearTimeout(id);
       cleanup();
     };
-  }, [childInviteGate, participant?.id]);
+  }, [participant?.id]);
 
   const pickFile = useCallback(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined' || uploadingFile) return;
@@ -777,7 +684,7 @@ export default function FamilyDmChat({
         ) : null}
       </View>
 
-      {loading && messages.length === 0 && !childInviteGate ? (
+      {loading && messages.length === 0 ? (
         <View style={styles.loadingState}>
           <ActivityIndicator size="small" color="#6366F1" />
         </View>
@@ -807,56 +714,6 @@ export default function FamilyDmChat({
               </Text>
             ) : null}
           </View>
-
-          {groupUnconnectedMembers.length > 0 ? (
-            <View style={styles.groupInviteBanner}>
-              <Text style={styles.groupInviteBannerText}>
-                {formatGroupInviteBannerText(groupUnconnectedMembers)}
-              </Text>
-              <View style={styles.groupInviteActions}>
-                {groupUnconnectedMembers.map((member) => (
-                  <TouchableOpacity
-                    key={member.childId}
-                    style={styles.groupInviteButton}
-                    onPress={() => openInviteChildModal(member.childId)}
-                    activeOpacity={0.85}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <UserPlus size={14} color="#FFFFFF" strokeWidth={2.25} />
-                    <Text style={styles.groupInviteButtonText}>
-                      {member.status === 'pending'
-                        ? `RESEND ${member.childName.toUpperCase()}`
-                        : `INVITE ${member.childName.toUpperCase()}`}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          ) : null}
-
-          {childInviteGate ? (
-            <View style={styles.inviteCard}>
-              <Text style={styles.inviteCardTitle}>Not yet connected</Text>
-              <Text style={styles.inviteCardSubtitle}>
-                {childInviteGate.status === 'pending'
-                  ? `${childInviteGate.childName} has not accepted yet. Resend the invite so they can use Messages and get assignments.`
-                  : `Send ${childInviteGate.childName} an invite so you can message them and assign work.`}
-              </Text>
-              <TouchableOpacity
-                style={styles.inviteCardButton}
-                onPress={openInviteChildModal}
-                activeOpacity={0.85}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <UserPlus size={16} color="#FFFFFF" strokeWidth={2.25} />
-                <Text style={styles.inviteCardButtonText}>
-                  {childInviteGate.status === 'pending'
-                    ? 'RESEND INVITE'
-                    : `INVITE ${String(childInviteGate.childName || '').trim().toUpperCase()}`}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
 
           {firstMessageAt ? (
             <Text style={styles.dateDivider}>
@@ -929,8 +786,7 @@ export default function FamilyDmChat({
         </ScrollView>
       )}
 
-      {!childInviteGate ? (
-        <View style={styles.composerWrap}>
+      <View style={styles.composerWrap}>
           {(pendingEvent || pendingMaterial) ? (
             <View style={styles.pendingAttachments}>
               {pendingEvent ? (
@@ -1058,7 +914,6 @@ export default function FamilyDmChat({
             </TouchableOpacity>
           </View>
         </View>
-      ) : null}
 
       <DmAttachEventModal
         visible={showEventModal}
@@ -1140,117 +995,6 @@ const styles = StyleSheet.create({
     color: '#64748B',
     textAlign: 'center',
     paddingHorizontal: 16,
-  },
-  groupInviteBanner: {
-    width: '100%',
-    maxWidth: 360,
-    alignSelf: 'center',
-    marginTop: 4,
-    marginBottom: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: 'rgba(158, 207, 251, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(158, 207, 251, 0.28)',
-  },
-  groupInviteBannerText: {
-    fontSize: 13,
-    fontWeight: '400',
-    color: '#64748B',
-    lineHeight: 19,
-    textAlign: 'center',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  groupInviteActions: {
-    marginTop: 12,
-    gap: 8,
-    alignItems: 'center',
-  },
-  groupInviteButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    backgroundColor: LEARNADOODLE_CREATE_BLUE,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  groupInviteButtonText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 0.3,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  inviteCard: {
-    width: '100%',
-    maxWidth: 360,
-    alignSelf: 'center',
-    marginTop: 4,
-    marginBottom: 12,
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: 'rgba(158, 207, 251, 0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(158, 207, 251, 0.38)',
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 8px rgba(158, 207, 251, 0.12)',
-    }),
-  },
-  inviteCardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0F172A',
-    marginBottom: 6,
-    textAlign: 'center',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  inviteCardSubtitle: {
-    fontSize: 13,
-    fontWeight: '400',
-    color: '#64748B',
-    lineHeight: 19,
-    marginBottom: 14,
-    textAlign: 'center',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  inviteCardButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    alignSelf: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 999,
-    backgroundColor: LEARNADOODLE_CREATE_BLUE,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      boxShadow: '0 2px 6px rgba(158, 207, 251, 0.35)',
-    }),
-  },
-  inviteCardButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 0.4,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   dateDivider: {
     alignSelf: 'center',

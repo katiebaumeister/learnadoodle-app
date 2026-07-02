@@ -4,9 +4,11 @@ import {
   FileText,
   HelpCircle,
   Megaphone,
+  Sparkles,
   Upload,
 } from 'lucide-react';
 import { STREAM_CARD_TYPE } from '../../lib/bulletinStreamModel';
+import { HOME_GETTING_STARTED_SYSTEM_KIND } from '../../lib/homeWelcomeBulletin';
 
 export const STREAM_ICON_BY_TYPE = {
   [STREAM_CARD_TYPE.ASSIGNMENT_POSTED]: FileText,
@@ -35,7 +37,16 @@ export const STREAM_ICON_BG_BY_TYPE = {
   [STREAM_CARD_TYPE.LESSON_COMPLETE]: '#F0FDFA',
 };
 
-export function resolveStreamCardIcon(cardType) {
+export function resolveStreamCardIcon(cardType, entry = null) {
+  const systemKind = entry?.payload?.systemKind || entry?.systemKind || null;
+  if (systemKind === HOME_GETTING_STARTED_SYSTEM_KIND) {
+    return {
+      Icon: Sparkles,
+      color: '#6BB3E8',
+      backgroundColor: '#EBF6FD',
+    };
+  }
+
   return {
     Icon: STREAM_ICON_BY_TYPE[cardType] || Megaphone,
     color: STREAM_ICON_COLOR_BY_TYPE[cardType] || '#64748B',
