@@ -429,12 +429,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.24)',
-    backgroundColor: '#F9FAFB',
+    borderColor: 'rgba(148, 163, 184, 0.28)',
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+    }),
   },
   addGradeButtonText: {
     fontSize: 14,
@@ -608,13 +611,13 @@ const styles = StyleSheet.create({
     ...COOPER_FONT,
   },
   missingRow: {
-    backgroundColor: '#FFFBEB',
-    borderColor: '#FDE68A',
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
   },
   missingRowLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#B45309',
+    color: '#64748B',
     ...COOPER_FONT,
   },
 });

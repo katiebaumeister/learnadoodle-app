@@ -2648,7 +2648,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   lessonRowHighlight: {
-    backgroundColor: '#FEF9C3',
     borderRadius: 6,
     paddingHorizontal: 4,
   },

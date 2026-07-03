@@ -284,8 +284,7 @@ const styles = StyleSheet.create({
     marginTop: 18,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 12,
+    justifyContent: 'space-between',
   },
   cancelBtn: {
     minHeight: 50,

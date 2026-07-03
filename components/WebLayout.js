@@ -62,6 +62,7 @@ import {
   isDayOffOrHolidayEvent,
   shouldUseLegacyEventModal,
 } from '../lib/create/eventOpenRouting';
+import { saveLesson } from '../lib/create/saveEventHelpers';
 import { linkedSummariesFromFamilyApiMembers } from '../lib/services/childInviteStatus';
 import { STRINGS } from '../lib/i18n/strings';
 import PackWeekModal from './ai/PackWeekModal';
@@ -3575,22 +3576,39 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return [...new Set(ids)];
   }, []);
 
-  const handleLearningDayOneOffEvent = useCallback(() => {
+  const handleLearningDayOneOffEvent = useCallback(async () => {
     const subject = learningDaySetupChoice.subject;
-    closeLearningDaySetupChoice();
-    if (!subject?.id) return;
+    if (!subject?.id || !familyId) return;
     const childIds = resolveSubjectChildIds(subject);
-    openCreateModal('lesson', {
-      date: currentMonth,
-      subjectId: subject.id,
-      childIds,
-      title: subject.name,
-    });
+    try {
+      const created = await saveLesson({
+        familyId,
+        title: subject.name || 'Learning day',
+        childIds,
+        subjectId: subject.id,
+        scheduleMode: 'unscheduled',
+        date: currentMonth,
+      });
+      if (created?.id) {
+        const enriched = await enrichLearningDayEvent({
+          supabase,
+          familyId,
+          event: created,
+        });
+        closeLearningDaySetupChoice();
+        setLearningDayModalState({ visible: true, event: enriched || created });
+      } else {
+        closeLearningDaySetupChoice();
+      }
+    } catch (err) {
+      console.warn('[LearningDayOneOff] creation error:', err?.message || err);
+      closeLearningDaySetupChoice();
+    }
   }, [
     closeLearningDaySetupChoice,
     currentMonth,
+    familyId,
     learningDaySetupChoice.subject,
-    openCreateModal,
     resolveSubjectChildIds,
   ]);
 
@@ -5322,12 +5340,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           onClose={closeLearningDayModal}
           onSaved={(detail) => {
             handlePlannerLearningDaySaved(detail);
-            if (detail?.event) {
-              setLearningDayModalState((prev) => {
-                if (!prev.visible || String(prev.event?.id) !== String(detail.event?.id)) return prev;
-                return { ...prev, event: { ...prev.event, ...detail.event } };
-              });
-            }
+            closeLearningDayModal();
           }}
         />
       ) : null}

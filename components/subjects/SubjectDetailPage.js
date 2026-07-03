@@ -2386,15 +2386,9 @@ export default function SubjectDetailPage({
   }, [isParentViewer]);
 
   const openAssignmentInClasswork = useCallback((assignment) => {
-    if (!assignment?.id) return;
-    setClassroomTab('classwork');
-    setHighlightAssignmentId(String(assignment.id));
-    if (highlightClearTimeoutRef.current) clearTimeout(highlightClearTimeoutRef.current);
-    highlightClearTimeoutRef.current = setTimeout(() => {
-      setHighlightAssignmentId(null);
-      highlightClearTimeoutRef.current = null;
-    }, 3200);
-  }, []);
+    if (!assignment) return;
+    openAssignedWorkItem(assignment);
+  }, [openAssignedWorkItem]);
 
   const handleAssignmentActivityPress = useCallback(async (item) => {
     if (!item?.assignmentId) return;
@@ -5980,15 +5974,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     alignSelf: 'flex-start',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.24)',
-    backgroundColor: '#F9FAFB',
+    borderColor: 'rgba(148, 163, 184, 0.28)',
+    backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'all 0.2s ease',
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
     }),
   },
   emptyStateButtonText: {

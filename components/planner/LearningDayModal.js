@@ -244,6 +244,11 @@ export default function LearningDayModal({
         }
       }
 
+      if (activeEvent?.is_flexible) {
+        await updateEvent(eventId, { is_flexible: false }, familyId);
+        patch = { ...patch, is_flexible: false };
+      }
+
       const originalNotes = String(activeEvent?.description || '').trim();
       const nextNotes = String(notes || '').trim();
       const originalMaterialId = resolveMaterialId(activeEvent);

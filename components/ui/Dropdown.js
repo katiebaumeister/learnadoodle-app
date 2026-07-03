@@ -38,6 +38,7 @@ function renderDropdownChildren(children, variant) {
   return items.map((child, index) => {
     if (!React.isValidElement(child)) return child;
     return React.cloneElement(child, {
+      key: child.key ?? `dropdown-item-${index}`,
       variant,
       isLast: index === items.length - 1,
     });

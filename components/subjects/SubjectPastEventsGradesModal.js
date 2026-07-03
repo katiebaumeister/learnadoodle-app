@@ -15,6 +15,7 @@ import { CalendarCheck2, Eraser, Save, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { MODAL_ACCENT, MODAL_ACCENT_TEXT } from '../ui/modalButtonStyles';
 import { useToast } from '../Toast';
+import { getPlannerEventCategory } from '../../lib/planner/plannerEventCategories';
 
 function eventPrimaryMs(e) {
   const s = e?.start_ts || e?.due_ts || e?.end_ts;
@@ -345,6 +346,8 @@ export default function SubjectPastEventsGradesModal({
                     childIds.length > 0 && typeof getChildName === 'function'
                       ? childIds.map((id) => getChildName(id)).filter(Boolean).join(', ')
                       : '';
+                  const category = getPlannerEventCategory(ev);
+                  const typeLabel = category === 'Learning day' ? 'Lesson' : category;
                   const calRaw = ev.status === 'done' ? 'Complete' : ev.status || 'scheduled';
                   const calLabel =
                     typeof calRaw === 'string' && calRaw.length
@@ -385,7 +388,7 @@ export default function SubjectPastEventsGradesModal({
                           ) : null}
                         </View>
                         {when ? <Text style={styles.rowMeta}>{when}</Text> : null}
-                        <Text style={styles.rowCompactLine}>{[childLabel, calLabel].filter(Boolean).join(' · ')}</Text>
+                        <Text style={styles.rowCompactLine}>{[childLabel, typeLabel, calLabel].filter(Boolean).join(' · ')}</Text>
                         <View style={styles.gradeInputRow}>
                           <Text style={styles.gradeLabel}>Grade</Text>
                           <TextInput
