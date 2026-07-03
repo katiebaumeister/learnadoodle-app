@@ -75,10 +75,13 @@ import {
   hydrateBulletinPostsState,
   writeBulletinPostsCache,
 } from '../../lib/bulletinBoardCache';
+import { parseChildIds } from '../../lib/services/subjectsClient';
 
 const VISIBILITY_ALL = 'all';
 const VISIBILITY_SELF = 'self';
 const VISIBILITY_SELECTED = 'selected';
+/** UI-only mode for subject bulletin: maps to selected + all assigned students on save. */
+const VISIBILITY_CLASS_ALL = 'class_all';
 const BULLETIN_AVATAR_RING_SIZE = 36;
 const BULLETIN_CONTENT_INDENT = BULLETIN_AVATAR_RING_SIZE + 10;
 const BULLETIN_PARENT_AVATAR_BG = '#F3E8FF';
@@ -159,11 +162,75 @@ function avatarSourceForUserId(userId, profileMap = null) {
   return resolveBundledAvatarSource(`prof${hash + 1}`);
 }
 
-function audienceLabel(post) {
+function audienceLabel(post, subjectRecord = null) {
   if (post.visibility === VISIBILITY_SELF) return 'Only you';
   if (post.visibility === VISIBILITY_ALL) return 'All family';
+  if (post.visibility === VISIBILITY_SELECTED && subjectRecord?.child_id) {
+    const assignedIds = parseChildIds(subjectRecord.child_id).map(String).sort();
+    const audienceIds = (post.audienceChildIds || []).map(String).sort();
+    if (
+      assignedIds.length > 0
+      && audienceIds.length === assignedIds.length
+      && assignedIds.every((id, index) => audienceIds[index] === id)
+    ) {
+      return 'All in class';
+    }
+  }
   const count = (post.audienceUserIds?.length || 0) + (post.audienceChildIds?.length || 0);
   return count === 1 ? '1 member' : `${count} members`;
+}
+
+function resolveComposerAudience({
+  filterSubjectId,
+  visibility,
+  selectedUserIds,
+  selectedChildIds,
+  subjectAssignedChildIds,
+}) {
+  if (!filterSubjectId) {
+    return {
+      visibility,
+      audienceUserIds: visibility === VISIBILITY_SELECTED ? selectedUserIds : [],
+      audienceChildIds: visibility === VISIBILITY_SELECTED ? selectedChildIds : [],
+    };
+  }
+
+  if (visibility === VISIBILITY_SELF) {
+    return { visibility: VISIBILITY_SELF, audienceUserIds: [], audienceChildIds: [] };
+  }
+
+  if (visibility === VISIBILITY_CLASS_ALL) {
+    return {
+      visibility: VISIBILITY_SELECTED,
+      audienceUserIds: [],
+      audienceChildIds: subjectAssignedChildIds,
+    };
+  }
+
+  return {
+    visibility: VISIBILITY_SELECTED,
+    audienceUserIds: [],
+    audienceChildIds: selectedChildIds,
+  };
+}
+
+function resolveComposerVisibilityFromPost(post, filterSubjectId, subjectAssignedChildIds) {
+  const savedVisibility = post.visibility || VISIBILITY_ALL;
+  if (!filterSubjectId) return savedVisibility;
+  if (savedVisibility === VISIBILITY_SELF) return VISIBILITY_SELF;
+  if (savedVisibility === VISIBILITY_SELECTED) {
+    const audienceIds = (post.audienceChildIds || []).map(String).sort();
+    const allIds = subjectAssignedChildIds.map(String).sort();
+    if (
+      allIds.length > 0
+      && audienceIds.length === allIds.length
+      && allIds.every((id, index) => audienceIds[index] === id)
+    ) {
+      return VISIBILITY_CLASS_ALL;
+    }
+    return VISIBILITY_SELECTED;
+  }
+  return VISIBILITY_CLASS_ALL;
 }
 
 function BulletinPostBody({ body }) {
@@ -178,6 +245,7 @@ function BulletinPostCard({
   post,
   profileMap,
   subjectName,
+  subjectRecord = null,
   currentUserId,
   canDelete,
   familyChildren = [],
@@ -393,7 +461,7 @@ function BulletinPostCard({
             </Text>
             <Text style={styles.postMeta}>
               {formatBulletinTimestamp(post.createdAt)}
-              {post.visibility !== VISIBILITY_ALL ? ` · ${audienceLabel(post)}` : ''}
+              {post.visibility !== VISIBILITY_ALL ? ` · ${audienceLabel(post, subjectRecord)}` : ''}
             </Text>
           </View>
         </View>
@@ -714,7 +782,9 @@ export default function BulletinBoardSection({
     else setComposerOpenInternal(next);
   }, [onComposerOpenChange]);
   const [body, setBody] = useState('');
-  const [visibility, setVisibility] = useState(VISIBILITY_ALL);
+  const [visibility, setVisibility] = useState(
+    () => (filterSubjectId ? VISIBILITY_CLASS_ALL : VISIBILITY_ALL)
+  );
   const [selectedUserIds, setSelectedUserIds] = useState([]);
   const [selectedChildIds, setSelectedChildIds] = useState([]);
   const [subjectId, setSubjectId] = useState(filterSubjectId || null);
@@ -740,6 +810,24 @@ export default function BulletinBoardSection({
     return map;
   }, [subjects]);
 
+  const subjectRecordById = useMemo(() => {
+    const map = new Map();
+    (subjects || []).forEach((s) => {
+      if (s?.id) map.set(String(s.id), s);
+    });
+    return map;
+  }, [subjects]);
+
+  const filterSubjectRecord = useMemo(() => {
+    if (!filterSubjectId) return null;
+    return subjectRecordById.get(String(filterSubjectId)) || null;
+  }, [filterSubjectId, subjectRecordById]);
+
+  const subjectAssignedChildIds = useMemo(() => {
+    if (!filterSubjectRecord?.child_id) return [];
+    return parseChildIds(filterSubjectRecord.child_id);
+  }, [filterSubjectRecord]);
+
   const emptyStateHeading = 'No posts yet';
   const emptyStateSubheading = useMemo(() => {
     if (filterSubjectId) {
@@ -759,9 +847,32 @@ export default function BulletinBoardSection({
     [children, familyMembers, currentUserId, session?.child_id, session?.member_role, session?.effective_role]
   );
 
+  const classParticipants = useMemo(() => {
+    if (!filterSubjectId || subjectAssignedChildIds.length === 0) return [];
+    const assignedSet = new Set(subjectAssignedChildIds.map(String));
+    return participants.filter(
+      (participant) => participant.type === 'child' && assignedSet.has(String(participant.id))
+    );
+  }, [participants, filterSubjectId, subjectAssignedChildIds]);
+
+  const composerParticipants = filterSubjectId ? classParticipants : participants;
+
+  const shareWithOptions = useMemo(() => (
+    filterSubjectId
+      ? [
+        { key: VISIBILITY_CLASS_ALL, label: 'All in class' },
+        { key: VISIBILITY_SELF, label: 'Only me' },
+        { key: VISIBILITY_SELECTED, label: 'Selected' },
+      ]
+      : [
+        { key: VISIBILITY_ALL, label: 'All members' },
+        { key: VISIBILITY_SELF, label: 'Only me' },
+        { key: VISIBILITY_SELECTED, label: 'Selected' },
+      ]
+  ), [filterSubjectId]);
+
   const canDeleteAny = session?.role_flags?.isParent === true;
   const useModalComposer = true;
-  const showComposerAudienceFields = !filterSubjectId;
   const canCreatePost = canDeleteAny;
 
   const persistPostsCache = useCallback((nextPosts, nextProfileMap, nextUserId, nextMembers) => {
@@ -963,7 +1074,7 @@ export default function BulletinBoardSection({
 
   const resetComposer = () => {
     setBody('');
-    setVisibility(VISIBILITY_ALL);
+    setVisibility(filterSubjectId ? VISIBILITY_CLASS_ALL : VISIBILITY_ALL);
     setSelectedUserIds([]);
     setSelectedChildIds([]);
     setSubjectId(filterSubjectId || null);
@@ -980,7 +1091,7 @@ export default function BulletinBoardSection({
     setEditingPost(post);
     setBody(post.body || '');
     setSubjectId(post.subjectId || filterSubjectId || null);
-    setVisibility(post.visibility || VISIBILITY_ALL);
+    setVisibility(resolveComposerVisibilityFromPost(post, filterSubjectId, subjectAssignedChildIds));
     setSelectedUserIds((post.audienceUserIds || []).map(String));
     setSelectedChildIds((post.audienceChildIds || []).map(String));
     setPendingMaterials(
@@ -993,7 +1104,7 @@ export default function BulletinBoardSection({
     );
     setError(null);
     setComposerOpenState(true);
-  }, [filterSubjectId, setComposerOpenState]);
+  }, [filterSubjectId, subjectAssignedChildIds, setComposerOpenState]);
 
   const handleAttachFile = () => {
     if (Platform.OS !== 'web' || typeof document === 'undefined' || uploading) return;
@@ -1029,10 +1140,30 @@ export default function BulletinBoardSection({
   const handleSavePost = async () => {
     const latestBody = String(messageEditorRef.current?.getMarkdown?.() ?? body).trim();
     if (!latestBody || posting || !familyId) return;
-    if (visibility === VISIBILITY_SELECTED && selectedUserIds.length === 0 && selectedChildIds.length === 0) {
-      setError('Select at least one family member to share with.');
+    const audienceSelectionRequired = filterSubjectId
+      ? visibility === VISIBILITY_SELECTED
+      : visibility === VISIBILITY_SELECTED;
+    if (audienceSelectionRequired && selectedUserIds.length === 0 && selectedChildIds.length === 0) {
+      setError(filterSubjectId
+        ? 'Select at least one student to share with.'
+        : 'Select at least one family member to share with.');
       return;
     }
+    if (
+      filterSubjectId
+      && visibility === VISIBILITY_CLASS_ALL
+      && subjectAssignedChildIds.length === 0
+    ) {
+      setError('Assign students to this class before posting.');
+      return;
+    }
+    const resolvedAudience = resolveComposerAudience({
+      filterSubjectId,
+      visibility,
+      selectedUserIds,
+      selectedChildIds,
+      subjectAssignedChildIds,
+    });
     setPosting(true);
     setError(null);
     try {
@@ -1041,9 +1172,9 @@ export default function BulletinBoardSection({
           postId: editingPost.id,
           body: latestBody,
           subjectId,
-          visibility,
-          audienceUserIds: visibility === VISIBILITY_SELECTED ? selectedUserIds : [],
-          audienceChildIds: visibility === VISIBILITY_SELECTED ? selectedChildIds : [],
+          visibility: resolvedAudience.visibility,
+          audienceUserIds: resolvedAudience.audienceUserIds,
+          audienceChildIds: resolvedAudience.audienceChildIds,
           materialIds: pendingMaterials.map((m) => m.id),
         });
         if (updateError) throw updateError;
@@ -1059,9 +1190,9 @@ export default function BulletinBoardSection({
           familyId,
           body: latestBody,
           subjectId,
-          visibility,
-          audienceUserIds: visibility === VISIBILITY_SELECTED ? selectedUserIds : [],
-          audienceChildIds: visibility === VISIBILITY_SELECTED ? selectedChildIds : [],
+          visibility: resolvedAudience.visibility,
+          audienceUserIds: resolvedAudience.audienceUserIds,
+          audienceChildIds: resolvedAudience.audienceChildIds,
           materialIds: pendingMaterials.map((m) => m.id),
         });
         if (createError) throw createError;
@@ -1166,88 +1297,87 @@ export default function BulletinBoardSection({
     );
   };
 
-  const selectedSubjectLabel = subjectId ? subjectById.get(String(subjectId)) || 'Subject' : 'No subject';
-
   const composerFormFields = (
     <>
-      {showComposerAudienceFields ? (
-        <>
-          {filterSubjectId ? (
-            <View style={modalFieldStyles.formGroup}>
-              <Text style={modalFieldStyles.fieldLabel}>Subject</Text>
-              <Text style={styles.subjectLockedText}>{selectedSubjectLabel}</Text>
-            </View>
-          ) : (
-            <SubjectSelectField
-              subjects={subjects}
-              subjectId={subjectId}
-              onSubjectChange={setSubjectId}
-              label="Subject"
-              allowEmpty
-              noneLabel="No subject"
-            />
-          )}
+      {filterSubjectId ? (
+        <SubjectSelectField
+          subjects={subjects}
+          subjectId={subjectId}
+          onSubjectChange={setSubjectId}
+          label="Subject"
+          disabled
+        />
+      ) : (
+        <SubjectSelectField
+          subjects={subjects}
+          subjectId={subjectId}
+          onSubjectChange={setSubjectId}
+          label="Subject"
+          allowEmpty
+          noneLabel="No subject"
+        />
+      )}
 
-          <View style={modalFieldStyles.formGroup}>
-            <Text style={modalFieldStyles.fieldLabel}>Share with</Text>
-            <View style={modalFieldStyles.chipRow}>
-              {[
-                { key: VISIBILITY_ALL, label: 'All members' },
-                { key: VISIBILITY_SELF, label: 'Only me' },
-                { key: VISIBILITY_SELECTED, label: 'Selected' },
-              ].map((opt) => (
-                <TouchableOpacity
-                  key={opt.key}
-                  style={[
-                    modalFieldStyles.dropdownOption,
-                    visibility === opt.key && modalFieldStyles.dropdownOptionActive,
-                  ]}
-                  onPress={() => setVisibility(opt.key)}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text
+      <View style={modalFieldStyles.formGroup}>
+        <Text style={modalFieldStyles.fieldLabel}>Share with</Text>
+        <View style={modalFieldStyles.chipRow}>
+          {shareWithOptions.map((opt) => (
+            <TouchableOpacity
+              key={opt.key}
+              style={[
+                modalFieldStyles.dropdownOption,
+                visibility === opt.key && modalFieldStyles.dropdownOptionActive,
+              ]}
+              onPress={() => setVisibility(opt.key)}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text
+                style={[
+                  modalFieldStyles.dropdownOptionText,
+                  visibility === opt.key && modalFieldStyles.dropdownOptionTextActive,
+                ]}
+              >
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {visibility === VISIBILITY_SELECTED ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.participantScroll}>
+          <View style={modalFieldStyles.chipRow}>
+            {composerParticipants.length === 0 ? (
+              <Text style={styles.emptyParticipantsText}>
+                {filterSubjectId ? 'No students assigned to this class yet.' : 'No family members available.'}
+              </Text>
+            ) : (
+              composerParticipants.map((participant) => {
+                const selected = isParticipantSelected(participant);
+                return (
+                  <TouchableOpacity
+                    key={`${participant.type}:${participant.id}`}
                     style={[
-                      modalFieldStyles.dropdownOptionText,
-                      visibility === opt.key && modalFieldStyles.dropdownOptionTextActive,
+                      modalFieldStyles.dropdownOption,
+                      selected && modalFieldStyles.dropdownOptionActive,
                     ]}
+                    onPress={() => toggleParticipant(participant)}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {visibility === VISIBILITY_SELECTED ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.participantScroll}>
-              <View style={modalFieldStyles.chipRow}>
-                {participants.map((participant) => {
-                  const selected = isParticipantSelected(participant);
-                  return (
-                    <TouchableOpacity
-                      key={`${participant.type}:${participant.id}`}
+                    <Text
                       style={[
-                        modalFieldStyles.dropdownOption,
-                        selected && modalFieldStyles.dropdownOptionActive,
+                        modalFieldStyles.dropdownOptionText,
+                        selected && modalFieldStyles.dropdownOptionTextActive,
                       ]}
-                      onPress={() => toggleParticipant(participant)}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <Text
-                        style={[
-                          modalFieldStyles.dropdownOptionText,
-                          selected && modalFieldStyles.dropdownOptionTextActive,
-                        ]}
-                      >
-                        {participant.name}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </ScrollView>
-          ) : null}
-        </>
+                      {participant.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </View>
+        </ScrollView>
       ) : null}
 
       <InstructionsEditor
@@ -1568,10 +1698,10 @@ const styles = StyleSheet.create({
     maxHeight: 44,
     marginBottom: 14,
   },
-  subjectLockedText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#111827',
+  emptyParticipantsText: {
+    fontSize: 13,
+    color: '#64748B',
+    paddingVertical: 4,
   },
   pendingAttachments: {
     gap: 8,

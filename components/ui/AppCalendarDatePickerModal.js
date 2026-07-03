@@ -2,6 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { View, Text, TouchableOpacity, Modal, Platform, StyleSheet } from 'react-native';
 import { Check, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useModalStackElevation } from '../hooks/useModalStackElevation';
+import {
+  registerDatePickerModalClose,
+  registerDatePickerModalOpen,
+} from './datePickerModalGuard';
 
 // Sit above the highest app modal layer (nested-over-parent = 10100) so the
 // calendar is always clickable in front of whatever opened it (e.g. Add Subject).
@@ -141,7 +145,13 @@ export function AppCalendarDatePickerModal({
   };
 
   const overlayRef = useRef(null);
-  useModalStackElevation(overlayRef, visible, DATE_PICKER_STACK_Z);
+  useModalStackElevation(overlayRef, visible && Platform.OS !== 'web', DATE_PICKER_STACK_Z);
+
+  useEffect(() => {
+    if (!visible) return undefined;
+    registerDatePickerModalOpen();
+    return () => registerDatePickerModalClose();
+  }, [visible]);
 
   const titleFont = Platform.OS === 'web'
     ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
@@ -155,20 +165,31 @@ export function AppCalendarDatePickerModal({
   const canGoPrevYear = minKey == null || new Date(viewMonth.getFullYear() - 1, viewMonth.getMonth(), 1) >= new Date(new Date(minKey).getFullYear(), new Date(minKey).getMonth(), 1);
   const canGoNextYear = maxKey == null || new Date(viewMonth.getFullYear() + 1, viewMonth.getMonth(), 1) <= new Date(new Date(maxKey).getFullYear(), new Date(maxKey).getMonth(), 1);
 
-  return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
-      <TouchableOpacity
-        ref={overlayRef}
-        style={{
-          flex: 1,
-          backgroundColor: 'rgba(0, 0, 0, 0.3)',
-          justifyContent: 'center',
-          alignItems: 'center',
-        }}
-        activeOpacity={1}
-        onPress={onClose}
-      >
-        <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={modalCardStyle}>
+  if (!visible) return null;
+
+  const overlayStyle = {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' && {
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: DATE_PICKER_STACK_Z,
+    }),
+  };
+
+  const pickerContent = (
+    <TouchableOpacity
+      ref={overlayRef}
+      style={overlayStyle}
+      activeOpacity={1}
+      onPress={onClose}
+    >
+      <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={modalCardStyle}>
           {title ? (
             <Text
               style={{
@@ -378,6 +399,27 @@ export function AppCalendarDatePickerModal({
           ) : null}
         </TouchableOpacity>
       </TouchableOpacity>
+  );
+
+  if (Platform.OS === 'web' && typeof document !== 'undefined' && document.body) {
+    try {
+      const ReactDOM = require('react-dom');
+      if (ReactDOM.createPortal) {
+        return ReactDOM.createPortal(pickerContent, document.body);
+      }
+    } catch (_) {
+      /* fall through to Modal */
+    }
+  }
+
+  return (
+    <Modal
+      animationType={Platform.OS === 'web' ? 'none' : 'fade'}
+      transparent
+      visible
+      onRequestClose={onClose}
+    >
+      {pickerContent}
     </Modal>
   );
 }

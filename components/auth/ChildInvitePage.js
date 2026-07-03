@@ -1,10 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
-import { UserPlus, Mail, Lock, User, CheckCircle, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { UserPlus, Mail, User, CheckCircle, AlertCircle } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { acceptChildInvite, previewChildInvite } from '../../lib/apiClient';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../Toast';
+import PasswordSetupFields from './PasswordSetupFields';
+import {
+  isPasswordSetupValid,
+  passwordRequirementsErrorMessage,
+  validatePassword,
+} from '../../lib/passwordValidation';
 
 /**
  * ChildInvitePage
@@ -22,6 +28,10 @@ export default function ChildInvitePage({ token, onComplete }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const isFormValid = useMemo(
+    () => isPasswordSetupValid(password, confirmPassword),
+    [password, confirmPassword],
+  );
   
   const toast = useToast();
 
@@ -60,12 +70,18 @@ export default function ChildInvitePage({ token, onComplete }) {
       setError('Valid email is required');
       return false;
     }
-    if (!password || password.length < 6) {
-      setError('Password must be at least 6 characters');
+    if (!password || !confirmPassword) {
+      setError('Please fill in both password fields.');
       return false;
     }
     if (password !== confirmPassword) {
-      setError('Passwords do not match');
+      setError('Passwords do not match.');
+      return false;
+    }
+    const validation = validatePassword(password);
+    const requirementsError = passwordRequirementsErrorMessage(validation);
+    if (requirementsError) {
+      setError(requirementsError);
       return false;
     }
     return true;
@@ -210,41 +226,24 @@ export default function ChildInvitePage({ token, onComplete }) {
             />
           </View>
 
-          <View style={styles.field}>
-            <View style={styles.fieldHeader}>
-              <Lock size={16} color={colors.muted} />
-              <Text style={styles.label}>Password</Text>
-            </View>
-            <TextInput
-              style={styles.input}
-              placeholder="At least 6 characters"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-          </View>
-
-          <View style={styles.field}>
-            <View style={styles.fieldHeader}>
-              <Lock size={16} color={colors.muted} />
-              <Text style={styles.label}>Confirm Password</Text>
-            </View>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter password again"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-          </View>
+          <PasswordSetupFields
+            password={password}
+            confirmPassword={confirmPassword}
+            onPasswordChange={setPassword}
+            onConfirmPasswordChange={setConfirmPassword}
+            passwordLabel="Password"
+            confirmLabel="Confirm password"
+          />
         </View>
 
         <TouchableOpacity
-          style={[styles.button, styles.acceptButton, accepting && styles.buttonDisabled]}
+          style={[
+            styles.button,
+            styles.acceptButton,
+            (accepting || !isFormValid) && styles.buttonDisabled,
+          ]}
           onPress={handleAccept}
-          disabled={accepting}
+          disabled={accepting || !isFormValid}
         >
           {accepting ? (
             <>

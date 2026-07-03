@@ -13,6 +13,8 @@ import { useToast } from '../Toast';
 import PlannerSettingsContent from './PlannerSettingsContent';
 import AppModalShell from '../ui/AppModalShell';
 import { ModalFooter } from '../ui/ModalFooter';
+import { useModalStackElevation, NESTED_MODAL_STACK_Z } from '../hooks/useModalStackElevation';
+import { isDatePickerModalOpen } from '../ui/datePickerModalGuard';
 import {
   createModalStyles as assignmentModalStyles,
   SCHOOL_YEAR_SETTINGS_MODAL_MAX_WIDTH,
@@ -29,6 +31,8 @@ export default function SchoolYearSettingsModal({
 }) {
   const toast = useToast();
   const planningModalActionsRef = useRef(null);
+  const overlayRef = useRef(null);
+  useModalStackElevation(overlayRef, visible, NESTED_MODAL_STACK_Z);
   const [schoolYearLabel, setSchoolYearLabel] = useState(null);
   const [initialDataByYear, setInitialDataByYear] = useState({});
   const initialDataByYearRef = useRef({});
@@ -134,6 +138,7 @@ export default function SchoolYearSettingsModal({
   }, [onClose, schoolYearLabel, toast]);
 
   const requestClose = useCallback(() => {
+    if (isDatePickerModalOpen()) return;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('plannerSettingsRequestClose'));
       return;
@@ -168,11 +173,14 @@ export default function SchoolYearSettingsModal({
       animationType={Platform.OS === 'web' ? 'none' : 'fade'}
       onRequestClose={requestClose}
     >
-      <View style={styles.overlay}>
+      <View ref={overlayRef} style={styles.overlay}>
         <TouchableOpacity
           style={StyleSheet.absoluteFill}
           activeOpacity={1}
-          onPress={requestClose}
+          onPress={() => {
+            if (isDatePickerModalOpen()) return;
+            requestClose();
+          }}
         />
         <TouchableOpacity
           activeOpacity={1}

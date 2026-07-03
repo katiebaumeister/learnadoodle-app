@@ -21,6 +21,7 @@ import AddChildStep from './AddChildStep';
 import ParentProfileStep from './ParentProfileStep';
 import CompleteStep from './CompleteStep';
 import { seedHomeWelcomeBulletinPost } from '../../lib/homeWelcomeBulletin';
+import { notifyOnboardingCompleted } from '../../lib/onboardingCrossTab';
 
 const STEPS = ['welcome', 'planning_mode', 'parent_profile', 'learning_context', 'add_child', 'complete'];
 const ONBOARDING_WHO_STORAGE_KEY = 'ld_onboarding_who';
@@ -375,9 +376,10 @@ export default function OnboardingModal({
       // Dispatch first so WebLayout can close modal immediately (avoids depending on refetch, e.g. 429)
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         localStorage.removeItem(ONBOARDING_WHO_STORAGE_KEY);
-        window.dispatchEvent(new CustomEvent('onboardingCompleted', {
-          detail: { planningMode: planningMode || null },
-        }));
+        notifyOnboardingCompleted({
+          planningMode: planningMode || null,
+          familyId: fid,
+        });
       }
       if (onCompleted) await onCompleted();
     } catch (e) {

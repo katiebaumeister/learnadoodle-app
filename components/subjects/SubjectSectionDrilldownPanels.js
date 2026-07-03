@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Pressable } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { ATTENDANCE_COLORS, TOKENS } from '../planner/attendance/constants';
+import YearHeatmapGrid from '../planner/attendance/YearHeatmapGrid';
 import MonthlyCalendarView from '../planner/attendance/MonthlyCalendarView';
 import DayEventsPanel from '../planner/attendance/DayEventsPanel';
 
@@ -31,74 +32,6 @@ function buildMonthCells(monthDate) {
   }
   while (cells.length % 7 !== 0) cells.push(null);
   return cells;
-}
-
-const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-function getDayKey(year, month, day) {
-  const m = String(month + 1).padStart(2, '0');
-  const d = String(day).padStart(2, '0');
-  return `${year}-${m}-${d}`;
-}
-
-function parseDateParts(key) {
-  if (!key || key.length < 10) return null;
-  const year = parseInt(key.slice(0, 4), 10);
-  const month = parseInt(key.slice(5, 7), 10) - 1;
-  const day = parseInt(key.slice(8, 10), 10);
-  if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) return null;
-  return { year, month, day };
-}
-
-function buildDayRange(startKey, endKey) {
-  const start = parseDateParts(startKey);
-  const end = parseDateParts(endKey);
-  if (!start || !end) return [];
-  const startDate = new Date(start.year, start.month, start.day);
-  const endDate = new Date(end.year, end.month, end.day);
-  const keys = [];
-  const cursor = new Date(startDate);
-  while (cursor <= endDate) {
-    keys.push(getDayKey(cursor.getFullYear(), cursor.getMonth(), cursor.getDate()));
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return keys;
-}
-
-function buildMonthBlocks(startKey, endKey, cellSize, gap, monthGap) {
-  const start = parseDateParts(startKey);
-  const end = parseDateParts(endKey);
-  if (!start || !end) return [];
-  const blocks = [];
-  for (let year = start.year; year <= end.year; year += 1) {
-    const monthStart = year === start.year ? start.month : 0;
-    const monthEnd = year === end.year ? end.month : 11;
-    for (let month = monthStart; month <= monthEnd; month += 1) {
-      const totalDays = new Date(year, month + 1, 0).getDate();
-      const firstDay = year === start.year && month === start.month ? start.day : 1;
-      const lastDay = year === end.year && month === end.month ? end.day : totalDays;
-      const numDays = lastDay - firstDay + 1;
-      const width = (cellSize + gap) * numDays - gap;
-      blocks.push({
-        key: `${year}-${String(month + 1).padStart(2, '0')}`,
-        label: `${MONTH_LABELS[month]} ${year}`,
-        width,
-        monthGap,
-      });
-    }
-  }
-  return blocks;
-}
-
-function formatDateDisplay(key) {
-  if (!key) return '—';
-  const parts = parseDateParts(key);
-  if (!parts) return key;
-  return new Date(parts.year, parts.month, parts.day).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
 }
 
 function MonthCalendar({ monthDate, selectedKey, onSelectKey, onMonthChange, getTone }) {
@@ -175,196 +108,82 @@ function YearHeatmap({ title, dateKeys = [], colorForKey }) {
   );
 }
 
-function AttendanceYearHeatmapFull({ attendanceRecords = [], subjectEvents = [], onDayPress = null, isDayMarkable = null, hideLegend = false }) {
-  const recordStatusByKey = useMemo(() => {
-    const map = new Map();
+
+const SUBJECT_SYNTHETIC_CHILD_ID = '__subject__';
+
+export function SubjectAttendanceYearHeatmap({ attendanceRecords = [], subjectEvents = [], onDayPress = null, onMarkDayAttended = null, isDayMarkable = null, hideLegend = false, interactionMode = 'events' }) {
+  const todayKey = useMemo(() => toDateKey(new Date()), []);
+
+  const { yearStart, yearEnd, dayStatusByChild } = useMemo(() => {
+    const recordStatusByKey = new Map();
     attendanceRecords.forEach((record) => {
       const key = toDateKey(record?.day_date);
       if (!key) return;
       const status = String(record?.status || '').toLowerCase();
       if (status === 'present') {
-        map.set(key, 'present');
-      } else if (!map.has(key)) {
-        map.set(key, 'absent');
+        recordStatusByKey.set(key, 'present');
+      } else if (!recordStatusByKey.has(key)) {
+        recordStatusByKey.set(key, 'absent');
       }
     });
-    return map;
-  }, [attendanceRecords]);
 
-  const eventKeys = useMemo(() => {
-    const set = new Set();
+    const eventKeys = new Set();
     subjectEvents.forEach((event) => {
       const key = toDateKey(event?.start_ts || event?.start || event?.start_local || event?.date);
-      if (key) set.add(key);
+      if (key) eventKeys.add(key);
     });
-    return set;
-  }, [subjectEvents]);
 
-  const dataKeys = useMemo(
-    () => Array.from(new Set([...Array.from(recordStatusByKey.keys()), ...Array.from(eventKeys.values())])).sort(),
-    [recordStatusByKey, eventKeys],
-  );
-  const earliestKey = dataKeys[0] || null;
-  const latestKey = dataKeys[dataKeys.length - 1] || null;
-  const earliestYear = earliestKey ? parseInt(earliestKey.slice(0, 4), 10) : null;
-  const latestYear = latestKey ? parseInt(latestKey.slice(0, 4), 10) : null;
-  const defaultYearStartKey = earliestYear ? `${earliestYear}-01-01` : null;
-  const defaultYearEndKey = latestYear ? `${latestYear}-12-31` : null;
-  const [yearStartKey, setYearStartKey] = useState(defaultYearStartKey);
-  const [yearEndKey, setYearEndKey] = useState(defaultYearEndKey);
-  const cellSize = Math.max(20, Math.round(TOKENS.hmCell * 0.85));
-  const gap = Math.max(3, Math.round(TOKENS.hmGap * 0.66));
-  const cellRadius = Math.max(4, Math.round(TOKENS.hmRadius * 0.7));
-  const monthGap = 10;
-  const dayKeys = useMemo(
-    () => (yearStartKey && yearEndKey ? buildDayRange(yearStartKey, yearEndKey) : []),
-    [yearStartKey, yearEndKey],
-  );
-  const monthBlocks = useMemo(
-    () => (yearStartKey && yearEndKey ? buildMonthBlocks(yearStartKey, yearEndKey, cellSize, gap, monthGap) : []),
-    [yearStartKey, yearEndKey, cellSize, gap, monthGap],
-  );
+    const allKeys = Array.from(new Set([...Array.from(recordStatusByKey.keys()), ...Array.from(eventKeys)])).sort();
+    if (!allKeys.length) return { yearStart: null, yearEnd: null, dayStatusByChild: {} };
 
-  useEffect(() => {
-    setYearStartKey(defaultYearStartKey);
-    setYearEndKey(defaultYearEndKey);
-  }, [defaultYearStartKey, defaultYearEndKey]);
+    const earliestYear = parseInt(allKeys[0].slice(0, 4), 10);
+    const latestYear = parseInt(allKeys[allKeys.length - 1].slice(0, 4), 10);
+    const start = `${earliestYear}-01-01`;
+    const end = `${latestYear}-12-31`;
 
-  const shiftDateKeyByMonths = useCallback((key, delta) => {
-    const parts = parseDateParts(key);
-    if (!parts) return key;
-    const next = new Date(parts.year, parts.month + delta, parts.day);
-    return getDayKey(next.getFullYear(), next.getMonth(), next.getDate());
-  }, []);
+    const statusMap = {};
+    allKeys.forEach((key) => {
+      const explicitStatus = recordStatusByKey.get(key);
+      const hasEvent = eventKeys.has(key);
+      const isMarkable = typeof isDayMarkable === 'function' ? !!isDayMarkable(key) : false;
+      const hasSchedule = hasEvent || isMarkable || !!explicitStatus;
+      if (explicitStatus === 'present') {
+        statusMap[key] = 'present';
+      } else if (hasSchedule && key > todayKey) {
+        statusMap[key] = 'unmarked';
+      } else if (hasSchedule) {
+        statusMap[key] = 'absent';
+      } else {
+        statusMap[key] = 'noEvents';
+      }
+    });
 
-  const handleShiftStart = useCallback((delta) => {
-    if (!yearStartKey || !yearEndKey) return;
-    const nextStart = shiftDateKeyByMonths(yearStartKey, delta);
-    if (nextStart > yearEndKey) return;
-    setYearStartKey(nextStart);
-  }, [yearStartKey, yearEndKey, shiftDateKeyByMonths]);
+    return {
+      yearStart: start,
+      yearEnd: end,
+      dayStatusByChild: { [SUBJECT_SYNTHETIC_CHILD_ID]: statusMap },
+    };
+  }, [attendanceRecords, subjectEvents, isDayMarkable, todayKey]);
 
-  const handleShiftEnd = useCallback((delta) => {
-    if (!yearStartKey || !yearEndKey) return;
-    const nextEnd = shiftDateKeyByMonths(yearEndKey, delta);
-    if (nextEnd < yearStartKey) return;
-    setYearEndKey(nextEnd);
-  }, [yearStartKey, yearEndKey, shiftDateKeyByMonths]);
-
-  if (!dataKeys.length) {
+  if (!yearStart || !yearEnd) {
     return (
       <View style={styles.emptyBox}>
         <Text style={styles.emptyText}>No data yet for this view.</Text>
       </View>
     );
   }
-  const todayKey = toDateKey(new Date());
-  const initialScrollX = useMemo(() => {
-    let x = 0;
-    for (let i = 0; i < monthBlocks.length; i += 1) {
-      const month = monthBlocks[i];
-      const year = parseInt(month.key.slice(0, 4), 10);
-      const monthIndex = parseInt(month.key.slice(5, 7), 10) - 1;
-      const monthStart = getDayKey(year, monthIndex, 1);
-      const monthEnd = getDayKey(year, monthIndex, new Date(year, monthIndex + 1, 0).getDate());
-      if (todayKey >= monthStart && todayKey <= monthEnd) break;
-      x += month.width + month.monthGap;
-    }
-    return Math.max(0, x);
-  }, [monthBlocks, todayKey]);
 
   return (
-    <View style={styles.subjectHeatmapWrap}>
-      <ScrollView
-        horizontal
-        style={styles.subjectHeatmapScroll}
-        contentContainerStyle={styles.subjectHeatmapScrollContent}
-        contentOffset={{ x: initialScrollX, y: 0 }}
-        showsHorizontalScrollIndicator
-      >
-        <View style={styles.subjectHeatmapInner}>
-          <View style={styles.subjectHeatmapMonthRow}>
-            {monthBlocks.map((month) => (
-              <View key={month.key} style={[styles.subjectHeatmapMonthLabelWrap, { width: month.width, marginRight: month.monthGap }]}>
-                <Text style={styles.subjectHeatmapMonthLabel}>{month.label}</Text>
-              </View>
-            ))}
-          </View>
-          <View style={styles.subjectHeatmapCellsRow}>
-            {dayKeys.map((key) => {
-              const explicitStatus = recordStatusByKey.get(key);
-              const hasEvent = eventKeys.has(key);
-              const isMarkableByRule = typeof isDayMarkable === 'function' ? !!isDayMarkable(key) : false;
-              const isMarkableDay = isMarkableByRule || hasEvent || !!explicitStatus;
-              const hasSchedule = hasEvent || isMarkableDay;
-              const status = explicitStatus || (hasSchedule ? (key > todayKey ? 'upcoming' : 'absent') : 'noEvents');
-              const canPressDay = typeof onDayPress === 'function' && isMarkableDay;
-              const handleDayPress = () => {
-                if (typeof onDayPress === 'function') onDayPress(key);
-              };
-              return (
-                <Pressable
-                  key={key}
-                  style={({ pressed }) => ([
-                    styles.subjectHeatmapCell,
-                    { width: cellSize, height: cellSize, borderRadius: cellRadius, marginRight: gap },
-                    status === 'present' && styles.heatmapPresent,
-                    status === 'absent' && styles.heatmapAbsent,
-                    status === 'upcoming' && styles.heatmapUpcoming,
-                    status === 'noEvents' && styles.heatmapNoEvents,
-                    pressed && canPressDay ? styles.subjectHeatmapCellPressed : null,
-                  ])}
-                  title={key}
-                  onPress={canPressDay ? handleDayPress : undefined}
-                  {...(Platform.OS === 'web' && {
-                    role: canPressDay ? 'button' : undefined,
-                    cursor: canPressDay ? 'pointer' : 'default',
-                    onMouseDown: canPressDay ? (e) => {
-                      e.preventDefault();
-                    } : undefined,
-                  })}
-                >
-                  <Text style={styles.subjectHeatmapCellDayText}>{parseInt(key.slice(8, 10), 10)}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-      </ScrollView>
-      {!hideLegend ? (
-        <View style={styles.subjectHeatmapLegendAndRangeRow}>
-          <View style={styles.subjectHeatmapLegend}>
-            <View style={styles.subjectHeatmapLegendPill}>
-              <View style={[styles.subjectHeatmapLegendDot, styles.heatmapPresent]} />
-              <Text style={styles.subjectHeatmapLegendText}>Attended</Text>
-            </View>
-            <View style={styles.subjectHeatmapLegendPill}>
-              <View style={[styles.subjectHeatmapLegendDot, styles.heatmapAbsent]} />
-              <Text style={styles.subjectHeatmapLegendText}>Unattended</Text>
-            </View>
-            <View style={styles.subjectHeatmapLegendPill}>
-              <View style={[styles.subjectHeatmapLegendDot, styles.heatmapUpcoming]} />
-              <Text style={styles.subjectHeatmapLegendText}>Upcoming</Text>
-            </View>
-            <View style={styles.subjectHeatmapLegendPill}>
-              <View style={[styles.subjectHeatmapLegendDot, styles.heatmapNoEvents]} />
-              <Text style={styles.subjectHeatmapLegendText}>No events</Text>
-            </View>
-          </View>
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-export function SubjectAttendanceYearHeatmap({ attendanceRecords = [], subjectEvents = [], onDayPress = null, isDayMarkable = null, hideLegend = false }) {
-  return (
-    <AttendanceYearHeatmapFull
-      attendanceRecords={attendanceRecords}
-      subjectEvents={subjectEvents}
+    <YearHeatmapGrid
+      yearStart={yearStart}
+      yearEnd={yearEnd}
+      selectedChildId={SUBJECT_SYNTHETIC_CHILD_ID}
+      dayStatusByChild={dayStatusByChild}
+      offDayKeys={null}
       onDayPress={onDayPress}
-      isDayMarkable={isDayMarkable}
-      hideLegend={hideLegend}
+      onMarkDayAttended={onMarkDayAttended}
+      interactionMode={interactionMode}
+      showLegend={!hideLegend}
     />
   );
 }
@@ -611,44 +430,11 @@ const styles = StyleSheet.create({
   detailRowMeta: { fontSize: 12, color: '#64748b', marginTop: 2 },
   emptyBox: { paddingVertical: 12 },
   emptyText: { fontSize: 13, color: '#64748b' },
-  subjectHeatmapWrap: { marginTop: 0 },
-  subjectHeatmapHelpText: {
-    fontSize: TOKENS.fontSizeCaption,
-    color: TOKENS.textMuted,
-    marginBottom: 10,
-    lineHeight: 17,
-  },
-  subjectHeatmapScroll: { width: '100%' },
-  subjectHeatmapScrollContent: { paddingBottom: 4, paddingRight: 12 },
-  subjectHeatmapInner: { minWidth: '100%' },
-  subjectHeatmapMonthRow: { flexDirection: 'row', marginBottom: 12 },
-  subjectHeatmapMonthLabelWrap: { alignItems: 'center' },
-  subjectHeatmapMonthLabel: { fontSize: 14, fontWeight: '600', color: TOKENS.text },
-  subjectHeatmapCellsRow: { flexDirection: 'row', marginBottom: 6 },
-  subjectHeatmapCell: {
-    borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.06)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  subjectHeatmapCellPressed: {
-    transform: [{ scale: 0.96 }],
-    opacity: 0.9,
-  },
-  subjectHeatmapCellDayText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: 'rgba(15, 23, 42, 0.75)',
-  },
   yearAtGlanceHeaderRow: {
     marginBottom: 2,
   },
   yearAtGlanceRangeRow: {
     marginBottom: 6,
-  },
-  subjectHeatmapLegendAndRangeRow: {
-    marginTop: TOKENS.s3,
-    alignItems: 'flex-start',
   },
   subjectHeatmapLegend: {
     flexDirection: 'row',

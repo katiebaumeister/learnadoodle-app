@@ -8,7 +8,7 @@ import {
   Image,
   ScrollView,
 } from 'react-native';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Plus } from 'lucide-react';
 import { getWorkStatusLabel, parseWorkSpec } from '../../lib/workEventHelpers';
 import { isPlannerLearningDayEvent } from '../../lib/planner/plannerLearningDayChip';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
@@ -120,10 +120,23 @@ function isMissingWork(assignment, eventById) {
   return due.getTime() < Date.now();
 }
 
-function GradesPanelHeader() {
+function GradesPanelHeader({ onAddGrade }) {
   return (
     <View style={styles.panelToolbar}>
       <Text style={styles.panelTitle}>Grades</Text>
+      {typeof onAddGrade === 'function' ? (
+        <TouchableOpacity
+          style={styles.addGradeButton}
+          onPress={onAddGrade}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Add grade"
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Plus size={16} color="#6B7280" />
+          <Text style={styles.addGradeButtonText}>Add grade</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -154,6 +167,7 @@ export default function SubjectGradesPanel({
   children = [],
   onOpenAssignment,
   onOpenGradedItem,
+  onAddGrade,
 }) {
   const eventById = useMemo(() => buildEventById(events), [events]);
 
@@ -362,7 +376,7 @@ export default function SubjectGradesPanel({
 
   return (
     <View style={[styles.root, styles.rootExpanded]}>
-      <GradesPanelHeader />
+      <GradesPanelHeader onAddGrade={onAddGrade} />
       <ScrollView
         style={styles.panelScroll}
         contentContainerStyle={styles.scrollContent}
@@ -403,12 +417,29 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   panelTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '700',
     color: '#1e293b',
     letterSpacing: -0.2,
     flex: 1,
     minWidth: 0,
+    ...LEAGUE_FONT,
+  },
+  addGradeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    backgroundColor: '#F9FAFB',
+  },
+  addGradeButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
     ...LEAGUE_FONT,
   },
   panelScroll: {

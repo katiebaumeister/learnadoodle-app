@@ -625,23 +625,36 @@ export default function AddSubjectModal({
       }
 
       const savedSubjectId = newSubjects?.[0]?.id || existingSubjectId || null;
+      let scheduleWarning = null;
 
       if (savedSubjectId) {
-        await saveSubjectGradingSettings(savedSubjectId, familyId, gradingDraft);
-        if (isScheduleFormConfigured({ weekdays, startTime, durationMinutes, startDate, endDate })) {
-          await applySubjectScheduleToCalendar({
-            familyId,
-            subject: { id: savedSubjectId, name: subjectName.trim() },
-            assignedChildIds: selectedChildIds,
-            allChildIds: (children || []).map((c) => c.id).filter(Boolean),
-            weekdays,
-            startTime,
-            durationMinutes: Number(durationMinutes),
-            startDate,
-            endDate,
-            applyScope: APPLY_SCOPE_FULL_YEAR,
-          });
+        try {
+          await saveSubjectGradingSettings(savedSubjectId, familyId, gradingDraft);
+        } catch (gradingErr) {
+          console.warn('[AddSubjectModal] Failed to save grading settings:', gradingErr);
+          scheduleWarning = gradingErr?.message || 'Grading settings could not be saved.';
         }
+
+        if (isScheduleFormConfigured({ weekdays, startTime, durationMinutes, startDate, endDate })) {
+          try {
+            await applySubjectScheduleToCalendar({
+              familyId,
+              subject: { id: savedSubjectId, name: subjectName.trim() },
+              assignedChildIds: selectedChildIds,
+              allChildIds: (children || []).map((c) => c.id).filter(Boolean),
+              weekdays,
+              startTime,
+              durationMinutes: Number(durationMinutes),
+              startDate,
+              endDate,
+              applyScope: APPLY_SCOPE_FULL_YEAR,
+            });
+          } catch (scheduleErr) {
+            console.warn('[AddSubjectModal] Failed to apply subject schedule:', scheduleErr);
+            scheduleWarning = scheduleErr?.message || 'Subject was saved, but the schedule could not be applied.';
+          }
+        }
+
         try {
           await saveSubjectAttachmentLinks({
             familyId,
@@ -674,8 +687,11 @@ export default function AddSubjectModal({
       
       if (toast && toast.push) {
         toast.push(successMessage, 'success');
+        if (scheduleWarning) {
+          toast.push(scheduleWarning, 'warning');
+        }
       } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        alert(successMessage);
+        alert(scheduleWarning ? `${successMessage}\n\n${scheduleWarning}` : successMessage);
       }
       
       if (onSubjectAdded && newSubjects && newSubjects.length > 0) {

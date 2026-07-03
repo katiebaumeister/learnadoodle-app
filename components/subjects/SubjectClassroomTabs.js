@@ -7,6 +7,7 @@ const TABS = [
   { id: 'classwork', label: 'Classwork' },
   { id: 'materials', label: 'Materials' },
   { id: 'grades', label: 'Grades' },
+  { id: 'attendance', label: 'Attendance' },
 ];
 
 const LEAGUE_FONT = Platform.OS === 'web'

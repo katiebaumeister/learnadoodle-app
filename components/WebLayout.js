@@ -79,6 +79,7 @@ import { ToastProvider } from './Toast';
 import { supabase } from '../lib/supabase';
 import { prefetchPlanEditListForFamily } from '../lib/services/plannerPrefetch';
 import { preloadBulletinBoardForFamily, invalidateBulletinPostsCache } from '../lib/bulletinBoardCache';
+import { subscribeOnboardingCompleted } from '../lib/onboardingCrossTab';
 import { seedHomeWelcomeBulletinPost } from '../lib/homeWelcomeBulletin';
 import { useFamilyPlanningMode } from '../lib/useFamilyPlanningMode';
 import { PlannerDiffProvider } from '../app/state/usePlannerDiffStore';
@@ -830,21 +831,37 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     let cancelled = false;
     const loadUnread = async () => {
       try {
-        const { count, error } = await supabase
+        let total = 0;
+        const { count: userUnread, error: userError } = await supabase
           .from('family_direct_messages')
           .select('id', { count: 'exact', head: true })
           .eq('recipient_user_id', authUserId)
           .is('read_at', null)
           .neq('sender_user_id', authUserId);
-        if (!cancelled && !error) {
-          setUnreadMessagesCount(count || 0);
+        if (!userError) total += userUnread || 0;
+
+        const childScopeId = session?.child_id ? String(session.child_id) : null;
+        if (childScopeId && familyId) {
+          const { count: childUnread, error: childError } = await supabase
+            .from('family_direct_messages')
+            .select('id', { count: 'exact', head: true })
+            .eq('family_id', familyId)
+            .eq('recipient_child_id', childScopeId)
+            .is('read_at', null)
+            .neq('sender_user_id', authUserId);
+          if (!childError) total += childUnread || 0;
+        }
+
+        if (!cancelled) {
+          setUnreadMessagesCount(total);
         }
       } catch (_) {
         /* ignore (table/RLS unavailable) */
       }
     };
     loadUnread();
-    const interval = setInterval(loadUnread, 60000);
+    const pollMs = isMessagesPaneOpen ? 12000 : 60000;
+    const interval = setInterval(loadUnread, pollMs);
     let onRefresh;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       onRefresh = () => loadUnread();
@@ -861,7 +878,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         window.removeEventListener('focus', onRefresh);
       }
     };
-  }, [authUserId, isMessagesPaneOpen]);
+  }, [authUserId, familyId, isMessagesPaneOpen, session?.child_id]);
   const [filterExpanded, setFilterExpanded] = useState(false);
   const filterButtonRef = useRef(null);
   const [filterDropdownPosition, setFilterDropdownPosition] = useState({ top: 0, left: 0 });
@@ -2244,40 +2261,70 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [fetchFamilyData]);
 
   // When onboarding completes (modal or event), close modal optimistically and refresh family/calendar/children/subjects
+  const applyOnboardingCompleted = useCallback(async (eventDetail = {}) => {
+    setOnboardingJustCompleted(true);
+    setInitialOnboardingBlocked(false);
+    fetchFamilyData();
+    fetchFamilyMembers();
+    window.dispatchEvent(new CustomEvent('refreshCalendar'));
+    window.dispatchEvent(new CustomEvent('refreshChildren'));
+    window.dispatchEvent(new CustomEvent('refreshSubjects'));
+
+    const fid = eventDetail?.familyId || familyId || sessionFamilyId;
+    const planningMode =
+      eventDetail?.planningMode
+      || family?.default_planning_mode
+      || null;
+    if (!fid) return;
+
+    invalidateBulletinPostsCache(fid);
+    try {
+      const seedResult = await seedHomeWelcomeBulletinPost({ familyId: fid, planningMode });
+      if (seedResult?.error) {
+        console.warn('[WebLayout] home welcome bulletin', seedResult.error);
+      }
+    } catch (seedErr) {
+      console.warn('[WebLayout] home welcome bulletin', seedErr);
+    }
+    invalidateBulletinPostsCache(fid);
+    window.dispatchEvent(new CustomEvent('refreshBulletinBoard', { detail: { familyId: fid } }));
+    preloadBulletinBoardForFamily(fid).catch(() => {});
+  }, [fetchFamilyData, fetchFamilyMembers, familyId, sessionFamilyId, family?.default_planning_mode]);
+
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handleOnboardingCompleted = async (event) => {
-      setOnboardingJustCompleted(true);
-      setInitialOnboardingBlocked(false);
-      fetchFamilyData();
-      fetchFamilyMembers();
-      window.dispatchEvent(new CustomEvent('refreshCalendar'));
-      window.dispatchEvent(new CustomEvent('refreshChildren'));
-      window.dispatchEvent(new CustomEvent('refreshSubjects'));
-
-      const fid = familyId || sessionFamilyId;
-      const planningMode =
-        event?.detail?.planningMode
-        || family?.default_planning_mode
-        || null;
-      if (!fid) return;
-
-      invalidateBulletinPostsCache(fid);
-      try {
-        const seedResult = await seedHomeWelcomeBulletinPost({ familyId: fid, planningMode });
-        if (seedResult?.error) {
-          console.warn('[WebLayout] home welcome bulletin', seedResult.error);
-        }
-      } catch (seedErr) {
-        console.warn('[WebLayout] home welcome bulletin', seedErr);
-      }
-      invalidateBulletinPostsCache(fid);
-      window.dispatchEvent(new CustomEvent('refreshBulletinBoard', { detail: { familyId: fid } }));
-      preloadBulletinBoardForFamily(fid).catch(() => {});
+    const handleOnboardingCompleted = (event) => {
+      applyOnboardingCompleted(event?.detail || {});
     };
     window.addEventListener('onboardingCompleted', handleOnboardingCompleted);
-    return () => window.removeEventListener('onboardingCompleted', handleOnboardingCompleted);
-  }, [fetchFamilyData, fetchFamilyMembers, familyId, sessionFamilyId, family?.default_planning_mode]);
+    const unsubscribeCrossTab = subscribeOnboardingCompleted(applyOnboardingCompleted);
+    return () => {
+      window.removeEventListener('onboardingCompleted', handleOnboardingCompleted);
+      unsubscribeCrossTab();
+    };
+  }, [applyOnboardingCompleted]);
+
+  // Another tab may finish onboarding first — poll status while this tab is still blocked.
+  useEffect(() => {
+    if (!onboardingBlocked || !authUserId || !hasSession) return undefined;
+    let cancelled = false;
+    const syncFromServer = async () => {
+      try {
+        const res = await getOnboardingStatus();
+        const data = res?.data ?? res;
+        if (cancelled || !data?.onboarding_completed) return;
+        applyOnboardingCompleted({ planningMode: data.default_planning_mode || null });
+      } catch (_) {
+        /* ignore transient API errors */
+      }
+    };
+    syncFromServer();
+    const id = setInterval(syncFromServer, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [onboardingBlocked, authUserId, hasSession, applyOnboardingCompleted]);
 
   // Handle URL-based routing for subject detail pages
   useEffect(() => {

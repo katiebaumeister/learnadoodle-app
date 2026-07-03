@@ -10,8 +10,12 @@ import {
 } from 'react-native';
 import { Eye, EyeOff } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-
-const hasSpecialCharRe = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?]/;
+import {
+  isPasswordSetupValid,
+  passwordRequirementsErrorMessage,
+  PASSWORD_SPECIAL_CHAR_RE,
+  validatePassword,
+} from '../lib/passwordValidation';
 
 export default function SetPasswordPage() {
   const [userEmail, setUserEmail] = useState('');
@@ -88,27 +92,9 @@ export default function SetPasswordPage() {
     return () => { mounted = false; };
   }, []);
 
-  const validatePassword = (password) => {
-    const hasUpperCase = /[A-Z]/.test(password);
-    const hasLowerCase = /[a-z]/.test(password);
-    const hasDigits = /\d/.test(password);
-    const hasSpecialChar = hasSpecialCharRe.test(password);
-    const hasMinLength = password.length >= 10;
-    return {
-      isValid: hasUpperCase && hasLowerCase && hasDigits && hasSpecialChar && hasMinLength,
-      hasUpperCase,
-      hasLowerCase,
-      hasDigits,
-      hasSpecialChar,
-      hasMinLength,
-    };
-  };
+  const validatePasswordRules = validatePassword;
 
-  const isFormValid = useMemo(() => {
-    if (!newPassword || !confirmPassword) return false;
-    const p = validatePassword(newPassword);
-    return p.isValid && newPassword === confirmPassword;
-  }, [newPassword, confirmPassword]);
+  const isFormValid = useMemo(() => isPasswordSetupValid(newPassword, confirmPassword), [newPassword, confirmPassword]);
 
   const handleSubmit = async () => {
     setErrorMessage('');
@@ -120,15 +106,9 @@ export default function SetPasswordPage() {
       setErrorMessage('Passwords do not match.');
       return;
     }
-    const p = validatePassword(newPassword);
+    const p = validatePasswordRules(newPassword);
     if (!p.isValid) {
-      const missing = [];
-      if (!p.hasMinLength) missing.push('at least 10 characters');
-      if (!p.hasUpperCase) missing.push('1 uppercase letter');
-      if (!p.hasLowerCase) missing.push('1 lowercase letter');
-      if (!p.hasDigits) missing.push('1 number');
-      if (!p.hasSpecialChar) missing.push('1 special character');
-      setErrorMessage(`Please include: ${missing.join(', ')}.`);
+      setErrorMessage(passwordRequirementsErrorMessage(p) || 'Password does not meet requirements.');
       return;
     }
 
@@ -262,7 +242,7 @@ export default function SetPasswordPage() {
           <Text style={[styles.requirement, /[A-Z]/.test(newPassword) && styles.requirementMet]}>• Contains uppercase letter</Text>
           <Text style={[styles.requirement, /[a-z]/.test(newPassword) && styles.requirementMet]}>• Contains lowercase letter</Text>
           <Text style={[styles.requirement, /\d/.test(newPassword) && styles.requirementMet]}>• Contains number</Text>
-          <Text style={[styles.requirement, hasSpecialCharRe.test(newPassword) && styles.requirementMet]}>• Contains special character</Text>
+          <Text style={[styles.requirement, PASSWORD_SPECIAL_CHAR_RE.test(newPassword) && styles.requirementMet]}>• Contains special character</Text>
           {newPassword && confirmPassword && (
             <Text style={[styles.requirement, newPassword === confirmPassword && styles.requirementMet]}>• Passwords match</Text>
           )}

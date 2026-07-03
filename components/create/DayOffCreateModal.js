@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Modal, View, Text, TextInput, TouchableOpacity, Platform, Alert, ActivityIndicator } from 'react-native';
+import { Modal, View, Text, TextInput, TouchableOpacity, Platform } from 'react-native';
 import { useToast } from '../Toast';
+import ConfirmDialog from '../ConfirmDialog';
 import CreateModalShell from './shared/CreateModalShell';
 import ScheduleDateFields from './shared/ScheduleDateFields';
 import AdditionalNotesSection from './shared/AdditionalNotesSection';
@@ -42,6 +43,8 @@ export default function DayOffCreateModal({
   const [recurrenceEndDate, setRecurrenceEndDate] = useState(null);
   const [datePickerTarget, setDatePickerTarget] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [validationBanner, setValidationBanner] = useState('');
   const [errors, setErrors] = useState({});
 
@@ -64,6 +67,8 @@ export default function DayOffCreateModal({
     setDatePickerTarget(null);
     setValidationBanner('');
     setErrors({});
+    setShowDeleteConfirm(false);
+    setDeleting(false);
   }, [visible, editRow, defaultDate, isEditMode]);
 
   const selectRepeatMode = useCallback((repeating) => {
@@ -128,34 +133,24 @@ export default function DayOffCreateModal({
     }
   };
 
-  const confirmDelete = () => {
-    if (!editRow?.id || submitting) return;
-    const runDelete = async () => {
-      setSubmitting(true);
-      try {
-        await deleteDayOff(editRow);
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
-          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
-        }
-        toast.push('Day off deleted', 'success');
-        onDeleted?.(editRow);
-        onClose?.();
-      } catch (err) {
-        toast.push(err?.message || 'Failed to delete day off', 'error');
-      } finally {
-        setSubmitting(false);
+  const handleDeleteDayOff = async () => {
+    if (!editRow?.id || submitting || deleting) return;
+    setDeleting(true);
+    try {
+      await deleteDayOff(editRow);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
       }
-    };
-
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm('Delete this day off?')) runDelete();
-      return;
+      toast.push('Day off deleted', 'success');
+      setShowDeleteConfirm(false);
+      onDeleted?.(editRow);
+      onClose?.();
+    } catch (err) {
+      toast.push(err?.message || 'Failed to delete day off', 'error');
+    } finally {
+      setDeleting(false);
     }
-    Alert.alert('Delete day off', 'Delete this day off?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: runDelete },
-    ]);
   };
 
   if (!visible) return null;
@@ -184,10 +179,12 @@ export default function DayOffCreateModal({
               primaryLabel={submitting ? 'Saving…' : 'Save changes'}
               onCancel={onClose}
               onPrimary={handleSave}
-              onDelete={confirmDelete}
-              destructiveLabel="Delete day off"
+              onDelete={() => {
+                if (!submitting && !deleting) setShowDeleteConfirm(true);
+              }}
+              destructiveLabel={deleting ? 'Deleting…' : 'Delete day off'}
               accent="#9ECFFB"
-              disabled={submitting}
+              disabled={submitting || deleting}
               visuallyDisabled={!title.trim()}
               loading={submitting}
               onBlockedPrimary={() => validate()}
@@ -291,6 +288,23 @@ export default function DayOffCreateModal({
           else setStartDate(nextDate);
           setDatePickerTarget(null);
         }}
+      />
+
+      <ConfirmDialog
+        visible={showDeleteConfirm}
+        title="Delete day off?"
+        message={
+          title.trim()
+            ? `"${title.trim()}" will be removed from your school year calendar. This cannot be undone.`
+            : 'This day off will be removed from your school year calendar. This cannot be undone.'
+        }
+        confirmLabel={deleting ? 'Deleting…' : 'Delete day off'}
+        cancelLabel="Cancel"
+        destructive
+        onCancel={() => {
+          if (!deleting) setShowDeleteConfirm(false);
+        }}
+        onConfirm={handleDeleteDayOff}
       />
     </>
   );

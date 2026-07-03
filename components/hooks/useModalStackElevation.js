@@ -52,9 +52,15 @@ export function useModalStackElevation(overlayRef, visible, zIndex = ELEVATED_MO
         appliedRef.current = animationDiv;
       }
     };
-    const t = setTimeout(apply, 50);
+    const t = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame(apply)
+      : setTimeout(apply, 0);
     return () => {
-      clearTimeout(t);
+      if (typeof cancelAnimationFrame === 'function' && typeof t === 'number') {
+        cancelAnimationFrame(t);
+      } else {
+        clearTimeout(t);
+      }
       if (appliedRef.current) {
         appliedRef.current.style.zIndex = String(DEFAULT_MODAL_Z);
         appliedRef.current = null;

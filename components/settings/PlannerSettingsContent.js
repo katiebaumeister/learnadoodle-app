@@ -33,6 +33,7 @@ import { supabase } from '../../lib/supabase';
 import { apiRequest } from '../../lib/apiClient';
 import { useToast } from '../Toast';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
+import { isDatePickerModalOpen } from '../ui/datePickerModalGuard';
 import MaskedTimeInput from '../ui/MaskedTimeInput';
 import { LEARNADOODLE_LIGHT_BLUE, comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 import { designTokens } from '../../theme/designTokens';
@@ -443,6 +444,7 @@ export default function PlannerSettingsContent({
   const [error, setError] = useState(null);
   const [showNoSubjectsForPerSubjectModal, setShowNoSubjectsForPerSubjectModal] = useState(false);
   const saveTimeoutRef = useRef(null);
+  const persistDebounceRef = useRef(null);
   const subjectTargetSaveTimeoutRef = useRef(null);
   const loadDefaultsRequestRef = useRef(0);
   const resetDefaultsWhenNoSubjectsInFlightRef = useRef(false);
@@ -1248,12 +1250,13 @@ export default function PlannerSettingsContent({
     loadDefaults();
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      if (persistDebounceRef.current) clearTimeout(persistDebounceRef.current);
       if (subjectTargetSaveTimeoutRef.current) clearTimeout(subjectTargetSaveTimeoutRef.current);
     };
   }, [loadDefaults, initialData]);
 
   const persist = useCallback(
-    async (updates) => {
+    async (updates, options = {}) => {
       if (!familyId) return;
       if (readOnly) {
         toast.push('Your family admin has disabled changing school year settings.', 'error');
@@ -1396,7 +1399,9 @@ export default function PlannerSettingsContent({
         return true;
       } catch (err) {
         setError(err?.message || 'Failed to save');
-        toast.push(err?.message || 'Failed to save', 'error');
+        if (!options?.silent) {
+          toast.push(err?.message || 'Failed to save', 'error');
+        }
         return false;
       } finally {
         setSaving(false);
@@ -1410,8 +1415,10 @@ export default function PlannerSettingsContent({
       setHasPendingModalSave(true);
       return;
     }
-    setTimeout(() => {
-      persist({});
+    if (persistDebounceRef.current) clearTimeout(persistDebounceRef.current);
+    persistDebounceRef.current = setTimeout(() => {
+      persistDebounceRef.current = null;
+      persist({}, { silent: true });
     }, delayMs);
   }, [embeddedInModal, persist]);
 
@@ -1859,6 +1866,7 @@ export default function PlannerSettingsContent({
   useEffect(() => {
     if (!(embeddedInModal && Platform.OS === 'web' && typeof window !== 'undefined')) return undefined;
     const handleExternalCloseRequest = () => {
+      if (isDatePickerModalOpen()) return;
       handleRequestClose();
     };
     window.addEventListener('plannerSettingsRequestClose', handleExternalCloseRequest);

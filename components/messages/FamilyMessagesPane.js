@@ -48,6 +48,7 @@ export default function FamilyMessagesPane({
   const [familyMembersList, setFamilyMembersList] = useState([]);
   const inboxReadyRef = useRef(false);
   const loadInFlightRef = useRef(false);
+  const pendingInboxRefreshRef = useRef(false);
 
   const familyChildrenKey = useMemo(
     () => (familyChildren || [])
@@ -65,7 +66,10 @@ export default function FamilyMessagesPane({
       inboxReadyRef.current = false;
       return;
     }
-    if (loadInFlightRef.current) return;
+    if (loadInFlightRef.current) {
+      pendingInboxRefreshRef.current = true;
+      return;
+    }
     loadInFlightRef.current = true;
     const showLoadingUi = !silent && !inboxReadyRef.current;
     if (showLoadingUi) setLoading(true);
@@ -170,6 +174,10 @@ export default function FamilyMessagesPane({
     } finally {
       if (showLoadingUi) setLoading(false);
       loadInFlightRef.current = false;
+      if (pendingInboxRefreshRef.current) {
+        pendingInboxRefreshRef.current = false;
+        loadInbox({ silent: true });
+      }
     }
   }, [currentUserId, familyChildrenKey, familyId, viewerChildId, viewerRole]);
 
@@ -183,11 +191,21 @@ export default function FamilyMessagesPane({
     const refresh = () => { loadInbox({ silent: true }); };
     window.addEventListener('childAssignmentsNeedRefresh', refresh);
     window.addEventListener('parentAssignmentsNeedRefresh', refresh);
+    window.addEventListener('familyDirectMessagesUpdated', refresh);
     return () => {
       window.removeEventListener('childAssignmentsNeedRefresh', refresh);
       window.removeEventListener('parentAssignmentsNeedRefresh', refresh);
+      window.removeEventListener('familyDirectMessagesUpdated', refresh);
     };
   }, [active, loadInbox]);
+
+  useEffect(() => {
+    if (!active || !familyId) return undefined;
+    const poll = setInterval(() => {
+      loadInbox({ silent: true });
+    }, 12000);
+    return () => clearInterval(poll);
+  }, [active, familyId, loadInbox]);
 
   const handleSelectParticipant = useCallback((participant) => {
     setChatParticipant(participant);

@@ -14,6 +14,11 @@ import { Eye, EyeOff, X, Mail, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { getAPIBase } from '../lib/apiClient';
 import { auth as supabaseAuth } from '../lib/supabase';
+import {
+  hasPendingSignupVerification,
+  markPendingSignupVerification,
+  redirectIfAuthenticatedSession,
+} from '../lib/onboardingCrossTab';
 import LandingPage from './LandingPage';
 
 const googleLogo = require('../assets/google.png');
@@ -179,22 +184,39 @@ export default function WebAuthScreen() {
     };
   }, []);
 
-  // While waiting for email confirmation, poll for session (e.g. user verified in another tab).
+  // While waiting for email confirmation, watch for session from another tab/window.
   useEffect(() => {
-    if (!showAccountCreatedConfirmation || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const shouldWatch = showAccountCreatedConfirmation || hasPendingSignupVerification();
+    if (!shouldWatch) return undefined;
+
     let cancelled = false;
-    const redirectIfSession = async () => {
-      try {
-        const { data: { session } } = await supabaseAuth.getCurrentSession();
-        if (cancelled || !session?.user) return;
-        window.location.href = '/?signup=true';
-      } catch (_) {}
+    const tryRedirect = () => {
+      if (cancelled) return;
+      redirectIfAuthenticatedSession(() => supabaseAuth.getCurrentSession());
     };
-    redirectIfSession();
-    const id = setInterval(redirectIfSession, 3000);
+
+    tryRedirect();
+    const intervalId = setInterval(tryRedirect, 2000);
+
+    const onStorage = (event) => {
+      if (event.key === 'supabase-auth' && event.newValue) {
+        tryRedirect();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+
+    const { data: authListener } = supabaseAuth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        tryRedirect();
+      }
+    });
+
     return () => {
       cancelled = true;
-      clearInterval(id);
+      clearInterval(intervalId);
+      window.removeEventListener('storage', onStorage);
+      authListener?.subscription?.unsubscribe?.();
     };
   }, [showAccountCreatedConfirmation]);
 
@@ -332,6 +354,7 @@ export default function WebAuthScreen() {
           setVerifyEmailForConfirmation(email.trim());
           setResendFeedback('');
           setShowAccountCreatedConfirmation(true);
+          markPendingSignupVerification(email.trim());
           try {
             const base = getAPIBase();
             await fetch(`${base}/api/auth/signup-confirmation-sent`, {

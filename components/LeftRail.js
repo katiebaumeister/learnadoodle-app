@@ -27,6 +27,7 @@ const PERMANENT_SIDEBAR_NAV_INSET = 28;
 const SIDEBAR_BRAND_LOGO_ASPECT = 1392 / 400;
 /** Symmetric bleed cancels nav inset so the wordmark spans the full sidebar width, centered. */
 const SIDEBAR_BRAND_LOGO_BLEED = PERMANENT_SIDEBAR_NAV_INSET;
+const SHOW_SIDEBAR_BETA_BADGE = true;
 
 const resolveAvatarSource = (avatarKey) => {
   return resolveBundledAvatarSource(avatarKey);
@@ -421,6 +422,19 @@ export default function LeftRail({
                 resizeMode: 'contain',
                 placeholderStyle: styles.topIconPlaceholder,
               })}
+              {SHOW_SIDEBAR_BETA_BADGE ? (
+                <View
+                  style={[
+                    styles.brandBetaBadge,
+                    permanentSidebar && styles.brandBetaBadgePermanent,
+                  ]}
+                  pointerEvents="none"
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                >
+                  <Text style={styles.brandBetaText}>beta</Text>
+                </View>
+              ) : null}
             </View>
           </TouchableOpacity>
         )}
@@ -755,6 +769,7 @@ const styles = StyleSheet.create({
     overflow: 'visible',
   },
   topIconWrapper: {
+    position: 'relative',
     width: '100%',
     maxWidth: ICON_RAIL_EXPANDED_WIDTH,
     marginHorizontal: -SIDEBAR_BRAND_LOGO_BLEED,
@@ -767,6 +782,29 @@ const styles = StyleSheet.create({
     marginHorizontal: -SIDEBAR_BRAND_LOGO_BLEED,
     alignSelf: 'stretch',
     overflow: 'visible',
+  },
+  brandBetaBadge: {
+    position: 'absolute',
+    right: -14,
+    top: 11,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 999,
+    backgroundColor: 'rgba(107, 179, 232, 0.92)',
+  },
+  brandBetaBadgePermanent: {
+    right: -18,
+    top: 7,
+  },
+  brandBetaText: {
+    fontSize: 9,
+    lineHeight: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   topIconShell: {
     width: '100%',

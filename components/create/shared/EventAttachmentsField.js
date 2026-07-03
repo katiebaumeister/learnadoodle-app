@@ -105,6 +105,7 @@ export default function EventAttachmentsField({
         >
           {!allowMultiple ? (
             <TouchableOpacity
+              key="attachment-none"
               onPress={() => {
                 onMaterialChange?.(null);
                 setOpen(false);
@@ -116,7 +117,7 @@ export default function EventAttachmentsField({
             </TouchableOpacity>
           ) : null}
           {availableMaterials.length === 0 ? (
-            <View style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+            <View key="attachment-empty" style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
               <Text style={{ fontSize: 14, color: MUTED }}>
                 {materials.length === 0 ? 'No materials yet' : 'All materials attached'}
               </Text>

@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
@@ -11,7 +10,13 @@ import {
 } from 'react-native';
 import { previewInvite, acceptChildInvite, acceptInviteWithPassword } from '../lib/apiClient';
 import { useAuth } from '../contexts/AuthContext';
-import { Mail, Lock, AlertCircle, CheckCircle } from 'lucide-react';
+import { Mail, AlertCircle, CheckCircle } from 'lucide-react';
+import PasswordSetupFields from './auth/PasswordSetupFields';
+import {
+  isPasswordSetupValid,
+  passwordRequirementsErrorMessage,
+  validatePassword,
+} from '../lib/passwordValidation';
 
 /**
  * Create-password page for email invite link: /invites/:token/accept.
@@ -27,6 +32,10 @@ export default function InviteAcceptPasswordPage({ token }) {
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const isFormValid = useMemo(
+    () => isPasswordSetupValid(password, confirmPassword),
+    [password, confirmPassword],
+  );
 
   // Ensure favicon uses root-relative URL so it shows on /invites/xxx/accept
   useEffect(() => {
@@ -85,12 +94,18 @@ export default function InviteAcceptPasswordPage({ token }) {
   };
 
   const validate = () => {
-    if (!password || password.length < 6) {
-      setError('Password must be at least 6 characters');
+    if (!password || !confirmPassword) {
+      setError('Please fill in both password fields.');
       return false;
     }
     if (password !== confirmPassword) {
-      setError('Passwords do not match');
+      setError('Passwords do not match.');
+      return false;
+    }
+    const validation = validatePassword(password);
+    const requirementsError = passwordRequirementsErrorMessage(validation);
+    if (requirementsError) {
+      setError(requirementsError);
       return false;
     }
     setError(null);
@@ -185,28 +200,14 @@ export default function InviteAcceptPasswordPage({ token }) {
               <Text style={styles.readOnlyText}>{inviteData.email}</Text>
             </View>
           </View>
-          <View style={styles.field}>
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="At least 6 characters"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-          </View>
-          <View style={styles.field}>
-            <Text style={styles.label}>Confirm password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Type password again"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-          </View>
+          <PasswordSetupFields
+            password={password}
+            confirmPassword={confirmPassword}
+            onPasswordChange={setPassword}
+            onConfirmPasswordChange={setConfirmPassword}
+            passwordLabel="Password"
+            confirmLabel="Confirm password"
+          />
           {error ? (
             <View style={styles.errorBox}>
               <AlertCircle size={18} color="#ef4444" />
@@ -230,9 +231,12 @@ export default function InviteAcceptPasswordPage({ token }) {
             </View>
           ) : null}
           <TouchableOpacity
-            style={[styles.primaryButton, accepting && styles.buttonDisabled]}
+            style={[
+              styles.primaryButton,
+              (accepting || !isFormValid) && styles.buttonDisabled,
+            ]}
             onPress={handleSubmit}
-            disabled={accepting}
+            disabled={accepting || !isFormValid}
           >
             {accepting ? (
               <>

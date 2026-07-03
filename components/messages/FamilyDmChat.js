@@ -21,6 +21,7 @@ import {
   insertFamilyDirectMessage,
   isDirectMessageRecipient,
   isUnifiedMessageMine,
+  dispatchFamilyDirectMessagesUpdated,
   markDirectMessagesRead,
   mergeUnifiedStream,
   messageMatchesParticipant,
@@ -97,6 +98,7 @@ export default function FamilyDmChat({
   const swipeBackRef = useRef(null);
   const chatReadyRef = useRef(false);
   const loadInFlightRef = useRef(false);
+  const pendingLoadRef = useRef(false);
   const participantRef = useRef(participant);
   participantRef.current = participant;
   const participantId = String(participant?.id || '').trim();
@@ -177,7 +179,10 @@ export default function FamilyDmChat({
       setLoading(false);
       return;
     }
-    if (loadInFlightRef.current) return;
+    if (loadInFlightRef.current) {
+      pendingLoadRef.current = true;
+      return;
+    }
     loadInFlightRef.current = true;
     const showLoadingUi = !silent && !chatReadyRef.current;
     if (showLoadingUi) setLoading(true);
@@ -239,8 +244,20 @@ export default function FamilyDmChat({
         .filter((row) => !row.read_at)
         .filter((row) => isDirectMessageRecipient(row, currentUserId, viewerChildId, activeParticipant));
 
-      // Optimistically mark read locally and persist in the background — don't
-      // block rendering the thread on the mark-read round trip.
+      const unified = mergeUnifiedStream({
+        directMessages: dmList,
+        assignments: assignmentList,
+        participant: activeParticipant,
+        currentUserId,
+        viewerRole,
+        viewerChildId,
+        eventDatesById: new Map(),
+      });
+      // Paint the thread immediately — don't wait on event dates, enrichment, or mark-read.
+      setMessages(unified);
+      chatReadyRef.current = true;
+      if (showLoadingUi) setLoading(false);
+
       if (unreadForMe.length > 0) {
         const markedAt = new Date().toISOString();
         unreadForMe.forEach((row) => {
@@ -248,10 +265,7 @@ export default function FamilyDmChat({
         });
         markDirectMessagesRead(unreadForMe.map((row) => row.id))
           .then(() => {
-            // Let the Messages nav badge recompute now that these are read.
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('familyDirectMessagesUpdated'));
-            }
+            dispatchFamilyDirectMessagesUpdated();
           })
           .catch((markErr) => {
             console.warn('[FamilyDmChat] mark read:', markErr?.message || markErr);
@@ -261,50 +275,52 @@ export default function FamilyDmChat({
       const linkedEventIds = [...new Set(
         assignmentList.map(resolveLinkedEventId).filter(Boolean),
       )];
-      let eventDatesById = new Map();
-      if (linkedEventIds.length > 0) {
-        const { data: eventRows, error: eventError } = await supabase
-          .from('events')
-          .select('id, start_ts')
-          .in('id', linkedEventIds);
-        if (eventError) {
-          console.warn('[FamilyDmChat] linked event dates unavailable:', eventError.message);
-        } else {
-          eventDatesById = new Map(
-            (eventRows || [])
-              .filter((row) => row?.id && row?.start_ts)
-              .map((row) => [String(row.id), row.start_ts]),
-          );
+      void (async () => {
+        try {
+          let eventDatesById = new Map();
+          if (linkedEventIds.length > 0) {
+            const { data: eventRows, error: eventError } = await supabase
+              .from('events')
+              .select('id, start_ts')
+              .in('id', linkedEventIds);
+            if (eventError) {
+              console.warn('[FamilyDmChat] linked event dates unavailable:', eventError.message);
+            } else {
+              eventDatesById = new Map(
+                (eventRows || [])
+                  .filter((row) => row?.id && row?.start_ts)
+                  .map((row) => [String(row.id), row.start_ts]),
+              );
+            }
+          }
+
+          const withEventDates = mergeUnifiedStream({
+            directMessages: dmList,
+            assignments: assignmentList,
+            participant: activeParticipant,
+            currentUserId,
+            viewerRole,
+            viewerChildId,
+            eventDatesById,
+          });
+          setMessages(withEventDates);
+
+          const enriched = await enrichMessages(withEventDates, assignmentList);
+          setMessages(enriched);
+        } catch (enrichErr) {
+          console.warn('[FamilyDmChat] enrich messages:', enrichErr?.message || enrichErr);
         }
-      }
-
-      const unified = mergeUnifiedStream({
-        directMessages: dmList,
-        assignments: assignmentList,
-        participant: activeParticipant,
-        currentUserId,
-        viewerRole,
-        viewerChildId,
-        eventDatesById,
-      });
-      // Show message text immediately, then fill in event/material attachment
-      // chips once they resolve, so first paint isn't blocked on enrichment.
-      setMessages(unified);
-      chatReadyRef.current = true;
-      if (showLoadingUi) setLoading(false);
-
-      try {
-        const enriched = await enrichMessages(unified, assignmentList);
-        setMessages(enriched);
-      } catch (enrichErr) {
-        console.warn('[FamilyDmChat] enrich messages:', enrichErr?.message || enrichErr);
-      }
+      })();
     } catch (error) {
       console.error('[FamilyDmChat] loadMessages exception:', error);
       if (!chatReadyRef.current) setMessages([]);
     } finally {
       if (showLoadingUi) setLoading(false);
       loadInFlightRef.current = false;
+      if (pendingLoadRef.current) {
+        pendingLoadRef.current = false;
+        loadMessagesRef.current({ silent: true });
+      }
     }
   }, [childCtx?.childId, currentUserId, enrichMessages, familyChildren, familyId, familyMembers, isGroupThread, participantId, participantType, viewerChildId, viewerRole]);
 
@@ -350,6 +366,7 @@ export default function FamilyDmChat({
     const refresh = () => { loadMessages({ silent: true }); };
     window.addEventListener('childAssignmentsNeedRefresh', refresh);
     window.addEventListener('parentAssignmentsNeedRefresh', refresh);
+    window.addEventListener('familyDirectMessagesUpdated', refresh);
     const onVisible = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         loadMessages({ silent: true });
@@ -359,9 +376,18 @@ export default function FamilyDmChat({
     return () => {
       window.removeEventListener('childAssignmentsNeedRefresh', refresh);
       window.removeEventListener('parentAssignmentsNeedRefresh', refresh);
+      window.removeEventListener('familyDirectMessagesUpdated', refresh);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [loadMessages]);
+
+  useEffect(() => {
+    if (!familyId || !participantId) return undefined;
+    const poll = setInterval(() => {
+      loadMessagesRef.current({ silent: true });
+    }, 12000);
+    return () => clearInterval(poll);
+  }, [familyId, participantId, participantType]);
 
   const canSend = Boolean(
     composerText.trim() || pendingEvent?.id || pendingMaterial?.id,
@@ -457,6 +483,7 @@ export default function FamilyDmChat({
       setPendingMaterial(null);
       setShowAttachMenu(false);
       scrollToBottomOnLoadRef.current = true;
+      dispatchFamilyDirectMessagesUpdated();
       await loadMessages();
     } catch (error) {
       console.error('[FamilyDmChat] send exception:', error);

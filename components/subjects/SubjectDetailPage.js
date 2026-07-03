@@ -60,6 +60,7 @@ import {
   SubjectAttendanceYearHeatmap,
   SubjectAttendanceMonthDrilldown,
 } from './SubjectSectionDrilldownPanels';
+import { YearHeatmapLegend } from '../planner/attendance/YearHeatmapGrid';
 import { supabase } from '../../lib/supabase';
 import BulletinBoardSection from '../bulletin/BulletinBoardSection';
 import {
@@ -109,7 +110,6 @@ import {
 
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_ASSIGNMENTS_SECTION = false;
-const SHOW_SUBJECT_ATTENDANCE_SECTION = false;
 const SHOW_SUBJECT_GRADES_SECTION = false;
 const SHOW_SUBJECT_MATERIALS_SECTION = false;
 const SHOW_SUBJECT_UNITS_LESSONS_SECTION = false;
@@ -517,6 +517,7 @@ export default function SubjectDetailPage({
   const [subjectPlanYearId, setSubjectPlanYearId] = useState(null);
   const [subjectPlanData, setSubjectPlanData] = useState(null);
   const [attendanceViewMode, setAttendanceViewMode] = useState('list');
+  const [attendanceInteractionMode, setAttendanceInteractionMode] = useState('events');
   const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
   const [showAttendanceGapSuggestion, setShowAttendanceGapSuggestion] = useState(false);
   const [classroomTab, setClassroomTab] = useState('bulletin');
@@ -1012,8 +1013,8 @@ export default function SubjectDetailPage({
     if (autoOpenedProgressActionRef.current === actionKey) return;
     autoOpenedProgressActionRef.current = actionKey;
     const t = setTimeout(() => {
-      if (action === 'attendance_edit' && SHOW_SUBJECT_ATTENDANCE_SECTION) {
-        scrollToSection('attendance-section');
+      if (action === 'attendance_edit') {
+        setClassroomTab('attendance');
         setShowMarkAllAttendedModal(true);
         return;
       }
@@ -3559,7 +3560,7 @@ export default function SubjectDetailPage({
           attendanceRecords={attendanceRecordsForUI}
           subjectEvents={subjectData?.events || []}
           isDayMarkable={canMarkAttendanceForDateKey}
-          onDayPress={handleYearHeatmapDayPress}
+          onDayPress={canManageAttendance ? handleYearHeatmapDayPress : null}
           hideLegend
         />
       ) : attendanceViewMode === 'month' ? (
@@ -3567,8 +3568,8 @@ export default function SubjectDetailPage({
           attendanceRecords={attendanceRecordsForUI}
           subjectEvents={subjectData?.events || []}
           onOpenEventDetails={handleOpenEventDetails}
-          onToggleEventAttendance={handleToggleEventAttendanceForDate}
-          onAddEventForDate={handleOpenAddEventForDate}
+          onToggleEventAttendance={canManageAttendance ? handleToggleEventAttendanceForDate : null}
+          onAddEventForDate={canManageAttendance ? handleOpenAddEventForDate : null}
           hideLegend
         />
       ) : null}
@@ -3605,7 +3606,8 @@ export default function SubjectDetailPage({
   const isFixedTabLayout = classroomTab === 'bulletin'
     || classroomTab === 'classwork'
     || classroomTab === 'materials'
-    || classroomTab === 'grades';
+    || classroomTab === 'grades'
+    || classroomTab === 'attendance';
   const PageScroll = isFixedTabLayout ? View : ScrollView;
 
   return (
@@ -3788,6 +3790,7 @@ export default function SubjectDetailPage({
               onOpenGradedItem={(item) => {
                 if (item?.eventId) handleOpenEventDetails(item.eventId, item.event);
               }}
+              onAddGrade={() => setShowPastEventsGradesModal(true)}
             />
           </View>
         ) : null}
@@ -4021,12 +4024,11 @@ export default function SubjectDetailPage({
         </View>
         ) : null}
 
-        {/* Section 3: All Events moved to main Learning screen (ProgressTab) */}
-        {SHOW_SUBJECT_ATTENDANCE_SECTION ? (
-        <View id="attendance-section" style={styles.section}>
+        {classroomTab === 'attendance' ? (
+        <View id="attendance-section" style={styles.bulletinBoardSection}>
             <>
               <View style={styles.attendanceSectionHeader}>
-                <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Attendance</Text>
+                <Text style={styles.tabPanelTitle}>Attendance{subject?.name ? ` \u2013 ${subject.name}` : ''}{childrenNames.length > 0 ? `, ${childrenNames.join(', ')}` : ''}</Text>
                 <View style={styles.sectionHeaderActions}>
                   {canManageAttendance ? (
                     <TouchableOpacity
@@ -4043,127 +4045,45 @@ export default function SubjectDetailPage({
                   ) : null}
                 </View>
               </View>
-              {(attendanceViewMode === 'list' ? attendanceRecordsListUI.length > 0 : attendanceRecordsForUI.length > 0) ? (
-                <View style={styles.emptyStateBox}>
-                  {attendanceSummaryChips}
-                  {attendanceViewMode === 'list' ? (
-                    <>
-                      <View style={styles.attendanceList}>
-                        {(showAttendanceExpanded ? attendanceRecordsListUI : attendanceRecordsListUI.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
-                          const event = (subjectData?.events || []).find(e => e.id === record.event_id);
-                          const statusLabel = String(record?.statusLabel || '');
-                          const statusTone = String(record?.statusTone || '').toLowerCase();
-                          const isAttended = statusTone === 'attended';
-                          const canToggleAttendance = !!record?.event_id && !!record?.day_date;
-                          return (
-                            <View
-                              key={record.id}
-                              {...(Platform.OS === 'web' && {
-                                'data-event-id': String(event?.id || ''),
-                                onMouseDown: (e) => {
-                                  if (!event) return;
-                                  const button = e?.button ?? e?.nativeEvent?.button;
-                                  if (button !== 2) return;
-                                  e.preventDefault?.();
-                                  e.stopPropagation?.();
-                                  handleEventContextMenu(event, e?.nativeEvent || e);
-                                },
-                                onContextMenu: (e) => {
-                                  if (!event) return;
-                                  e.preventDefault?.();
-                                  e.stopPropagation?.();
-                                  handleEventContextMenu(event, e?.nativeEvent || e);
-                                },
-                              })}
-                            >
-                            <TouchableOpacity
-                              style={styles.attendanceItem}
-                              onPress={() => event && handleOpenEventDetails(event.id, event)}
-                              activeOpacity={0.7}
-                              {...(Platform.OS === 'web' && {
-                                cursor: event ? 'pointer' : 'default',
-                              })}
-                            >
-                              <TouchableOpacity
-                                style={[
-                                  styles.attendanceListToggleCircle,
-                                  isAttended && styles.attendanceListToggleCircleAttended,
-                                ]}
-                                onPress={(ev) => {
-                                  ev?.stopPropagation?.();
-                                  if (!canToggleAttendance) return;
-                                  handleToggleEventAttendanceForDate(record.day_date, record.event_id);
-                                }}
-                                activeOpacity={0.82}
-                                hitSlop={8}
-                                disabled={!canToggleAttendance}
-                                accessibilityRole="button"
-                                accessibilityLabel={isAttended ? 'Mark attendance as unattended' : 'Mark attendance as attended'}
-                                {...(Platform.OS === 'web' && { cursor: canToggleAttendance ? 'pointer' : 'default' })}
-                              >
-                                {isAttended ? <Check size={14} color="#16a34a" strokeWidth={2.5} /> : null}
-                              </TouchableOpacity>
-                              <Text style={styles.attendanceItemDate}>{formatDate(record.day_date)}</Text>
-                              <Text style={styles.attendanceItemTitle}>
-                                {record?.title || event?.title || 'Lesson'}
-                              </Text>
-                              <View style={styles.attendanceItemStatusWrap}>
-                                <View
-                                  style={[
-                                    styles.attendanceItemStatusDot,
-                                    statusTone === 'attended' && styles.attendanceItemStatusDotAttended,
-                                    statusTone === 'unattended' && styles.attendanceItemStatusDotUnattended,
-                                    statusTone === 'upcoming' && styles.attendanceItemStatusDotUpcoming,
-                                  ]}
-                                />
-                                <Text
-                                  style={[
-                                    styles.attendanceItemStatus,
-                                    statusTone === 'attended' && styles.attendanceItemStatusAttended,
-                                    statusTone === 'unattended' && styles.attendanceItemStatusUnattended,
-                                    statusTone === 'upcoming' && styles.attendanceItemStatusUpcoming,
-                                  ]}
-                                >
-                                  {statusLabel}
-                                </Text>
-                              </View>
-                              <Text style={styles.attendanceItemMinutes}>{record.minutes} min</Text>
-                            </TouchableOpacity>
-                            </View>
-                          );
-                        })}
-                      </View>
-                      {attendanceRecordsListUI.length > ATTENDANCE_LIST_LIMIT ? (
-                        <TouchableOpacity
-                          style={styles.attendanceShowMoreBtn}
-                          onPress={() => setShowAttendanceExpanded((v) => !v)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={styles.attendanceShowMoreText}>
-                            {showAttendanceExpanded
-                              ? 'Show less'
-                              : `Show more (${attendanceRecordsListUI.length - ATTENDANCE_LIST_LIMIT} more)`}
-                          </Text>
-                        </TouchableOpacity>
-                      ) : null}
-                    </>
-                  ) : (
-                    <>
-                      {attendanceInsightsPanel}
-                    </>
-                  )}
+              <View style={styles.attendanceYearBody}>
+                <View style={styles.attendanceModeToolbar}>
+                  <View style={styles.attendanceModeTopRow}>
+                    <View style={styles.attendanceModeSwitch}>
+                      {[{ id: 'events', label: 'View events' }, { id: 'attendance', label: 'Attendance check' }].map((mode) => {
+                        const selected = attendanceInteractionMode === mode.id;
+                        return (
+                          <TouchableOpacity
+                            key={mode.id}
+                            style={[styles.attendanceModeChip, selected && styles.attendanceModeChipSelected]}
+                            onPress={() => setAttendanceInteractionMode(mode.id)}
+                            activeOpacity={0.85}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={[styles.attendanceModeChipText, selected && styles.attendanceModeChipTextSelected]}>
+                              {mode.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <YearHeatmapLegend style={styles.attendanceInlineLegend} />
+                  </View>
+                  <Text style={styles.attendanceModeHelp}>
+                    {attendanceInteractionMode === 'events'
+                      ? 'Click a day to open that day\u2019s lessons. Use the circle on each event to mark it attended or unattended. Only instructional-time events count toward attendance.'
+                      : 'Click a day to mark it attended or unattended. You can mark days with no scheduled lessons.'}
+                  </Text>
                 </View>
-              ) : (
-                <View style={styles.emptyStateBox}>
-                  {attendanceSummaryChips}
-                  {attendanceViewMode === 'list' ? null : attendanceInsightsPanel}
-                  {attendanceViewMode === 'list' ? (
-                    <Text style={styles.emptyStateText}>
-                      Attendance appears once you add an event attached to this subject.
-                    </Text>
-                  ) : null}
-                </View>
-              )}
+                <SubjectAttendanceYearHeatmap
+                  attendanceRecords={attendanceRecordsForUI}
+                  subjectEvents={subjectData?.events || []}
+                  isDayMarkable={canMarkAttendanceForDateKey}
+                  onDayPress={attendanceInteractionMode === 'events' && canManageAttendance ? handleYearHeatmapDayPress : null}
+                  onMarkDayAttended={attendanceInteractionMode === 'attendance' && canManageAttendance ? handleYearHeatmapDayPress : null}
+                  interactionMode={attendanceInteractionMode}
+                  hideLegend
+                />
+              </View>
             </>
           </View>
         ) : null}
@@ -5248,9 +5168,71 @@ const styles = StyleSheet.create({
   },
   attendanceSectionHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 4,
+    flexShrink: 0,
+    gap: 12,
+  },
+  attendanceYearBody: {
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 14,
+  },
+  attendanceYearHelpText: {
+    fontSize: 13,
+    color: '#64748B',
+    lineHeight: 18,
+    marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceModeToolbar: {
+    gap: 10,
+    marginBottom: 16,
+  },
+  attendanceModeTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
+  attendanceInlineLegend: {
+    marginTop: 0,
+    flexShrink: 1,
+  },
+  attendanceModeSwitch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 10,
+    flexShrink: 0,
+  },
+  attendanceModeChip: {
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+  },
+  attendanceModeChipSelected: {
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && { boxShadow: '0 1px 2px rgba(15, 23, 42, 0.08)' }),
+  },
+  attendanceModeChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(15, 23, 42, 0.62)',
+  },
+  attendanceModeChipTextSelected: {
+    color: 'rgba(15, 23, 42, 0.92)',
+  },
+  attendanceModeHelp: {
+    fontSize: 12,
+    color: 'rgba(15, 23, 42, 0.62)',
+    lineHeight: 18,
+    maxWidth: 760,
   },
   gradesSectionHeader: {
     marginBottom: 10,
@@ -5450,10 +5432,7 @@ const styles = StyleSheet.create({
     marginTop: 0,
   },
   attendanceHeaderEditButton: {
-    minHeight: 34,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
+    borderRadius: 20,
   },
   sectionHeaderActions: {
     marginLeft: 'auto',
@@ -5495,6 +5474,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1F2937',
     marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  tabPanelTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1e293b',
+    letterSpacing: -0.2,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
