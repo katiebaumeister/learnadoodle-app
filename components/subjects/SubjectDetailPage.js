@@ -61,6 +61,7 @@ import {
   SubjectAttendanceMonthDrilldown,
 } from './SubjectSectionDrilldownPanels';
 import { YearHeatmapLegend } from '../planner/attendance/YearHeatmapGrid';
+import DayEventsPanel from '../planner/attendance/DayEventsPanel';
 import { supabase } from '../../lib/supabase';
 import BulletinBoardSection from '../bulletin/BulletinBoardSection';
 import {
@@ -492,6 +493,7 @@ export default function SubjectDetailPage({
   const [loading, setLoading] = useState(!preloadedSubjectData);
   const [error, setError] = useState(null);
   const [subjectData, setSubjectData] = useState(preloadedSubjectData || null);
+  const [optimisticAttendancePatches, setOptimisticAttendancePatches] = useState([]);
   const [showExportComingSoonModal, setShowExportComingSoonModal] = useState(false);
   const [showMarkAllAttendedModal, setShowMarkAllAttendedModal] = useState(false);
   const [showPastEventsGradesModal, setShowPastEventsGradesModal] = useState(false);
@@ -518,6 +520,7 @@ export default function SubjectDetailPage({
   const [subjectPlanData, setSubjectPlanData] = useState(null);
   const [attendanceViewMode, setAttendanceViewMode] = useState('list');
   const [attendanceInteractionMode, setAttendanceInteractionMode] = useState('events');
+  const [attendanceDayPanelKey, setAttendanceDayPanelKey] = useState(null);
   const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
   const [showAttendanceGapSuggestion, setShowAttendanceGapSuggestion] = useState(false);
   const [classroomTab, setClassroomTab] = useState('bulletin');
@@ -662,13 +665,39 @@ export default function SubjectDetailPage({
     }
     setError(null);
     try {
-      // Pass session for role-based filtering
       const data = await getSubjectDetail(subjectId, familyId, null, sessionRef.current);
       if (data == null) {
         if (typeof onBackRef.current === 'function') onBackRef.current();
         return;
       }
-      setSubjectData(data);
+      setSubjectData((prev) => {
+        if (!prev || !silent) return data;
+        // Preserve reference stability for attendance/events if unchanged,
+        // preventing heatmap flash on background refresh.
+        const prevRecords = prev.attendanceRecords;
+        const newRecords = data.attendanceRecords;
+        if (
+          prevRecords && newRecords
+          && prevRecords.length === newRecords.length
+          && prevRecords.length > 0
+          && prevRecords[0]?.id === newRecords[0]?.id
+          && prevRecords[prevRecords.length - 1]?.id === newRecords[newRecords.length - 1]?.id
+        ) {
+          data.attendanceRecords = prevRecords;
+        }
+        const prevEvents = prev.events;
+        const newEvents = data.events;
+        if (
+          prevEvents && newEvents
+          && prevEvents.length === newEvents.length
+          && prevEvents.length > 0
+          && prevEvents[0]?.id === newEvents[0]?.id
+          && prevEvents[prevEvents.length - 1]?.id === newEvents[newEvents.length - 1]?.id
+        ) {
+          data.events = prevEvents;
+        }
+        return data;
+      });
       if (onSubjectDataUpdateRef.current) {
         onSubjectDataUpdateRef.current(data);
       }
@@ -689,7 +718,13 @@ export default function SubjectDetailPage({
       setError('Subject ID and Family ID are required');
       return;
     }
-    loadSubjectDetail({ silent: !!preloadedSubjectData });
+    if (preloadedSubjectData) {
+      // Data already available — defer the background refresh so the heatmap
+      // doesn't flash from stale→fresh when the user lands on the page.
+      const t = setTimeout(() => loadSubjectDetail({ silent: true }), 1500);
+      return () => clearTimeout(t);
+    }
+    loadSubjectDetail({ silent: false });
     // Intentionally omit preloadedSubjectData: parent updates cache object after each fetch; re-running would loop.
   }, [subjectId, familyId, loadSubjectDetail]);
 
@@ -855,7 +890,31 @@ export default function SubjectDetailPage({
   const upcomingItems = subjectData?.upcomingItems || [];
   const overdueItems = subjectData?.overdueItems || [];
   const nextItem = subjectData?.nextItem;
-  const attendanceRecords = subjectData?.attendanceRecords || [];
+  const attendanceRecordsRaw = subjectData?.attendanceRecords || [];
+  const attendanceRecords = useMemo(() => {
+    if (optimisticAttendancePatches.length === 0) return attendanceRecordsRaw;
+    const deleteIds = new Set();
+    const upsertById = new Map();
+    optimisticAttendancePatches.forEach((patch) => {
+      if (patch._delete && patch.id) {
+        deleteIds.add(String(patch.id));
+      } else if (patch.id) {
+        upsertById.set(String(patch.id), patch);
+      }
+    });
+    const merged = attendanceRecordsRaw
+      .filter((r) => !deleteIds.has(String(r?.id || '')))
+      .map((r) => {
+        const override = upsertById.get(String(r?.id || ''));
+        if (override) {
+          upsertById.delete(String(r.id));
+          return { ...r, ...override };
+        }
+        return r;
+      });
+    upsertById.forEach((patch) => merged.push(patch));
+    return merged;
+  }, [attendanceRecordsRaw, optimisticAttendancePatches]);
   const grades = subjectData?.grades || [];
   const eventOutcomes = subjectData?.eventOutcomes || [];
   const subjectEvents = subjectData?.events || [];
@@ -989,6 +1048,15 @@ export default function SubjectDetailPage({
       })
     );
   }, [subject?.id, assignedChildren]);
+
+  const handleAddLearningDay = useCallback(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !subject?.id) return;
+    window.dispatchEvent(
+      new CustomEvent('openLearningDaySetupChoice', {
+        detail: { subject },
+      })
+    );
+  }, [subject]);
 
   const handleScheduleAllLessons = useCallback(() => {
     if (!subject?.id) return;
@@ -3166,6 +3234,41 @@ export default function SubjectDetailPage({
     const isMarkedPresent = uiDayRecordsForEvent.some((r) => String(r?.status || '').toLowerCase() === 'present');
     let plannerPatchedAttendances = [];
 
+    // Optimistic UI: immediately reflect toggle
+    const optPatches = [];
+    if (isMarkedPresent) {
+      dayRecordsForEvent.forEach((r) => {
+        if (r?.id) optPatches.push({ id: r.id, _delete: true });
+      });
+    } else {
+      const assignedIds = resolveChildIdsForAttendanceEvent(event);
+      const siblings = getSiblingEventsOnDay(normKey, event, subjectEvents || []);
+      siblings.forEach((sibling) => {
+        const childIds = resolveChildIdsForAttendanceEvent(sibling);
+        childIds.forEach((childId) => {
+          const existing = attendanceRecords.find(
+            (r) => String(r?.event_id || '') === String(sibling?.id) && String(r?.child_id || '') === String(childId) && String(r?.day_date || '').slice(0, 10) === normKey
+          );
+          if (existing) {
+            optPatches.push({ ...existing, status: 'present' });
+          } else {
+            optPatches.push({
+              id: `optimistic-${sibling.id}-${childId}-${normKey}`,
+              event_id: sibling.id,
+              child_id: childId,
+              day_date: normKey,
+              status: 'present',
+              minutes: getEventMinutes(sibling) || 60,
+              family_id: familyId,
+            });
+          }
+        });
+      });
+    }
+    if (optPatches.length > 0) {
+      setOptimisticAttendancePatches((prev) => [...prev, ...optPatches]);
+    }
+
     try {
       if (isMarkedPresent) {
         const assignedIds = resolveChildIdsForAttendanceEvent(event);
@@ -3250,15 +3353,16 @@ export default function SubjectDetailPage({
         }
         plannerPatchedAttendances = siblingIds.map((id) => ({ eventId: id, status: 'done' }));
       }
-      await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
         emitPlannerAttendanceSync(plannerPatchedAttendances, normKey);
       }
+      loadSubjectDetail({ silent: true }).then(() => setOptimisticAttendancePatches([]));
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed toggling event attendance:', err);
       toast.push(err?.message || 'Could not update attendance.', 'error');
-      await loadSubjectDetail({ silent: true });
+      setOptimisticAttendancePatches([]);
+      loadSubjectDetail({ silent: true });
     }
   }, [
     familyId,
@@ -3339,6 +3443,56 @@ export default function SubjectDetailPage({
     }
   }, [familyId, subjectEvents, getEventDateKey, resolveChildIdsForAttendanceEvent, getEventMinutes, attendanceRecords, runAttendanceMutation, runEventStatusBestEffort, applyOptimisticProgressByEventIds, emitPlannerAttendanceSync, loadSubjectDetail, toast]);
 
+  const handleViewEventsDayPress = useCallback((dateKey) => {
+    if (!dateKey) return;
+    setAttendanceDayPanelKey(String(dateKey).slice(0, 10));
+  }, []);
+
+  const attendanceDayPanelEvents = useMemo(() => {
+    if (!attendanceDayPanelKey) return [];
+    return (subjectEvents || []).filter((event) => getEventDateKey(event) === attendanceDayPanelKey);
+  }, [attendanceDayPanelKey, subjectEvents, getEventDateKey]);
+
+  const attendanceDayPanelAttendanceByEventId = useMemo(() => {
+    if (!attendanceDayPanelKey) return {};
+    const map = {};
+    (attendanceRecordsForUI || []).forEach((record) => {
+      if (String(record?.day_date || '').slice(0, 10) !== attendanceDayPanelKey) return;
+      const eventId = String(record?.event_id || '').trim();
+      if (eventId) map[eventId] = record?.status || 'absent';
+    });
+    return map;
+  }, [attendanceDayPanelKey, attendanceRecordsForUI]);
+
+  const handleDayPanelToggleAttendance = useCallback((eventId) => {
+    if (!attendanceDayPanelKey || !eventId) return;
+    handleToggleEventAttendanceForDate(attendanceDayPanelKey, eventId);
+  }, [attendanceDayPanelKey, handleToggleEventAttendanceForDate]);
+
+  const handleDayPanelEventPress = useCallback((event) => {
+    if (!event?.id) return;
+    setAttendanceDayPanelKey(null);
+    handleOpenEventDetails(event.id, event);
+  }, [handleOpenEventDetails]);
+
+  const attendanceDayPanelDateLabel = useMemo(() => {
+    if (!attendanceDayPanelKey) return null;
+    const d = new Date(attendanceDayPanelKey + 'T12:00:00');
+    return d.toLocaleDateString('default', { month: 'short', day: 'numeric', year: 'numeric' });
+  }, [attendanceDayPanelKey]);
+
+  const attendanceDayPanelChildName = useMemo(() => {
+    if (childrenNames.length === 1) return childrenNames[0];
+    if (childrenNames.length === 0) return 'Student';
+    return childrenNames.join(', ');
+  }, [childrenNames]);
+
+  useEffect(() => {
+    if (attendanceInteractionMode !== 'events') {
+      setAttendanceDayPanelKey(null);
+    }
+  }, [attendanceInteractionMode]);
+
   const pendingDayToggleKeysRef = useRef(new Set());
   const handleYearHeatmapDayPress = useCallback(async (dateKey) => {
     if (!familyId || !dateKey) return;
@@ -3374,6 +3528,56 @@ export default function SubjectDetailPage({
       ].filter(Boolean)),
     ];
     let plannerPatchedAttendances = [];
+
+    // Optimistic UI: immediately reflect the toggle in local state
+    const optimisticPatches = [];
+    if (hasPresent) {
+      // Unmarking: delete existing records optimistically
+      dayRecords.forEach((r) => {
+        if (r?.id) optimisticPatches.push({ id: r.id, _delete: true });
+      });
+    } else {
+      // Marking as present: create optimistic records for events
+      const targetEvents = dayEvents.length > 0 ? dayEvents : [];
+      if (targetEvents.length > 0) {
+        targetEvents.forEach((event) => {
+          const eventAssignedIds = resolveChildIdsForAttendanceEvent(event);
+          eventAssignedIds.forEach((childId) => {
+            const existingRecord = attendanceRecords.find(
+              (r) => String(r?.event_id || '') === String(event?.id) && String(r?.child_id || '') === String(childId) && String(r?.day_date || '').slice(0, 10) === normKey
+            );
+            if (existingRecord) {
+              optimisticPatches.push({ ...existingRecord, status: 'present' });
+            } else {
+              optimisticPatches.push({
+                id: `optimistic-${event.id}-${childId}-${normKey}`,
+                event_id: event.id,
+                child_id: childId,
+                day_date: normKey,
+                status: 'present',
+                minutes: getEventMinutes(event) || 60,
+                family_id: familyId,
+              });
+            }
+          });
+        });
+      } else {
+        fallbackChildIds.forEach((childId) => {
+          optimisticPatches.push({
+            id: `optimistic-standalone-${childId}-${normKey}`,
+            event_id: null,
+            child_id: childId,
+            day_date: normKey,
+            status: 'present',
+            minutes: 60,
+            family_id: familyId,
+          });
+        });
+      }
+    }
+    if (optimisticPatches.length > 0) {
+      setOptimisticAttendancePatches((prev) => [...prev, ...optimisticPatches]);
+    }
 
     try {
       if (hasPresent) {
@@ -3514,15 +3718,16 @@ export default function SubjectDetailPage({
         applyOptimisticProgressByEventIds(toggledEventIds, true);
         plannerPatchedAttendances = toggledEventIds.map((id) => ({ eventId: id, status: 'done' }));
       }
-      await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
         emitPlannerAttendanceSync(plannerPatchedAttendances, normKey);
       }
+      loadSubjectDetail({ silent: true }).then(() => setOptimisticAttendancePatches([]));
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed toggling day attendance:', err);
       toast.push(err?.message || 'Could not update attendance for that day.', 'error');
-      await loadSubjectDetail({ silent: true });
+      setOptimisticAttendancePatches([]);
+      loadSubjectDetail({ silent: true });
     } finally {
       pendingDayToggleKeysRef.current.delete(normKey);
     }
@@ -3740,6 +3945,7 @@ export default function SubjectDetailPage({
               onManageUnits={openUnitsEditor}
               unitsActionLabel={unitsEditorLabel}
               onCreateAssignment={handleCreateAssignment}
+              onAddLearningDay={handleAddLearningDay}
               onPlacementChanged={handleClassworkPlacementChanged}
               highlightLessonId={highlightLessonId}
               highlightAssignmentId={highlightAssignmentId}
@@ -3784,7 +3990,8 @@ export default function SubjectDetailPage({
               onOpenGradedItem={(item) => {
                 if (item?.eventId) handleOpenEventDetails(item.eventId, item.event);
               }}
-              onAddGrade={() => setShowPastEventsGradesModal(true)}
+              onAddLearningDay={isParentViewer ? handleAddLearningDay : undefined}
+              onAddAssignment={isParentViewer ? handleCreateAssignment : undefined}
             />
           </View>
         ) : null}
@@ -3847,7 +4054,7 @@ export default function SubjectDetailPage({
                 accessibilityLabel="Add resource"
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Plus size={16} color="#6B7280" />
+                <Plus size={18} color="#334155" strokeWidth={2.25} />
                 <Text style={styles.emptyStateButtonText}>Add resource</Text>
               </TouchableOpacity>
             ) : null}
@@ -4030,11 +4237,11 @@ export default function SubjectDetailPage({
                       onPress={() => setShowMarkAllAttendedModal(true)}
                       activeOpacity={0.7}
                       accessibilityRole="button"
-                      accessibilityLabel="Mark all as attended"
+                      accessibilityLabel="Bulk attendance"
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <CheckCircle2 size={14} color="#6B7280" />
-                      <Text style={styles.emptyStateButtonText}>Mark all as attended</Text>
+                      <CheckCircle2 size={18} color="#334155" strokeWidth={2.25} />
+                      <Text style={styles.emptyStateButtonText}>Bulk attendance</Text>
                     </TouchableOpacity>
                   ) : null}
                 </View>
@@ -4072,13 +4279,64 @@ export default function SubjectDetailPage({
                   attendanceRecords={attendanceRecordsForUI}
                   subjectEvents={subjectData?.events || []}
                   isDayMarkable={canMarkAttendanceForDateKey}
-                  onDayPress={attendanceInteractionMode === 'events' && canManageAttendance ? handleYearHeatmapDayPress : null}
+                  onDayPress={attendanceInteractionMode === 'events' ? handleViewEventsDayPress : null}
                   onMarkDayAttended={attendanceInteractionMode === 'attendance' && canManageAttendance ? handleYearHeatmapDayPress : null}
                   interactionMode={attendanceInteractionMode}
                   hideLegend
+                  selectedDateKey={attendanceDayPanelKey}
                 />
               </View>
             </>
+
+          {attendanceDayPanelKey && (
+            <Modal
+              animationType="fade"
+              transparent
+              visible={!!attendanceDayPanelKey}
+              onRequestClose={() => setAttendanceDayPanelKey(null)}
+            >
+              <TouchableOpacity
+                style={styles.dayPanelOverlay}
+                activeOpacity={1}
+                onPress={() => setAttendanceDayPanelKey(null)}
+              >
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={(e) => e.stopPropagation()}
+                  style={styles.dayPanelModal}
+                >
+                  <View style={styles.dayPanelHeader}>
+                    <Text style={styles.dayPanelTitle}>Day events</Text>
+                    <TouchableOpacity
+                      style={styles.dayPanelCloseBtn}
+                      onPress={() => setAttendanceDayPanelKey(null)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Close"
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <X size={18} color="#6B7280" />
+                    </TouchableOpacity>
+                  </View>
+                  <DayEventsPanel
+                    dateLabel={attendanceDayPanelDateLabel}
+                    childName={attendanceDayPanelChildName}
+                    events={attendanceDayPanelEvents}
+                    attendanceByEventId={attendanceDayPanelAttendanceByEventId}
+                    onToggleEventAttendance={canManageAttendance ? handleDayPanelToggleAttendance : undefined}
+                    onMarkAllAttended={canManageAttendance && attendanceDayPanelEvents.length > 0 ? () => {
+                      attendanceDayPanelEvents.forEach((ev) => {
+                        if (attendanceDayPanelAttendanceByEventId[ev.id] !== 'present') {
+                          handleDayPanelToggleAttendance(ev.id);
+                        }
+                      });
+                    } : null}
+                    onEventPress={handleDayPanelEventPress}
+                    getEventMinutes={getEventMinutes}
+                  />
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </Modal>
+          )}
           </View>
         ) : null}
 
@@ -4097,7 +4355,7 @@ export default function SubjectDetailPage({
                     accessibilityLabel="View work assigned to student that has not been submitted"
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Calendar size={18} color="#6B7280" />
+                    <Calendar size={18} color="#334155" strokeWidth={2.25} />
                     <Text style={styles.emptyStateButtonText}>Assigned to student</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -4110,7 +4368,7 @@ export default function SubjectDetailPage({
                     accessibilityLabel="Add grades"
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Plus size={16} color="#6B7280" />
+                    <Plus size={18} color="#334155" strokeWidth={2.25} />
                     <Text style={styles.emptyStateButtonText}>Add grades</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -5204,6 +5462,11 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     flexShrink: 0,
+    padding: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(15, 23, 42, 0.03)',
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.06)',
   },
   attendanceModeChip: {
     paddingVertical: 7,
@@ -5227,6 +5490,37 @@ const styles = StyleSheet.create({
     color: 'rgba(15, 23, 42, 0.62)',
     lineHeight: 18,
     maxWidth: 760,
+  },
+  dayPanelOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dayPanelModal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    width: 380,
+    maxHeight: '70%',
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && { boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }),
+  },
+  dayPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 10,
+  },
+  dayPanelTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  dayPanelCloseBtn: {
+    padding: 4,
+    borderRadius: 8,
   },
   gradesSectionHeader: {
     marginBottom: 10,
@@ -5974,22 +6268,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     alignSelf: 'flex-start',
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: 9999,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.28)',
+    borderColor: '#E6EBF2',
     backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
-      transition: 'all 0.2s ease',
-      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
     }),
   },
   emptyStateButtonText: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
+    fontWeight: '600',
+    color: 'rgba(15,23,42,0.85)',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

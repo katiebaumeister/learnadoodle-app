@@ -788,9 +788,11 @@ const styles = StyleSheet.create({
     right: -14,
     top: 11,
     paddingHorizontal: 5,
-    paddingVertical: 1,
+    paddingVertical: 2,
     borderRadius: 999,
     backgroundColor: 'rgba(107, 179, 232, 0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   brandBetaBadgePermanent: {
     right: -18,
@@ -798,10 +800,11 @@ const styles = StyleSheet.create({
   },
   brandBetaText: {
     fontSize: 9,
-    lineHeight: 11,
+    lineHeight: 12,
     fontWeight: '700',
     color: '#FFFFFF',
     letterSpacing: 0.4,
+    textAlign: 'center',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

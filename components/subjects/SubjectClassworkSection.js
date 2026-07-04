@@ -884,12 +884,27 @@ function ClassworkPanelHeader({
   secondaryActionLabel,
   onSecondaryAction,
   showSecondaryAction = false,
+  tertiaryActionLabel,
+  onTertiaryAction,
+  showTertiaryAction = false,
 }) {
+  const hasAny = showAction || showSecondaryAction || showTertiaryAction;
   return (
     <View style={styles.panelToolbar}>
       <Text style={styles.panelTitle}>Classwork</Text>
-      {(showAction || showSecondaryAction) ? (
+      {hasAny ? (
         <View style={styles.panelActions}>
+          {showTertiaryAction ? (
+            <TouchableOpacity
+              style={styles.panelActionBtn}
+              onPress={onTertiaryAction}
+              accessibilityLabel={tertiaryActionLabel}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.panelActionBtnText}>{tertiaryActionLabel}</Text>
+            </TouchableOpacity>
+          ) : null}
           {showAction ? (
             <TouchableOpacity
               style={styles.panelActionBtn}
@@ -1064,6 +1079,7 @@ export default function SubjectClassworkSection({
   onManageUnits,
   unitsActionLabel = 'Add units',
   onCreateAssignment = null,
+  onAddLearningDay = null,
   onPlacementChanged,
   highlightLessonId = null,
   highlightAssignmentId = null,
@@ -2068,6 +2084,9 @@ export default function SubjectClassworkSection({
           showSecondaryAction={isParentViewer && !!onCreateAssignment}
           secondaryActionLabel="Add assignment"
           onSecondaryAction={onCreateAssignment}
+          showTertiaryAction={isParentViewer && !!onAddLearningDay}
+          tertiaryActionLabel="Add learning day"
+          onTertiaryAction={onAddLearningDay}
         />
         <ScrollView
           ref={panelScrollRef}
@@ -2180,6 +2199,9 @@ export default function SubjectClassworkSection({
         showSecondaryAction={isParentViewer && !!onCreateAssignment}
         secondaryActionLabel="Add assignment"
         onSecondaryAction={onCreateAssignment}
+        showTertiaryAction={isParentViewer && !!onAddLearningDay}
+        tertiaryActionLabel="Add learning day"
+        onTertiaryAction={onAddLearningDay}
       />
       <ScrollView
         ref={panelScrollRef}
@@ -2202,7 +2224,7 @@ export default function SubjectClassworkSection({
       ) : null}
       {noUnitItems.length > 0 ? (
         <ClassworkUnitCard
-          title="No unit"
+          title="Assignments - No unit or lesson attached"
           subtitle={`${noUnitItems.length} ${noUnitItems.length === 1 ? 'assignment' : 'assignments'}`}
           expanded={expandedUnits.has('no-unit')}
           onToggleExpand={() => toggleUnitExpanded('no-unit')}

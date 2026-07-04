@@ -120,22 +120,40 @@ function isMissingWork(assignment, eventById) {
   return due.getTime() < Date.now();
 }
 
-function GradesPanelHeader({ onAddGrade }) {
+function GradesPanelHeader({ onAddLearningDay, onAddAssignment }) {
+  const hasActions = typeof onAddLearningDay === 'function' || typeof onAddAssignment === 'function';
   return (
     <View style={styles.panelToolbar}>
       <Text style={styles.panelTitle}>Grades</Text>
-      {typeof onAddGrade === 'function' ? (
-        <TouchableOpacity
-          style={styles.addGradeButton}
-          onPress={onAddGrade}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="Add grade"
-          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-        >
-          <Plus size={16} color="#6B7280" />
-          <Text style={styles.addGradeButtonText}>Add grade</Text>
-        </TouchableOpacity>
+      {hasActions ? (
+        <View style={styles.panelActions}>
+          {typeof onAddLearningDay === 'function' ? (
+            <TouchableOpacity
+              style={styles.addGradeButton}
+              onPress={onAddLearningDay}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Add learning day"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.addGradeButtonText}>Add learning day</Text>
+            </TouchableOpacity>
+          ) : null}
+          {typeof onAddAssignment === 'function' ? (
+            <TouchableOpacity
+              style={styles.addGradeButton}
+              onPress={onAddAssignment}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Add assignment"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.addGradeButtonText}>Add assignment</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
@@ -168,6 +186,8 @@ export default function SubjectGradesPanel({
   onOpenAssignment,
   onOpenGradedItem,
   onAddGrade,
+  onAddLearningDay,
+  onAddAssignment,
 }) {
   const eventById = useMemo(() => buildEventById(events), [events]);
 
@@ -221,13 +241,17 @@ export default function SubjectGradesPanel({
 
     return [...byChild.values()]
       .map((row) => {
+        const missingAssignmentIds = new Set();
         const missingWork = row.assignments
           .filter((a) => isMissingWork(a, eventById))
-          .map((a) => ({
-            id: a.id,
-            title: a.title || 'Assignment',
-            onPress: () => onOpenAssignment?.(a),
-          }));
+          .map((a) => {
+            missingAssignmentIds.add(String(a.id));
+            return {
+              id: a.id,
+              title: a.title || 'Assignment',
+              onPress: () => onOpenAssignment?.(a),
+            };
+          });
 
         const assignmentEventIds = new Set();
         row.assignments.forEach((assignment) => {
@@ -238,6 +262,7 @@ export default function SubjectGradesPanel({
 
         const recentGrades = [
           ...row.assignments
+            .filter((a) => !missingAssignmentIds.has(String(a.id)))
             .map((a) => {
               const gradeRow = resolveAssignmentGradeRow(a, eventById);
               if (!gradeRow) return null;
@@ -300,11 +325,11 @@ export default function SubjectGradesPanel({
           </View>
 
           <View style={styles.recentSection}>
-            {section.missingWork.length > 0 ? (
+            {(section.missingWork || []).length > 0 ? (
               <>
                 <SectionHeader title="Missing work" />
                 <View style={styles.gradeList}>
-                  {section.missingWork.map((item) => (
+                  {(section.missingWork || []).map((item) => (
                     <TouchableOpacity
                       key={item.id}
                       style={[styles.gradeRow, styles.missingRow]}
@@ -318,7 +343,6 @@ export default function SubjectGradesPanel({
                         </Text>
                       </View>
                       <View style={styles.gradeRowTrailing}>
-                        <Text style={styles.missingRowLabel}>Open in classwork</Text>
                         <ChevronRight size={18} color="#94A3B8" strokeWidth={2.25} />
                       </View>
                     </TouchableOpacity>
@@ -327,9 +351,9 @@ export default function SubjectGradesPanel({
               </>
             ) : null}
 
-            <SectionHeader title="Recent grades" />
+            <SectionHeader title="Graded work" />
             {section.recentGrades.length === 0 ? (
-              <Text style={styles.recentEmpty}>No grades yet.</Text>
+              <Text style={styles.recentEmpty}>No graded work yet.</Text>
             ) : (
               <View style={styles.gradeList}>
                 {section.recentGrades.map((item) => {
@@ -376,7 +400,7 @@ export default function SubjectGradesPanel({
 
   return (
     <View style={[styles.root, styles.rootExpanded]}>
-      <GradesPanelHeader onAddGrade={onAddGrade} />
+      <GradesPanelHeader onAddLearningDay={onAddLearningDay} onAddAssignment={onAddAssignment} />
       <ScrollView
         style={styles.panelScroll}
         contentContainerStyle={styles.scrollContent}
@@ -416,6 +440,11 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     gap: 12,
   },
+  panelActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   panelTitle: {
     fontSize: 17,
     fontWeight: '700',
@@ -429,20 +458,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: 9999,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.28)',
+    borderColor: '#E6EBF2',
     backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+      cursor: 'pointer',
     }),
   },
   addGradeButtonText: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
+    fontWeight: '600',
+    color: 'rgba(15,23,42,0.85)',
     ...LEAGUE_FONT,
   },
   panelScroll: {

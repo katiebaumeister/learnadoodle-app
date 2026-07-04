@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, StyleSheet, Platform, Modal, TouchableOpacity } from 'react-native';
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 
 /** Notify other views (planner calendar, home schedule, subject pages) so attendance stays in sync. */
@@ -285,11 +285,15 @@ export default function AttendanceView({
   const [rangeReady, setRangeReady] = useState(false);
   const [markingRangeAttended, setMarkingRangeAttended] = useState(false);
   const [confirmRangeVisible, setConfirmRangeVisible] = useState(false);
+  const [termCountsModalVisible, setTermCountsModalVisible] = useState(false);
   const [selectedHeatmapChildId, setSelectedHeatmapChildId] = useState(null);
   const [yearPlannerInteractionMode, setYearPlannerInteractionMode] = useState(YEAR_PLANNER_MODE_EVENTS);
   const [yearPlannerDayPanelVisible, setYearPlannerDayPanelVisible] = useState(false);
   // Start of the current term/semester (YYYY-MM-DD); used to bound the year-planner bulk range.
   const [bulkTermStartKey, setBulkTermStartKey] = useState(null);
+  // All available terms for the term chooser in the bulk modal.
+  const [bulkTermOptions, setBulkTermOptions] = useState([]);
+  const [selectedBulkTermIdx, setSelectedBulkTermIdx] = useState(0);
   // Snapshot of the last bulk run so it can be undone.
   const [lastBulkUndo, setLastBulkUndo] = useState(null);
   const [undoingBulk, setUndoingBulk] = useState(false);
@@ -423,6 +427,21 @@ export default function AttendanceView({
         const { data: settings } = await getFamilyPlannerSettings(familyIdResolved);
         const start = pickCurrentTermStart(settings, new Date());
         if (!cancelled && start) setBulkTermStartKey(start);
+
+        if (!cancelled && settings) {
+          const norm = (v) => (v ? String(v).slice(0, 10) : null);
+          const todayKey = toLocalYYYYMMDD(new Date());
+          const terms = [
+            { label: 'Fall', start: norm(settings.default_fall_term_start_date), end: norm(settings.default_fall_term_end_date) },
+            { label: 'Spring', start: norm(settings.default_spring_term_start_date), end: norm(settings.default_spring_term_end_date) },
+            { label: 'Summer', start: norm(settings.default_summer_term_start_date), end: norm(settings.default_summer_term_end_date) },
+          ].filter((t) => t.start && t.end);
+          if (terms.length > 0) {
+            setBulkTermOptions(terms);
+            const currentIdx = terms.findIndex((t) => t.start <= todayKey && todayKey <= t.end);
+            setSelectedBulkTermIdx(currentIdx >= 0 ? currentIdx : 0);
+          }
+        }
       } catch (_) {
         // Falls back to academic-year start / calendar-year start at bulk time.
       }
@@ -1262,8 +1281,8 @@ export default function AttendanceView({
         existingByEventChildDay.set(`${String(r.event_id)}|${childKey}|${dayKey}`, r);
       });
 
+      const allOps = [];
       for (const dayKey of dateKeys) {
-        const dayOps = [];
         const dayEventsByChild = eventsByDateChild[dayKey] || {};
         const uniqueDayEvents = new Map();
         Object.values(dayEventsByChild).forEach((list) => {
@@ -1278,16 +1297,16 @@ export default function AttendanceView({
             const standaloneKey = `${cid}|${dayKey}`;
             const standalone = existingStandaloneByChildDay.get(standaloneKey);
             if (hasEventsForChild) {
-              if (standalone?.id) dayOps.push(deleteAttendanceLog(standalone.id));
+              if (standalone?.id) allOps.push(deleteAttendanceLog(standalone.id));
               return;
             }
             if (standalone?.id) {
               if (standalone.status !== 'present') {
-                dayOps.push(updateAttendanceLog(standalone.id, { status: 'present', minutes: STANDALONE_DAY_ATTENDANCE_MINUTES }));
+                allOps.push(updateAttendanceLog(standalone.id, { status: 'present', minutes: STANDALONE_DAY_ATTENDANCE_MINUTES }));
               }
               return;
             }
-            dayOps.push(createAttendanceLog({
+            allOps.push(createAttendanceLog({
               family_id: familyIdResolved,
               child_id: cid,
               event_id: null,
@@ -1299,12 +1318,9 @@ export default function AttendanceView({
         }
 
         for (const event of uniqueDayEvents.values()) {
-          // Include whole-family lessons (no explicit child) by falling back to all children, then
-          // restrict to the bulk target so a child filter is honored.
           const assignedIds = getEventChildIds(event, children.map((c) => c.id))
             .filter((id) => childIdSet.has(String(id)));
           if (!assignedIds.length) continue;
-          // Leave already-attended lessons untouched so Undo only reverts what we changed.
           if (isEventAttendancePresent(event)) continue;
           const minutes = getEventMinutes(event);
           assignedIds.forEach((assignedId) => {
@@ -1312,9 +1328,9 @@ export default function AttendanceView({
             const recordKey = `${String(event.id)}|${cid}|${dayKey}`;
             const existing = existingByEventChildDay.get(recordKey);
             if (existing?.id) {
-              dayOps.push(updateAttendanceLog(existing.id, { status: 'present', minutes }));
+              allOps.push(updateAttendanceLog(existing.id, { status: 'present', minutes }));
             } else {
-              dayOps.push(createAttendanceLog({
+              allOps.push(createAttendanceLog({
                 family_id: familyIdResolved,
                 child_id: cid,
                 event_id: event.id,
@@ -1325,7 +1341,7 @@ export default function AttendanceView({
             }
           });
           undoEvents.push({ eventId: String(event.id), prevStatus: String(event.status || 'scheduled') });
-          dayOps.push(
+          allOps.push(
             updateEventStatus(event.id, 'done').then((res) => {
               if (res?.error) {
                 console.warn('[AttendanceView] Could not mark event complete:', res.error);
@@ -1335,8 +1351,12 @@ export default function AttendanceView({
             })
           );
         }
+      }
 
-        if (dayOps.length > 0) await Promise.all(dayOps);
+      // Execute all operations in parallel batches for speed
+      const BATCH_SIZE = 20;
+      for (let i = 0; i < allOps.length; i += BATCH_SIZE) {
+        await Promise.all(allOps.slice(i, i + BATCH_SIZE));
       }
 
       setLastBulkUndo(undoEvents.length > 0 ? { events: undoEvents, at: Date.now() } : null);
@@ -1438,10 +1458,15 @@ export default function AttendanceView({
   const selectedBulkChildName = bulkTargetChildId === FAMILY_HEATMAP_CHILD_ID
     ? (visibleHeatmapChildren.length === children.length ? 'all children' : 'the filtered children')
     : (selectedBulkChild?.first_name || selectedBulkChild?.name || 'the selected child');
-  // Year-planner bulk is bounded to "current term start -> today" and never touches the future.
-  const bulkTermStart = bulkTermStartKey
+  // Year-planner bulk is bounded to selected term start -> min(term end, today).
+  const selectedBulkTerm = bulkTermOptions[selectedBulkTermIdx] || null;
+  const bulkTermStart = selectedBulkTerm?.start
+    || bulkTermStartKey
     || (academicYear?.start_date ? String(academicYear.start_date).slice(0, 10) : `${new Date().getFullYear()}-01-01`);
   const bulkTodayKey = toLocalYYYYMMDD(new Date());
+  const bulkTermEnd = selectedBulkTerm?.end && selectedBulkTerm.end < bulkTodayKey
+    ? selectedBulkTerm.end
+    : bulkTodayKey;
 
   const attendanceDateRangePicker = (options = {}) => {
     const { showLabel = true, style = null } = options;
@@ -1547,6 +1572,34 @@ export default function AttendanceView({
     </View>
   );
 
+  const termDayCounts = useMemo(() => {
+    if (bulkTermOptions.length === 0) return [];
+    const childId = heatmapSelectedChildId === FAMILY_HEATMAP_CHILD_ID ? null : heatmapSelectedChildId;
+    const termResults = bulkTermOptions.map((term) => {
+      const daysSet = new Set();
+      attendanceRecords.forEach((r) => {
+        if (r.status !== 'present') return;
+        if (childId && String(r.child_id) !== String(childId)) return;
+        const day = String(r.day_date || '').slice(0, 10);
+        if (day >= term.start && day <= term.end) daysSet.add(day);
+      });
+      return { label: term.label, start: term.start, end: term.end, count: daysSet.size };
+    });
+    // Count days outside any term
+    const noTermDays = new Set();
+    attendanceRecords.forEach((r) => {
+      if (r.status !== 'present') return;
+      if (childId && String(r.child_id) !== String(childId)) return;
+      const day = String(r.day_date || '').slice(0, 10);
+      const inAnyTerm = bulkTermOptions.some((t) => day >= t.start && day <= t.end);
+      if (!inAnyTerm) noTermDays.add(day);
+    });
+    if (noTermDays.size > 0) {
+      termResults.push({ label: 'Other', start: null, end: null, count: noTermDays.size });
+    }
+    return termResults;
+  }, [bulkTermOptions, attendanceRecords, heatmapSelectedChildId]);
+
   const yearPlannerRangeRow = (
     <View style={styles.yearPlannerToolbar}>
       <View style={styles.yearPlannerTopRow}>
@@ -1569,55 +1622,74 @@ export default function AttendanceView({
           })}
         </View>
         <YearHeatmapLegend style={styles.yearPlannerInlineLegend} />
+        {termDayCounts.length > 0 && (
+          <TouchableOpacity
+            style={styles.termCountsRow}
+            onPress={() => setTermCountsModalVisible(true)}
+            activeOpacity={0.7}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            {termDayCounts.map((term) => (
+              <View key={term.label} style={styles.termCountItem}>
+                <Text style={styles.termCountLabel}>{term.label}</Text>
+                <Text style={styles.termCountValue}>{term.count} {term.count === 1 ? 'day' : 'days'}</Text>
+              </View>
+            ))}
+            <View style={styles.termCountItem}>
+              <Text style={styles.termCountLabel}>Total</Text>
+              <Text style={[styles.termCountValue, styles.termCountValueTotal]}>
+                {termDayCounts.reduce((sum, t) => sum + t.count, 0)} days
+              </Text>
+            </View>
+          </TouchableOpacity>
+        )}
+        {lastBulkUndo && !readOnly ? (
+          <TouchableOpacity
+            style={[styles.rangeBulkChip, undoingBulk && styles.rangeBulkChipDisabled]}
+            onPress={handleUndoBulk}
+            disabled={undoingBulk}
+            {...(Platform.OS === 'web' && { cursor: undoingBulk ? 'default' : 'pointer' })}
+          >
+            <Text style={styles.rangeBulkChipText}>
+              {undoingBulk ? 'Undoing…' : 'Undo bulk'}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
       <Text style={styles.yearPlannerModeHelp}>
         {YEAR_PLANNER_MODE_COPY[yearPlannerInteractionMode].help}
       </Text>
-      {children.length > 1 || (lastBulkUndo && !readOnly) ? (
+      {children.length > 1 ? (
         <View style={styles.yearPlannerControlsRow}>
-          {children.length > 1 ? (
-            <View style={styles.childFilterChips}>
-              <TouchableOpacity
-                style={[styles.childFilterChip, !selectedHeatmapChildId && styles.childFilterChipSelected]}
-                onPress={() => setSelectedHeatmapChildId(null)}
-                activeOpacity={0.8}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={[styles.childFilterChipText, !selectedHeatmapChildId && styles.childFilterChipTextSelected]}>
-                  All children
-                </Text>
-              </TouchableOpacity>
-              {children.map((child) => {
-                const selected = String(selectedHeatmapChildId) === String(child.id);
-                const childName = child.first_name || child.name || 'Child';
-                return (
-                  <TouchableOpacity
-                    key={child.id}
-                    style={[styles.childFilterChip, selected && styles.childFilterChipSelected]}
-                    onPress={() => setSelectedHeatmapChildId(child.id)}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={[styles.childFilterChipText, selected && styles.childFilterChipTextSelected]}>
-                      {childName}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          ) : <View />}
-          {lastBulkUndo && !readOnly ? (
+          <View style={styles.childFilterChips}>
             <TouchableOpacity
-              style={[styles.rangeBulkChip, undoingBulk && styles.rangeBulkChipDisabled]}
-              onPress={handleUndoBulk}
-              disabled={undoingBulk}
-              {...(Platform.OS === 'web' && { cursor: undoingBulk ? 'default' : 'pointer' })}
+              style={[styles.childFilterChip, !selectedHeatmapChildId && styles.childFilterChipSelected]}
+              onPress={() => setSelectedHeatmapChildId(null)}
+              activeOpacity={0.8}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={styles.rangeBulkChipText}>
-                {undoingBulk ? 'Undoing…' : 'Undo bulk'}
+              <Text style={[styles.childFilterChipText, !selectedHeatmapChildId && styles.childFilterChipTextSelected]}>
+                All children
               </Text>
             </TouchableOpacity>
-          ) : null}
+            {children.map((child) => {
+              const selected = String(selectedHeatmapChildId) === String(child.id);
+              const childName = child.first_name || child.name || 'Child';
+              return (
+                <TouchableOpacity
+                  key={child.id}
+                  style={[styles.childFilterChip, selected && styles.childFilterChipSelected]}
+                  onPress={() => setSelectedHeatmapChildId(child.id)}
+                  activeOpacity={0.8}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={[styles.childFilterChipText, selected && styles.childFilterChipTextSelected]}>
+                    {childName}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
       ) : null}
     </View>
@@ -1943,23 +2015,44 @@ export default function AttendanceView({
                 {attendanceDateRangePicker({ showLabel: false })}
               </View>
             ) : null}
+            {isYearPlannerLayout && bulkTermOptions.length > 0 && (
+              <View style={styles.bulkTermChooserWrap}>
+                <Text style={styles.bulkTermLabel}>Term</Text>
+                <View style={styles.bulkTermChooser}>
+                  {bulkTermOptions.map((term, idx) => (
+                    <TouchableOpacity
+                      key={term.label}
+                      style={[styles.bulkTermChip, idx === selectedBulkTermIdx && styles.bulkTermChipSelected]}
+                      onPress={() => setSelectedBulkTermIdx(idx)}
+                      disabled={markingRangeAttended}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={[styles.bulkTermChipText, idx === selectedBulkTermIdx && styles.bulkTermChipTextSelected]}>
+                        {term.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
             <Text style={[styles.confirmBody, styles.confirmRangeBody]}>
               {isYearPlannerLayout
-                ? `This marks scheduled lessons as attended from ${formatDateDisplay(bulkTermStart)} through today (${formatDateDisplay(bulkTodayKey)}) for ${bulkTargetChildId ? selectedBulkChildName : 'all children'}. Future days and days with no lessons are left untouched.`
+                ? `This marks scheduled lessons as attended from ${formatDateDisplay(bulkTermStart)} through ${bulkTermEnd === bulkTodayKey ? `today (${formatDateDisplay(bulkTodayKey)})` : formatDateDisplay(bulkTermEnd)} for ${bulkTargetChildId ? selectedBulkChildName : 'all children'}. Future days and days with no lessons are left untouched.`
                 : `This will mark all days in the selected range as attended for ${bulkTargetChildId ? selectedBulkChildName : 'all children'}.`}
             </Text>
             <View style={[styles.confirmActions, styles.confirmRangeActions]}>
               <TouchableOpacity
-                style={styles.confirmCancelBtn}
+                style={styles.bulkCancelBtn}
                 onPress={() => setConfirmRangeVisible(false)}
                 disabled={markingRangeAttended}
                 {...(Platform.OS === 'web' && { cursor: markingRangeAttended ? 'default' : 'pointer' })}
               >
-                <Text style={styles.confirmCancelText}>Cancel</Text>
+                <X size={15} color="#374151" strokeWidth={2.5} />
+                <Text style={styles.bulkCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
-                  styles.confirmPrimaryBtn,
+                  styles.bulkConfirmBtn,
                   (markingRangeAttended || (!isYearPlannerLayout && (!rangeStartStr || !rangeEndStr))) && styles.confirmPrimaryBtnDisabled,
                 ]}
                 disabled={markingRangeAttended || (!isYearPlannerLayout && (!rangeStartStr || !rangeEndStr))}
@@ -1968,7 +2061,7 @@ export default function AttendanceView({
                   if (isYearPlannerLayout) {
                     await handleMarkAllRangeAttended({
                       startDate: dateStringToDate(bulkTermStart),
-                      endDate: new Date(),
+                      endDate: dateStringToDate(bulkTermEnd),
                     });
                   } else {
                     await handleMarkAllRangeAttended();
@@ -1976,9 +2069,86 @@ export default function AttendanceView({
                 }}
                 {...(Platform.OS === 'web' && { cursor: markingRangeAttended ? 'default' : 'pointer' })}
               >
-                <Text style={styles.confirmPrimaryText}>
+                <Check size={15} color="#FFFFFF" strokeWidth={2.5} />
+                <Text style={styles.bulkConfirmText}>
                   {markingRangeAttended ? 'Marking…' : 'Confirm'}
                 </Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+      {/* Term Counts Detail Modal */}
+      <Modal animationType="fade" transparent visible={termCountsModalVisible} onRequestClose={() => setTermCountsModalVisible(false)}>
+        <TouchableOpacity style={styles.confirmOverlay} activeOpacity={1} onPress={() => setTermCountsModalVisible(false)}>
+          <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={[styles.confirmModal, styles.termCountsDetailModal]}>
+            <View style={styles.confirmHeader}>
+              <Text style={styles.confirmTitle}>Attendance Details</Text>
+              <TouchableOpacity
+                style={styles.confirmCloseBtn}
+                onPress={() => setTermCountsModalVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={18} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            {/* School year dropdown (read-only display) */}
+            <View style={styles.termCountsYearRow}>
+              <View style={styles.termCountsYearDropdown}>
+                <Text style={styles.termCountsYearText}>
+                  {plannerYearAnchor ? `${plannerYearAnchor.getFullYear()} School Year` : `${new Date().getFullYear()} School Year`}
+                </Text>
+                <ChevronDown size={16} color="#6B7280" />
+              </View>
+            </View>
+            {/* Term rows */}
+            <View style={styles.termCountsDetailList}>
+              {termDayCounts.map((term) => (
+                <View key={term.label} style={styles.termCountsDetailRow}>
+                  <View style={styles.termCountsDetailLeft}>
+                    <Text style={styles.termCountsDetailLabel}>{term.label}</Text>
+                    {term.start && term.end ? (
+                      <Text style={styles.termCountsDetailRange}>
+                        {formatDateDisplay(term.start)} – {formatDateDisplay(term.end)}
+                      </Text>
+                    ) : (
+                      <Text style={styles.termCountsDetailRange}>Days outside term ranges</Text>
+                    )}
+                  </View>
+                  <Text style={styles.termCountsDetailCount}>{term.count} {term.count === 1 ? 'day' : 'days'}</Text>
+                </View>
+              ))}
+              {/* Total */}
+              <View style={[styles.termCountsDetailRow, styles.termCountsDetailTotalRow]}>
+                <Text style={styles.termCountsDetailTotalLabel}>Total</Text>
+                <Text style={styles.termCountsDetailTotalCount}>
+                  {termDayCounts.reduce((sum, t) => sum + t.count, 0)} days
+                </Text>
+              </View>
+            </View>
+            {/* Footer */}
+            <View style={styles.termCountsDetailFooter}>
+              <TouchableOpacity
+                style={styles.bulkCancelBtn}
+                onPress={() => setTermCountsModalVisible(false)}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={15} color="#374151" strokeWidth={2.5} />
+                <Text style={styles.bulkCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.bulkConfirmBtn}
+                onPress={() => {
+                  setTermCountsModalVisible(false);
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openSchoolYearSettings'));
+                  }
+                }}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.bulkConfirmText}>Edit school year</Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
@@ -2147,6 +2317,30 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     maxWidth: 760,
   },
+  termCountsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginLeft: 'auto',
+  },
+  termCountItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  termCountLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(15, 23, 42, 0.5)',
+  },
+  termCountValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: 'rgba(15, 23, 42, 0.8)',
+  },
+  termCountValueTotal: {
+    color: '#0F172A',
+  },
   yearPlannerControlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2229,20 +2423,21 @@ const styles = StyleSheet.create({
   dateRangeArrowLabel: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted },
   rangeBulkChip: {
     borderRadius: 999,
-    paddingVertical: 8,
+    paddingVertical: 7,
     paddingHorizontal: 14,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F1F5F9',
     borderWidth: 1,
-    borderColor: TOKENS.accent,
-    alignSelf: 'flex-start',
+    borderColor: 'rgba(15, 23, 42, 0.08)',
+    alignSelf: 'center',
+    marginLeft: 'auto',
   },
   rangeBulkChipDisabled: {
     opacity: 0.55,
   },
   rangeBulkChipText: {
-    fontSize: TOKENS.fontSizeCaption,
-    fontWeight: '700',
-    color: '#000',
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(15, 23, 42, 0.7)',
   },
   confirmOverlay: {
     flex: 1,
@@ -2279,9 +2474,89 @@ const styles = StyleSheet.create({
     marginTop: 0,
     marginBottom: 4,
   },
+  bulkTermChooserWrap: {
+    marginBottom: 14,
+  },
+  bulkTermLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(15, 23, 42, 0.55)',
+    marginBottom: 6,
+    letterSpacing: 0.2,
+  },
+  bulkTermChooser: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    padding: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(15, 23, 42, 0.04)',
+    alignSelf: 'flex-start',
+  },
+  bulkTermChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+  },
+  bulkTermChipSelected: {
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && { boxShadow: '0 1px 3px rgba(15, 23, 42, 0.1)' }),
+  },
+  bulkTermChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(15, 23, 42, 0.55)',
+  },
+  bulkTermChipTextSelected: {
+    color: '#0F172A',
+  },
   confirmRangeActions: {
     marginTop: 24,
-    gap: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  bulkCancelBtn: {
+    minHeight: 50,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  bulkCancelText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  bulkConfirmBtn: {
+    minHeight: 50,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    backgroundColor: '#9ECFFB',
+    borderWidth: 1,
+    borderColor: '#9ECFFB',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  bulkConfirmText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   confirmHeader: {
     flexDirection: 'row',
@@ -2405,4 +2680,97 @@ const styles = StyleSheet.create({
   calendarDayText: { fontSize: 13, color: TOKENS.text },
   calendarDayTextSelected: { color: '#fff', fontWeight: '600' },
   calendarDayTextMuted: { color: TOKENS.textMuted },
+  termCountsDetailModal: {
+    width: 420,
+    maxWidth: '90%',
+  },
+  termCountsYearRow: {
+    marginBottom: 16,
+  },
+  termCountsYearDropdown: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    alignSelf: 'flex-start',
+  },
+  termCountsYearText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  termCountsDetailList: {
+    gap: 0,
+    marginBottom: 20,
+  },
+  termCountsDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  termCountsDetailLeft: {
+    flex: 1,
+    gap: 2,
+  },
+  termCountsDetailLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  termCountsDetailRange: {
+    fontSize: 13,
+    color: '#6B7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  termCountsDetailCount: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  termCountsDetailTotalRow: {
+    borderBottomWidth: 0,
+    paddingTop: 14,
+    marginTop: 4,
+    borderTopWidth: 2,
+    borderTopColor: '#E5E7EB',
+  },
+  termCountsDetailTotalLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  termCountsDetailTotalCount: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  termCountsDetailFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
 });

@@ -111,7 +111,7 @@ function YearHeatmap({ title, dateKeys = [], colorForKey }) {
 
 const SUBJECT_SYNTHETIC_CHILD_ID = '__subject__';
 
-export function SubjectAttendanceYearHeatmap({ attendanceRecords = [], subjectEvents = [], onDayPress = null, onMarkDayAttended = null, isDayMarkable = null, hideLegend = false, interactionMode = 'events' }) {
+export const SubjectAttendanceYearHeatmap = React.memo(function SubjectAttendanceYearHeatmap({ attendanceRecords = [], subjectEvents = [], onDayPress = null, onMarkDayAttended = null, isDayMarkable = null, hideLegend = false, interactionMode = 'events', selectedDateKey = null }) {
   const todayKey = useMemo(() => toDateKey(new Date()), []);
 
   const { yearStart, yearEnd, dayStatusByChild } = useMemo(() => {
@@ -184,9 +184,10 @@ export function SubjectAttendanceYearHeatmap({ attendanceRecords = [], subjectEv
       onMarkDayAttended={onMarkDayAttended}
       interactionMode={interactionMode}
       showLegend={!hideLegend}
+      selectedDateKey={selectedDateKey}
     />
   );
-}
+});
 
 export function SubjectAttendanceMonthDrilldown({
   attendanceRecords = [],

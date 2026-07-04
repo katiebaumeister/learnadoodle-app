@@ -2579,6 +2579,19 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     };
   }, [isTutorUser, openCreateModal]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const handleOpenLearningDaySetup = (e) => {
+      const subject = e.detail?.subject;
+      if (!subject?.id) return;
+      setLearningDaySetupChoice({ visible: true, subject });
+    };
+    window.addEventListener('openLearningDaySetupChoice', handleOpenLearningDaySetup);
+    return () => {
+      window.removeEventListener('openLearningDaySetupChoice', handleOpenLearningDaySetup);
+    };
+  }, []);
+
   // Listen for openEventModal event to open the global EventModal
   // Available from any screen (family, planner, etc.)
   useEffect(() => {
