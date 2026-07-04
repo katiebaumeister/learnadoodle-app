@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { ClipboardCheck, FileDown, Download, Settings } from 'lucide-react';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { PLANNER_SMART_ACTION_TOOLS, PLANNER_SMART_ACTION_UTILITIES, dispatchPlannerSmartAction } from './plannerSmartActionsConfig';
+import { PLANNING_MODES } from '../../lib/planningMode';
 
 const SMART_ACTION_ICONS = {
   'school-year-settings': Settings,
@@ -11,16 +12,31 @@ const SMART_ACTION_ICONS = {
   export: Download,
 };
 
-export default function PlannerSmartActionsMenu({ visible, triggerRef, onClose, showExport = false, panelProps = null }) {
+const ATTENDANCE_ACTION_IDS = new Set(['bulk-attendance', 'export-attendance']);
+
+export default function PlannerSmartActionsMenu({ visible, triggerRef, onClose, showExport = false, panelProps = null, capabilities = null, familyApproach = null }) {
   const handleSelect = (modeId) => {
     onClose?.();
     dispatchPlannerSmartAction(modeId);
   };
 
-  const utilities = [
-    ...PLANNER_SMART_ACTION_TOOLS,
-    ...(showExport ? PLANNER_SMART_ACTION_UTILITIES : []),
-  ];
+  const isHomeschool = familyApproach === PLANNING_MODES.HOMESCHOOL_COMPLIANCE;
+
+  const utilities = useMemo(() => {
+    let items = [
+      ...PLANNER_SMART_ACTION_TOOLS,
+      ...(showExport ? PLANNER_SMART_ACTION_UTILITIES : []),
+    ].map((item) => {
+      if (item.id === 'school-year-settings') {
+        return { ...item, title: isHomeschool ? 'Edit School Year' : 'Edit Schedule Settings' };
+      }
+      return item;
+    });
+    if (capabilities && !capabilities.showAttendance) {
+      items = items.filter((item) => !ATTENDANCE_ACTION_IDS.has(item.id));
+    }
+    return items;
+  }, [showExport, capabilities, isHomeschool]);
 
   return (
     <Dropdown

@@ -19,6 +19,7 @@ import {
   createModalStyles as assignmentModalStyles,
   SCHOOL_YEAR_SETTINGS_MODAL_MAX_WIDTH,
 } from '../create/shared/createModalStyles';
+import { PLANNING_MODES } from '../../lib/planningMode';
 
 const MODAL_MAX_WIDTH = SCHOOL_YEAR_SETTINGS_MODAL_MAX_WIDTH;
 
@@ -28,6 +29,8 @@ export default function SchoolYearSettingsModal({
   familyId,
   initialSchoolYearLabel = null,
   onSaved,
+  familyApproach = null,
+  featureSettings = null,
 }) {
   const toast = useToast();
   const planningModalActionsRef = useRef(null);
@@ -188,7 +191,7 @@ export default function SchoolYearSettingsModal({
           style={styles.wrap}
         >
           <AppModalShell
-            title="School Year Settings"
+            title={familyApproach === PLANNING_MODES.HOMESCHOOL_COMPLIANCE ? 'School Year Settings' : 'Schedule Settings'}
             onClose={requestClose}
             disableShellScroll
             maxWidth={MODAL_MAX_WIDTH}
@@ -217,6 +220,8 @@ export default function SchoolYearSettingsModal({
                 hideEmbeddedHeader
                 initialSchoolYearLabel={activeYear}
                 onSchoolYearChange={handleSchoolYearChange}
+                familyApproach={familyApproach}
+                featureSettings={featureSettings}
                 onEmbeddedModalActionsReady={(actions) => {
                   planningModalActionsRef.current = actions;
                 }}

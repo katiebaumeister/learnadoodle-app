@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { ACCENT_TEXT } from '../create/shared/createModalStyles';
+import { getWorkspaceCapabilities } from '../../lib/planningMode';
 
-const TABS = [
+const ALL_TABS = [
   { id: 'bulletin', label: 'Bulletin Board' },
   { id: 'classwork', label: 'Classwork' },
   { id: 'materials', label: 'Materials' },
@@ -17,10 +18,22 @@ const LEAGUE_FONT = Platform.OS === 'web'
 export default function SubjectClassroomTabs({
   activeTab = 'bulletin',
   onChange,
+  planningMode = null,
+  featureSettings = null,
 }) {
+  const tabs = useMemo(() => {
+    const caps = getWorkspaceCapabilities({ familyApproach: planningMode, featureSettings });
+    return ALL_TABS.filter((tab) => {
+      if (tab.id === 'materials' && !caps.showMaterials) return false;
+      if (tab.id === 'grades' && !caps.showGrades) return false;
+      if (tab.id === 'attendance' && !caps.showAttendance) return false;
+      return true;
+    });
+  }, [planningMode, featureSettings]);
+
   return (
     <View style={styles.bar} accessibilityRole="tablist">
-      {TABS.map((tab) => {
+      {tabs.map((tab) => {
         const active = activeTab === tab.id;
         return (
           <TouchableOpacity

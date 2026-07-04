@@ -83,6 +83,7 @@ import { preloadBulletinBoardForFamily, invalidateBulletinPostsCache } from '../
 import { subscribeOnboardingCompleted } from '../lib/onboardingCrossTab';
 import { seedHomeWelcomeBulletinPost } from '../lib/homeWelcomeBulletin';
 import { useFamilyPlanningMode } from '../lib/useFamilyPlanningMode';
+import { getWorkspaceCapabilities } from '../lib/planningMode';
 import { PlannerDiffProvider } from '../app/state/usePlannerDiffStore';
 import PlannerDiffModal from '../app/components/schedule/PlannerDiffModal';
 import { PlannerHealthProvider } from '../app/state/usePlannerHealthStore';
@@ -328,6 +329,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [familyId, setFamilyId] = useState(() => (session?.family_id ?? null));
   const [family, setFamily] = useState(null);
   const familyPlanningMode = useFamilyPlanningMode(familyId, family);
+  const workspaceCapabilities = useMemo(
+    () => getWorkspaceCapabilities({ familyApproach: familyPlanningMode ?? family?.default_planning_mode, featureSettings: family?.feature_settings || null }),
+    [familyPlanningMode, family?.default_planning_mode, family?.feature_settings]
+  );
   const [profile, setProfile] = useState(null);
 
   const editChildLinkedLoginEmail = useMemo(() => {
@@ -4184,6 +4189,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             user: user,
             userRole: resolvedShellUserRole,
             familyPlanningMode: familyPlanningMode ?? family?.default_planning_mode ?? null,
+            featureSettings: family?.feature_settings || null,
             unreadMessagesCount,
           }}
           onOpenSettings={(section = 'profile') => {
@@ -4781,6 +4787,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     onClose={() => setShowSmartActionsMenu(false)}
                     showExport={showPlannerHeaderQuickActions}
                     panelProps={smartActionsHover.panelProps}
+                    capabilities={workspaceCapabilities}
+                    familyApproach={familyPlanningMode ?? family?.default_planning_mode ?? null}
                   />
                   {!denyFamilyEventEdit ? (
                     <TouchableOpacity
@@ -4826,6 +4834,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     onClose={() => setShowPlannerCreateMenu(false)}
                     onSelect={openPlannerCreateModal}
                     panelProps={plannerCreateHover.panelProps}
+                    capabilities={workspaceCapabilities}
                   />
                 </View>
               </View>
@@ -5559,6 +5568,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }}
         familyId={familyId}
         initialSchoolYearLabel={editSchoolYearInitialLabel}
+        familyApproach={familyPlanningMode ?? family?.default_planning_mode ?? null}
+        featureSettings={family?.feature_settings || null}
       />
 
       <PackWeekModal

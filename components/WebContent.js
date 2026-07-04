@@ -10646,6 +10646,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             family={propFamily}
             children={children || []}
             layoutVariant="default"
+            planningMode={propFamily?.default_planning_mode || null}
             onOpenPlannerSettings={() => {
               if (typeof onTabChange === 'function') {
                 onTabChange('settings', 'planner-settings');

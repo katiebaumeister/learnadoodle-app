@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react
 import Dropdown, { DropdownItem } from './ui/Dropdown';
 import StableImage from './ui/StableImage';
 import { getSubjectsNavLabel } from '../lib/subjectsModeCopy';
+import { getWorkspaceCapabilities } from '../lib/planningMode';
 import { safeImageUri } from '../lib/safeImageUri';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
 import {
@@ -65,8 +66,8 @@ const NAV_ITEM_DEFS = {
 };
 
 const PARENT_NAV_BUCKET_KEYS = [
-  ['home', 'messages'],
-  ['planner', 'subjects', 'materials'],
+  ['home', 'planner', 'subjects', 'materials'],
+  ['messages'],
   ['profile'],
 ];
 
@@ -105,6 +106,7 @@ export default function LeftRail({
   iconRailMode = false,
   permanentSidebar = false,
   familyPlanningMode = null,
+  featureSettings = null,
   unreadMessagesCount = 0,
 }) {
   const [expandedChildren, setExpandedChildren] = useState(new Set());
@@ -117,6 +119,11 @@ export default function LeftRail({
   
   // Use props if provided, otherwise default to expanded
   const isCollapsed = isCollapsedProp ?? false;
+
+  const capabilities = useMemo(
+    () => getWorkspaceCapabilities({ familyApproach: familyPlanningMode, featureSettings }),
+    [familyPlanningMode, featureSettings]
+  );
   
   // Handle closing menu with delay to allow moving to dropdown
   const handleMoreMenuClose = useCallback(() => {
@@ -189,16 +196,21 @@ export default function LeftRail({
     if (item.key === 'planning-preferences' && effectivePermissions.canViewPlanner === false) return false;
     if ((userRole === 'child' || userRole === 'student') && item.key === 'create') return false;
     if ((userRole === 'child' || userRole === 'student') && item.key === 'family') return false;
-    // Child experience is intentionally minimal: Home (checklist), Planner, Messages.
-    // Subjects and Materials are hidden for child/student to reduce surface area.
     if ((userRole === 'child' || userRole === 'student')
       && (item.key === 'subjects' || item.key === 'learning' || item.key === 'materials')) return false;
     if (item.key === 'planner' && effectivePermissions.canViewPlanner === false) return false;
     if ((item.key === 'subjects' || item.key === 'learning') && effectivePermissions.canViewSubjects === false) return false;
     if (item.key === 'materials' && effectivePermissions.canViewLibrary === false) return false;
     if ((userRole === 'child' || userRole === 'student') && (item.key === 'records' || item.key === 'explore')) return false;
+    // Feature toggle gating
+    if ((item.key === 'subjects' || item.key === 'learning') && !capabilities.showLearning) return false;
+    if (item.key === 'materials' && !capabilities.showMaterials) return false;
+    if (item.key === 'records' && !capabilities.showCompliance) return false;
     return true;
   }, [
+    capabilities.showCompliance,
+    capabilities.showLearning,
+    capabilities.showMaterials,
     effectivePermissions.canViewLibrary,
     effectivePermissions.canViewPlanner,
     effectivePermissions.canViewSubjects,

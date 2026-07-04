@@ -272,9 +272,6 @@ const styles = StyleSheet.create({
     ...modalButtonStyles.primaryButton,
     minWidth: 120,
     paddingHorizontal: 28,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 12px rgba(158, 207, 251, 0.55)',
-    }),
   },
   confirmButtonDestructive: {
     backgroundColor: destructiveButtonStyles.buttonCompact.backgroundColor,

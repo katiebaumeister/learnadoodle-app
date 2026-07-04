@@ -2831,6 +2831,7 @@ export default function SubjectsPage({
           initialProgressAction={pendingProgressAction}
           initialClassworkFocus={pendingClassworkFocus}
           onNavigateToPlanner={handleNavigateToPlanner}
+          planningMode={storedPlanningMode}
           onSubjectDataUpdate={(data) => {
             const updatedCache = {
               ...subjectDetailCache,

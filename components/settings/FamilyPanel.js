@@ -138,7 +138,7 @@ const SETTINGS_SIDEBAR_LEGAL_KEYS = ['about', 'terms', 'privacy'];
 
 const SETTINGS_SIDEBAR_ITEMS = [
   { key: 'profile', label: 'Profile' },
-  { key: 'appearance', label: 'Appearance' },
+  { key: 'appearance', label: 'Preferences' },
   { key: 'notifications', label: 'Notifications' },
   { key: 'planner-settings', label: SCHOOL_YEAR_SETTINGS_UI.navLabel },
   { key: 'members', label: 'Family' },
@@ -290,14 +290,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   }, [isTutorViewer, isChildMode, isSelfManagedStudent]);
 
   const visibleSidebarItems = useMemo(() => {
+    const isHomeschool = family?.default_planning_mode === 'HOMESCHOOL_COMPLIANCE';
     let items = SETTINGS_SIDEBAR_ITEMS.filter(
       (item) => (!item.requiresSubscription || showFamilySubscriptionCard) && (SHOW_BILLING_TAB || item.key !== 'subscription')
-    );
+    ).map((item) => {
+      if (item.key === 'planner-settings') {
+        return { ...item, label: isHomeschool ? 'School Year' : 'Schedule' };
+      }
+      return item;
+    });
     if (isChildRestrictedView) {
       items = items.filter((item) => item.key === 'profile');
     }
     return items;
-  }, [showFamilySubscriptionCard, isChildRestrictedView]);
+  }, [showFamilySubscriptionCard, isChildRestrictedView, family?.default_planning_mode]);
 
   const settingsItemByKey = useMemo(() => {
     const map = {};
@@ -2884,6 +2890,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               initialData={preloadedPlannerData}
               layoutVariant="settings"
               readOnly={familyUserControls.isRestrictedViewer && !familyUserControls.allowed('planning_preferences')}
+              familyApproach={family?.default_planning_mode || null}
+              featureSettings={family?.feature_settings || null}
               onSave={() => {
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
@@ -3397,7 +3405,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       case 'appearance':
         return (
           <View style={styles.mainContentInner}>
-            <Text style={styles.mainContentTitle}>Appearance</Text>
+            <Text style={styles.mainContentTitle}>Preferences</Text>
             <View
               style={[
                 styles.profileSection,
@@ -3407,7 +3415,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               ]}
             >
               <View style={styles.profileSectionHeader}>
-                <Text style={[styles.subsectionTitle, styles.profileSectionTitle]}>Account appearance</Text>
+                <Text style={[styles.subsectionTitle, styles.profileSectionTitle]}>App preferences</Text>
               </View>
               <View style={styles.profileSectionBody}>
                 <FamilyApproachSelector

@@ -121,25 +121,12 @@ function isMissingWork(assignment, eventById) {
 }
 
 function GradesPanelHeader({ onAddLearningDay, onAddAssignment }) {
-  const hasActions = typeof onAddLearningDay === 'function' || typeof onAddAssignment === 'function';
+  const hasActions = typeof onAddAssignment === 'function';
   return (
     <View style={styles.panelToolbar}>
       <Text style={styles.panelTitle}>Grades</Text>
       {hasActions ? (
         <View style={styles.panelActions}>
-          {typeof onAddLearningDay === 'function' ? (
-            <TouchableOpacity
-              style={styles.addGradeButton}
-              onPress={onAddLearningDay}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Add learning day"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={18} color="#334155" strokeWidth={2.25} />
-              <Text style={styles.addGradeButtonText}>Add learning day</Text>
-            </TouchableOpacity>
-          ) : null}
           {typeof onAddAssignment === 'function' ? (
             <TouchableOpacity
               style={styles.addGradeButton}

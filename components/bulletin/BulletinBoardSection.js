@@ -885,6 +885,8 @@ export default function BulletinBoardSection({
     });
   }, [familyId]);
 
+  const [postsLoading, setPostsLoading] = useState(() => !initialBulletinState.fromCache);
+
   const loadPosts = useCallback(async () => {
     if (!familyId) return;
     setError(null);
@@ -897,6 +899,8 @@ export default function BulletinBoardSection({
       setProfileMap(payload.profileMap instanceof Map ? payload.profileMap : new Map());
     } catch (err) {
       setError(err?.message || 'Could not load bulletin board');
+    } finally {
+      setPostsLoading(false);
     }
   }, [familyId]);
   const loadPostsRef = useRef(loadPosts);
@@ -910,6 +914,7 @@ export default function BulletinBoardSection({
       setProfileMap(cached.profileMap);
       setCurrentUserId(cached.currentUserId);
       setFamilyMembers(cached.familyMembers);
+      setPostsLoading(false);
     }
     loadPostsRef.current();
   }, [familyId]);
@@ -945,12 +950,14 @@ export default function BulletinBoardSection({
 
   const streamPosts = visiblePosts;
 
-  const { items: activityItems } = useAssignmentActivity(
+  const { items: activityItems, loading: activityLoading } = useAssignmentActivity(
     familyId,
     filterSubjectId || null,
     50,
     true
   );
+
+  const bulletinInitialLoading = postsLoading || activityLoading;
 
   const mergedStreamItems = useMemo(
     () => mergeBulletinStreamItems({
@@ -1519,7 +1526,11 @@ export default function BulletinBoardSection({
         showsVerticalScrollIndicator
         keyboardShouldPersistTaps="handled"
       >
-        {mergedStreamItems.length === 0 ? (
+        {bulletinInitialLoading ? (
+          <View style={styles.emptyStateExpanded}>
+            <ActivityIndicator size="small" color="#6BB3E8" />
+          </View>
+        ) : mergedStreamItems.length === 0 ? (
           <View style={styles.emptyStateExpanded}>
             <Text style={styles.emptyHeading}>{emptyStateHeading}</Text>
             <Text style={styles.emptySubheading}>{emptyStateSubheading}</Text>

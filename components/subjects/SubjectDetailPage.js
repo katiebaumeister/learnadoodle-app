@@ -31,6 +31,7 @@ import {
   BarChart3,
   List,
   SlidersHorizontal,
+  Download,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectDetail, parseChildIds } from '../../lib/services/subjectsClient';
@@ -62,6 +63,7 @@ import {
 } from './SubjectSectionDrilldownPanels';
 import { YearHeatmapLegend } from '../planner/attendance/YearHeatmapGrid';
 import DayEventsPanel from '../planner/attendance/DayEventsPanel';
+import AttendanceExportModal from '../planner/attendance/AttendanceExportModal';
 import { supabase } from '../../lib/supabase';
 import BulletinBoardSection from '../bulletin/BulletinBoardSection';
 import {
@@ -481,6 +483,7 @@ export default function SubjectDetailPage({
   initialClassworkFocus = null,
   onNavigateToPlanner = null,
   layoutVariant = 'default',
+  planningMode = null,
 }) {
   const initialSubjectIdForProgressCache = subjectId || preloadedSubjectData?.subject?.id;
   const preloadedProgressCache = initialSubjectIdForProgressCache
@@ -495,6 +498,7 @@ export default function SubjectDetailPage({
   const [subjectData, setSubjectData] = useState(preloadedSubjectData || null);
   const [optimisticAttendancePatches, setOptimisticAttendancePatches] = useState([]);
   const [showExportComingSoonModal, setShowExportComingSoonModal] = useState(false);
+  const [showAttendanceExportModal, setShowAttendanceExportModal] = useState(false);
   const [showMarkAllAttendedModal, setShowMarkAllAttendedModal] = useState(false);
   const [showPastEventsGradesModal, setShowPastEventsGradesModal] = useState(false);
   const [showEditSettingsModal, setShowEditSettingsModal] = useState(false);
@@ -949,6 +953,38 @@ export default function SubjectDetailPage({
   );
 
   const childrenNames = assignedChildren.map(getChildName).filter(Boolean);
+
+  const attendanceExportRows = useMemo(() => {
+    if (!attendanceRecords || attendanceRecords.length === 0) return [];
+    const sortedDays = [...new Set(
+      attendanceRecords.map((r) => String(r?.day_date || '').slice(0, 10)).filter(Boolean)
+    )].sort();
+    if (sortedDays.length === 0) return [];
+    const exportChildren = assignedChildren
+      .map((id) => children.find((c) => String(c?.id) === String(id)))
+      .filter(Boolean);
+    return sortedDays.map((dateKey) => {
+      const childStatuses = {};
+      exportChildren.forEach((c) => {
+        const record = attendanceRecords.find(
+          (r) => String(r?.child_id) === String(c.id) && String(r?.day_date || '').slice(0, 10) === dateKey
+        );
+        if (record?.status === 'present') childStatuses[c.id] = 'attended';
+        else if (record?.status === 'absent') childStatuses[c.id] = 'unattended';
+        else childStatuses[c.id] = 'noEvents';
+      });
+      const d = new Date(dateKey + 'T12:00:00');
+      const dateLabel = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      return { dateKey, dateLabel, childStatuses };
+    });
+  }, [attendanceRecords, assignedChildren, children]);
+
+  const attendanceExportChildren = useMemo(() => {
+    return assignedChildren
+      .map((id) => children.find((c) => String(c?.id) === String(id)))
+      .filter(Boolean);
+  }, [assignedChildren, children]);
+
   const attendanceChildrenLabel = useMemo(() => {
     if (childrenNames.length === 0) return 'Your students';
     if (childrenNames.length === 1) return childrenNames[0];
@@ -3889,6 +3925,8 @@ export default function SubjectDetailPage({
               <SubjectClassroomTabs
                 activeTab={classroomTab}
                 onChange={setClassroomTab}
+                planningMode={planningMode}
+                featureSettings={family?.feature_settings || null}
               />
             </View>
             {isParentViewer ? (
@@ -4231,6 +4269,34 @@ export default function SubjectDetailPage({
               <View style={styles.attendanceSectionHeader}>
                 <Text style={styles.tabPanelTitle}>Attendance{subject?.name ? ` \u2013 ${subject.name}` : ''}{childrenNames.length > 0 ? `, ${childrenNames.join(', ')}` : ''}</Text>
                 <View style={styles.sectionHeaderActions}>
+                  <TouchableOpacity
+                    style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
+                    onPress={() => {
+                      if (onNavigateToPlanner) {
+                        onNavigateToPlanner({ view: 'attendance' });
+                      } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                        window.location.href = '/planner?view=attendance';
+                      }
+                    }}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Full planner"
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <ExternalLink size={16} color="#334155" strokeWidth={2.25} />
+                    <Text style={styles.emptyStateButtonText}>Full planner</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
+                    onPress={() => setShowAttendanceExportModal(true)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Export attendance"
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Download size={16} color="#334155" strokeWidth={2.25} />
+                    <Text style={styles.emptyStateButtonText}>Export</Text>
+                  </TouchableOpacity>
                   {canManageAttendance ? (
                     <TouchableOpacity
                       style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
@@ -4596,6 +4662,12 @@ export default function SubjectDetailPage({
         resolvedActiveChildIds={assignedChildren}
         fixedSubjectId={subject?.id}
         onCompleted={() => loadSubjectDetail({ silent: true })}
+      />
+      <AttendanceExportModal
+        visible={showAttendanceExportModal}
+        onClose={() => setShowAttendanceExportModal(false)}
+        exportRows={attendanceExportRows}
+        children={attendanceExportChildren}
       />
       <SubjectPastEventsGradesModal
         visible={showPastEventsGradesModal}

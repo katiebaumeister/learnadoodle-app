@@ -42,6 +42,7 @@ import {
   ATTENDANCE_MODES,
   getAttendanceMode,
 } from '../../lib/attendanceMode';
+import { getWorkspaceCapabilities, PLANNING_MODES } from '../../lib/planningMode';
 import { trackEvent } from '../../lib/analytics';
 import { createModalStyles as assignmentModalStyles, ACCENT_TEXT } from '../create/shared/createModalStyles';
 import { SectionHeading } from '../create/shared/assignmentFormParts';
@@ -428,8 +429,17 @@ export default function PlannerSettingsContent({
   embeddedInFamily = false,
   hidePageTitle = false,
   layoutVariant = 'default',
+  familyApproach = null,
+  featureSettings = null,
 }) {
   const toast = useToast();
+  const capabilities = useMemo(
+    () => getWorkspaceCapabilities({ familyApproach, featureSettings }),
+    [familyApproach, featureSettings]
+  );
+  const showAttendanceSection = capabilities.showAttendance;
+  const isHomeschoolMode = familyApproach === PLANNING_MODES.HOMESCHOOL_COMPLIANCE;
+  const resolvedPageTitle = pageTitle || (isHomeschoolMode ? 'School Year' : 'Schedule Settings');
   const initialSnapshot = getInitialPlannerSettingsSnapshot({
     familyId,
     lockedSchoolYearLabel,
@@ -1876,10 +1886,10 @@ export default function PlannerSettingsContent({
   }, [embeddedInModal, handleRequestClose]);
 
   const useTwoColumnModalLayout =
-    (embeddedInModal && hideEmbeddedHeader) || layoutVariant === 'settings';
+    (embeddedInModal && hideEmbeddedHeader);
 
   const usePlainSettingsSections =
-    layoutVariant === 'settings' && !embeddedInModal && !useTwoColumnModalLayout;
+    layoutVariant === 'settings' && !embeddedInModal;
   const sectionStyle = {
     paddingTop: 0,
     paddingBottom: 0,
@@ -1899,10 +1909,6 @@ export default function PlannerSettingsContent({
         borderWidth: 0,
         borderRadius: 0,
         overflow: 'visible',
-        ...(Platform.OS === 'web' && !embeddedInModal && {
-          maxWidth: 680,
-          alignSelf: 'flex-start',
-        }),
       }
     : {
         width: '100%',
@@ -1931,10 +1937,6 @@ export default function PlannerSettingsContent({
     height: 1,
     backgroundColor: '#e5e7eb',
     width: '100%',
-    ...(Platform.OS === 'web' && !embeddedInModal && {
-      maxWidth: 680,
-      alignSelf: 'flex-start',
-    }),
   };
   const sectionBucketTitleStyle = {
     fontSize: 15,
@@ -2233,8 +2235,8 @@ export default function PlannerSettingsContent({
   const isClassDayAttendanceActive = !isPerSubjectAttendanceActive;
   const attendanceModeLabel = isPerSubjectAttendanceActive ? 'Per subject' : 'Total class days';
   const schoolYearHeaderLabel = selectedSchoolYearLabel
-    ? `${selectedSchoolYearLabel} School Year`
-    : 'School Year';
+    ? (isHomeschoolMode ? `${selectedSchoolYearLabel} School Year` : `${selectedSchoolYearLabel}`)
+    : resolvedPageTitle;
   const isAtCurrentSchoolYear =
     normalizeSchoolYearLabel(selectedSchoolYearLabel) === currentSchoolYearLabel;
   const canShiftSchoolYear = !isSchoolYearLocked && !readOnly;
@@ -2346,6 +2348,113 @@ export default function PlannerSettingsContent({
   const modalMutedMetaStyle = useTwoColumnModalLayout
     ? assignmentModalStyles.fieldHint
     : mutedMetaTextStyle;
+
+  // --- Settings page row layout styles (used only when usePlainSettingsSections) ---
+  const settingsRowSectionStyle = {
+    width: '100%',
+    paddingTop: 20,
+    paddingBottom: 0,
+  };
+  const settingsRowGroupStyle = {
+    width: '100%',
+    gap: 0,
+  };
+  const settingsRowStyle = {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    minHeight: 44,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  };
+  const settingsRowLabelStyle = {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+    flexShrink: 0,
+    minWidth: 160,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  };
+  const settingsRowControlsStyle = {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+    flex: 1,
+    justifyContent: 'flex-start',
+    paddingLeft: 24,
+  };
+  const settingsCompactDateStyle = {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    minHeight: 38,
+    width: 148,
+    fontSize: 14,
+  };
+  const settingsCompactInput = {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    fontSize: 14,
+    color: TEXT_BLACK,
+    minWidth: 56,
+    width: 72,
+    minHeight: 38,
+    backgroundColor: '#FFFFFF',
+  };
+  const settingsWeekdayChip = (active) => ({
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 36,
+    minWidth: 44,
+    paddingVertical: 0,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: active ? '#6BB3E8' : '#e5e7eb',
+    backgroundColor: active ? 'rgba(133,196,242,0.2)' : '#FFFFFF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  });
+  const settingsWeekdayChipText = (active) => ({
+    fontSize: 14,
+    fontWeight: active ? '600' : '500',
+    color: active ? '#6BB3E8' : '#6b7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  });
+  const settingsModeToggle = (active) => ({
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 36,
+    paddingVertical: 0,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: active ? '#6BB3E8' : '#e5e7eb',
+    backgroundColor: active ? 'rgba(133,196,242,0.2)' : '#FFFFFF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  });
+  const settingsModeToggleText = (active) => ({
+    fontSize: 14,
+    color: active ? '#6BB3E8' : '#6b7280',
+    fontWeight: active ? '600' : '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  });
 
   const renderDateRangeField = (label, startValue, onStartChange, endValue, onEndChange) => {
     if (useTwoColumnModalLayout) {
@@ -2811,6 +2920,7 @@ export default function PlannerSettingsContent({
           {learningDaysForm}
         </View>
       </View>
+      {showAttendanceSection ? (
       <View style={assignmentModalStyles.schoolYearSettingsFormColumnSide}>
         <View style={assignmentModalStyles.schoolYearSettingsSidePanel}>
           <SectionHeading>{SCHOOL_YEAR_SETTINGS_UI.sections.attendanceTracking}</SectionHeading>
@@ -2832,6 +2942,201 @@ export default function PlannerSettingsContent({
           )}
         </View>
       </View>
+      ) : null}
+    </View>
+  ) : usePlainSettingsSections ? (
+    <View style={{ width: '100%', gap: 0 }}>
+      {/* Section: Term dates */}
+      <View style={[settingsRowSectionStyle, { paddingTop: 8 }]}>
+        <Text style={sectionBucketTitleStyle}>Term dates</Text>
+        <View style={sectionBucketDividerStyle} />
+        <View style={settingsRowGroupStyle}>
+          {[
+            { label: 'Fall term', start: defaultFallStartDate, setStart: setDefaultFallStartDate, end: defaultFallEndDate, setEnd: setDefaultFallEndDate },
+            { label: 'Spring term', start: defaultSpringStartDate, setStart: setDefaultSpringStartDate, end: defaultSpringEndDate, setEnd: setDefaultSpringEndDate },
+            { label: 'Summer', start: defaultSummerStartDate, setStart: setDefaultSummerStartDate, end: defaultSummerEndDate, setEnd: setDefaultSummerEndDate },
+          ].map((term) => (
+            <View key={term.label} style={settingsRowStyle}>
+              <Text style={settingsRowLabelStyle}>{term.label}</Text>
+              <View style={settingsRowControlsStyle}>
+                <PlannerPreferenceDateField
+                  value={term.start}
+                  onChange={handleRangeDefaultChange(term.setStart)}
+                  placeholder="Start"
+                  borderColor="#e5e7eb"
+                  textColor={TEXT_BLACK}
+                  mutedColor="rgba(15,23,42,0.4)"
+                  style={settingsCompactDateStyle}
+                  width={148}
+                  minDate={yearRangeMinYmd}
+                  maxDate={yearRangeMaxYmd}
+                />
+                <PlannerPreferenceDateField
+                  value={term.end}
+                  onChange={handleRangeDefaultChange(term.setEnd)}
+                  placeholder="End"
+                  borderColor="#e5e7eb"
+                  textColor={TEXT_BLACK}
+                  mutedColor="rgba(15,23,42,0.4)"
+                  style={settingsCompactDateStyle}
+                  width={148}
+                  minDate={yearRangeMinYmd}
+                  maxDate={yearRangeMaxYmd}
+                />
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      {/* Section: Learning schedule */}
+      <View style={settingsRowSectionStyle}>
+        <Text style={sectionBucketTitleStyle}>Learning schedule</Text>
+        <View style={sectionBucketDividerStyle} />
+        <View style={settingsRowGroupStyle}>
+          <View style={settingsRowStyle}>
+            <Text style={settingsRowLabelStyle}>Default learning days</Text>
+            <View style={settingsRowControlsStyle}>
+              {LEARNING_DAY_OPTIONS.map((option) => {
+                const active = preferredLearningDayNums.includes(option.id);
+                return (
+                  <TouchableOpacity
+                    key={`learning-day-${option.id}`}
+                    style={settingsWeekdayChip(active)}
+                    onPress={() => handlePreferredLearningDayToggle(option.id)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={settingsWeekdayChipText(active)}>{option.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+          <View style={settingsRowStyle}>
+            <Text style={settingsRowLabelStyle}>Default learning hours</Text>
+            <View style={settingsRowControlsStyle}>
+              <MaskedTimeInput
+                wrapStyle={{ width: 120 }}
+                value={learningStartTime}
+                onChangeText={setLearningStartTime}
+                onBlur={(nextValue) => persistLearningTimes(nextValue, learningEndTime)}
+                placeholder="8:00 AM"
+              />
+              <MaskedTimeInput
+                wrapStyle={{ width: 120 }}
+                value={learningEndTime}
+                onChangeText={setLearningEndTime}
+                onBlur={(nextValue) => persistLearningTimes(learningStartTime, nextValue)}
+                placeholder="4:00 PM"
+              />
+            </View>
+          </View>
+        </View>
+      </View>
+
+      {/* Section: Days off */}
+      <View style={settingsRowSectionStyle}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <Text style={[sectionBucketTitleStyle, { marginBottom: 0 }]}>Days off</Text>
+          {!readOnly ? (
+            <TouchableOpacity
+              onPress={() => openAddDayOffModal()}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#ffffff' }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={14} color="#374151" />
+              <Text style={{ fontSize: 14, fontWeight: '500', color: '#374151', fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined }}>
+                Add day off
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        <View style={sectionBucketDividerStyle} />
+        <View style={settingsRowGroupStyle}>
+          {dayOffRows.length === 0 ? (
+            <Text style={{ fontSize: 14, color: MUTED, paddingVertical: 8, fontFamily: Platform.OS === 'web' ? '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined }}>
+              No days off yet.
+            </Text>
+          ) : (
+            dayOffRows.map((row) => (
+              <TouchableOpacity
+                key={row.id}
+                onPress={() => openEditDayOffModal(row)}
+                disabled={readOnly}
+                style={settingsRowStyle}
+                {...(Platform.OS === 'web' && { cursor: readOnly ? 'default' : 'pointer' })}
+              >
+                <Text style={settingsRowLabelStyle} numberOfLines={1}>{row.name || 'Day off'}</Text>
+                <View style={settingsRowControlsStyle}>
+                  <Text style={{ fontSize: 14, color: '#374151', fontFamily: Platform.OS === 'web' ? '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined }}>
+                    {formatDayOffRangeLabel(row)}
+                  </Text>
+                  {!readOnly ? <ChevronRight size={16} color="#9CA3AF" /> : null}
+                </View>
+              </TouchableOpacity>
+            ))
+          )}
+        </View>
+      </View>
+
+      {/* Section: Attendance tracking */}
+      {showAttendanceSection ? (
+        <View style={settingsRowSectionStyle}>
+          <Text style={sectionBucketTitleStyle}>Attendance tracking</Text>
+          <View style={sectionBucketDividerStyle} />
+          <View style={settingsRowGroupStyle}>
+            <View style={settingsRowStyle}>
+              <Text style={settingsRowLabelStyle}>Tracking mode</Text>
+              <View style={settingsRowControlsStyle}>
+                <TouchableOpacity
+                  style={settingsModeToggle(isClassDayAttendanceActive)}
+                  onPress={() => handleAttendanceTrackingModeChange('class_day')}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={settingsModeToggleText(isClassDayAttendanceActive)}>Total class days</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={settingsModeToggle(isPerSubjectAttendanceActive)}
+                  onPress={() => handleAttendanceTrackingModeChange('subject')}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={settingsModeToggleText(isPerSubjectAttendanceActive)}>Per subject</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={settingsRowStyle}>
+              <Text style={settingsRowLabelStyle}>Attendance goal</Text>
+              <View style={settingsRowControlsStyle}>
+                {goalMode === 'days' ? (
+                  <TextInput
+                    value={targetDays}
+                    onChangeText={handleTargetDaysChange}
+                    keyboardType="number-pad"
+                    style={settingsCompactInput}
+                    placeholder="180"
+                    placeholderTextColor="rgba(15,23,42,0.4)"
+                  />
+                ) : (
+                  <TextInput
+                    value={targetHours}
+                    onChangeText={handleTargetHoursChange}
+                    keyboardType="number-pad"
+                    style={settingsCompactInput}
+                    placeholder="1000"
+                    placeholderTextColor="rgba(15,23,42,0.4)"
+                  />
+                )}
+                <TouchableOpacity style={settingsModeToggle(goalMode === 'days')} onPress={() => handleGoalChange('days')}>
+                  <Text style={settingsModeToggleText(goalMode === 'days')}>days</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={settingsModeToggle(goalMode === 'hours')} onPress={() => handleGoalChange('hours')}>
+                  <Text style={settingsModeToggleText(goalMode === 'hours')}>hours</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      ) : null}
     </View>
   ) : (
     <>
@@ -2839,11 +3144,15 @@ export default function PlannerSettingsContent({
         <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.learningDays}</Text>
         {learningDaysForm}
       </View>
-      {usePlainSettingsSections ? <View style={sectionBucketDividerStyle} /> : null}
-      <View style={sectionBucketStyle}>
-        <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.attendanceTracking}</Text>
-        {attendanceForm}
-      </View>
+      {showAttendanceSection ? (
+        <>
+          <View style={sectionBucketDividerStyle} />
+          <View style={sectionBucketStyle}>
+            <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.attendanceTracking}</Text>
+            {attendanceForm}
+          </View>
+        </>
+      ) : null}
     </>
   );
 
@@ -2859,7 +3168,7 @@ export default function PlannerSettingsContent({
       }}>
         {embeddedInModal && !hideEmbeddedHeader ? (
           <View style={embeddedTitleRowStyle}>
-            <Text style={embeddedTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.embeddedTitle}</Text>
+            <Text style={embeddedTitleStyle}>{isHomeschoolMode ? 'School Year Settings' : 'Schedule Settings'}</Text>
             <TouchableOpacity
               onPress={handleRequestClose}
               style={embeddedCloseButtonStyle}

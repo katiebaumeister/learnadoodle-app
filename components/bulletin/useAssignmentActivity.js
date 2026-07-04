@@ -11,10 +11,12 @@ export default function useAssignmentActivity(familyId, subjectId, limit = 20, e
     [enabled, familyId, subjectId]
   );
   const [items, setItems] = useState(() => initialState.items);
+  const [loading, setLoading] = useState(() => !initialState.fromCache && enabled && !!familyId);
 
   const load = useCallback(async () => {
     if (!enabled || !familyId) {
       setItems([]);
+      setLoading(false);
       return;
     }
     try {
@@ -22,6 +24,8 @@ export default function useAssignmentActivity(familyId, subjectId, limit = 20, e
       setItems(data || []);
     } catch (_) {
       // Keep showing cached items on refresh failure.
+    } finally {
+      setLoading(false);
     }
   }, [enabled, familyId, subjectId, limit]);
   const loadRef = useRef(load);
@@ -30,11 +34,13 @@ export default function useAssignmentActivity(familyId, subjectId, limit = 20, e
   useEffect(() => {
     if (!enabled || !familyId) {
       setItems([]);
+      setLoading(false);
       return;
     }
     const cached = hydrateAssignmentActivityState(familyId, subjectId);
     if (cached.fromCache) {
       setItems(cached.items);
+      setLoading(false);
     }
     loadRef.current();
   }, [enabled, familyId, subjectId, limit]);
@@ -60,5 +66,5 @@ export default function useAssignmentActivity(familyId, subjectId, limit = 20, e
     if (familyId) writeAssignmentActivityCache(familyId, subjectId, normalized);
   }, [familyId, subjectId]);
 
-  return { items, loading: false, reload, updateItems };
+  return { items, loading, reload, updateItems };
 }
