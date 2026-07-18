@@ -49,6 +49,7 @@ const SIDEBAR_COLORS = {
 const NAV_ITEM_DEFS = {
   home: { key: 'home', label: 'Home', icon: MAIN_NAV_ICONS.home },
   messages: { key: 'messages', label: 'Messages', icon: MAIN_NAV_ICONS.messages },
+  doodle: { key: 'doodle', label: 'Doodle', icon: MAIN_NAV_ICONS.doodle },
   subjects: { key: 'subjects', label: 'Subjects', icon: MAIN_NAV_ICONS.subjects },
   materials: { key: 'materials', label: 'Materials', icon: MAIN_NAV_ICONS.materials },
   family: { key: 'family', label: 'Family', icon: MAIN_NAV_ICONS.family },
@@ -66,13 +67,13 @@ const NAV_ITEM_DEFS = {
 };
 
 const PARENT_NAV_BUCKET_KEYS = [
-  ['home', 'planner', 'subjects', 'materials'],
-  ['messages'],
+  ['home', 'messages', 'doodle'],
+  ['planner', 'subjects', 'materials'],
   ['profile'],
 ];
 
 const TUTOR_NAV_BUCKET_KEYS = [
-  ['home', 'messages'],
+  ['home', 'messages', 'doodle'],
   ['tutorStudents', 'planner'],
 ];
 
@@ -201,6 +202,7 @@ export default function LeftRail({
     if (item.key === 'planner' && effectivePermissions.canViewPlanner === false) return false;
     if ((item.key === 'subjects' || item.key === 'learning') && effectivePermissions.canViewSubjects === false) return false;
     if (item.key === 'materials' && effectivePermissions.canViewLibrary === false) return false;
+    if (item.key === 'doodle' && effectivePermissions.canUseDoodleBot === false) return false;
     if ((userRole === 'child' || userRole === 'student') && (item.key === 'records' || item.key === 'explore')) return false;
     // Feature toggle gating
     if ((item.key === 'subjects' || item.key === 'learning') && !capabilities.showLearning) return false;
@@ -214,6 +216,7 @@ export default function LeftRail({
     effectivePermissions.canViewLibrary,
     effectivePermissions.canViewPlanner,
     effectivePermissions.canViewSubjects,
+    effectivePermissions.canUseDoodleBot,
     hideProfileNav,
     userRole,
   ]);
@@ -237,7 +240,7 @@ export default function LeftRail({
     if (userRole === 'tutor') {
       bucketKeys = SHOW_MATERIALS_IN_SIDEBAR
         ? [
-            ['home', 'messages'],
+            ['home', 'messages', 'doodle'],
             ['tutorStudents', 'planner', 'materials'],
           ]
         : TUTOR_NAV_BUCKET_KEYS;

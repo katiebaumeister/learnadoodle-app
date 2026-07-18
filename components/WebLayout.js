@@ -18,7 +18,6 @@ import { sourceForChild } from './ui/ChildAvatarCluster';
 import { useAuth } from '../contexts/AuthContext';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
 import { FiltersProvider } from '../contexts/FiltersContext';
-import { useGlobalSearch } from '../contexts/GlobalSearchContext';
 import WebContent from './WebContent';
 import SearchModal from './SearchModal';
 import GlobalNewMenu from './GlobalNewMenu';
@@ -85,6 +84,7 @@ import { seedHomeWelcomeBulletinPost } from '../lib/homeWelcomeBulletin';
 import { useFamilyPlanningMode } from '../lib/useFamilyPlanningMode';
 import { getWorkspaceCapabilities } from '../lib/planningMode';
 import { PlannerDiffProvider } from '../app/state/usePlannerDiffStore';
+import { DoodleCommandProvider } from '../app/state/useDoodleCommandStore';
 import PlannerDiffModal from '../app/components/schedule/PlannerDiffModal';
 import { PlannerHealthProvider } from '../app/state/usePlannerHealthStore';
 import { ConstraintsProvider } from '../app/state/useConstraintsStore';
@@ -125,6 +125,7 @@ import FamilyCreatePane from './create/FamilyCreatePane';
 import PlannerCreateMenu from './create/PlannerCreateMenu';
 import SubjectPickerModal from './create/SubjectPickerModal';
 import LearningDaySetupChoiceModal from './planner/LearningDaySetupChoiceModal';
+import DoodleCommandPane from './doodle/DoodleCommandPane';
 import { PLANNER_EVENT_CATEGORIES } from '../lib/planner/plannerEventCategories';
 import { defaultPlannerExportColumnSelection, PLANNER_EXPORT_OPTIONAL_COLUMN_DEFS } from '../lib/plannerExportOptionalColumns';
 import { useHoverDropdown } from './ui/useHoverDropdown';
@@ -250,7 +251,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const sessionIsParent = session?.role_flags?.isParent === true;
   const sessionIsChild = session?.role_flags?.isChild === true;
   const sessionIsTutor = session?.role_flags?.isTutor === true;
-  const { openSearch } = useGlobalSearch();
   const [activeTab, setActiveTab] = useState('home');
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
@@ -258,6 +258,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [activeTopNav, setActiveTopNav] = useState('home');
   const [isMessagesPaneOpen, setIsMessagesPaneOpen] = useState(false);
   const [isCreatePaneOpen, setIsCreatePaneOpen] = useState(false);
+  const [isDoodlePaneOpen, setIsDoodlePaneOpen] = useState(false);
+  const [doodlePaneContext, setDoodlePaneContext] = useState(null);
   const [activeChildId, setActiveChildId] = useState(null);
   const [activeChildSection, setActiveChildSection] = useState('affirmation');
   const [showSyllabusUpload, setShowSyllabusUpload] = useState(false);
@@ -2510,9 +2512,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [activeTab, activeSubtab, activeChildId]);
 
   useEffect(() => {
-    if (isCreatePaneOpen) return;
+    if (isCreatePaneOpen || isDoodlePaneOpen || isMessagesPaneOpen) return;
     syncTopNavFromActiveTab();
-  }, [activeTab, activeChildId, isCreatePaneOpen, syncTopNavFromActiveTab]);
+  }, [
+    activeTab,
+    activeChildId,
+    isCreatePaneOpen,
+    isDoodlePaneOpen,
+    isMessagesPaneOpen,
+    syncTopNavFromActiveTab,
+  ]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -3654,8 +3663,23 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           syncTopNavFromActiveTab();
         } else {
           setIsCreatePaneOpen(false);
+          setIsDoodlePaneOpen(false);
           setIsMessagesPaneOpen(true);
           setActiveTopNav('messages');
+        }
+        return;
+      }
+      if (key === 'doodle') {
+        if (isDoodlePaneOpen) {
+          setIsDoodlePaneOpen(false);
+          setDoodlePaneContext(null);
+          syncTopNavFromActiveTab();
+        } else {
+          setIsMessagesPaneOpen(false);
+          setIsCreatePaneOpen(false);
+          setDoodlePaneContext(null);
+          setIsDoodlePaneOpen(true);
+          setActiveTopNav('doodle');
         }
         return;
       }
@@ -3665,13 +3689,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           syncTopNavFromActiveTab();
         } else {
           setIsMessagesPaneOpen(false);
+          setIsDoodlePaneOpen(false);
           setIsCreatePaneOpen(true);
           setActiveTopNav('create');
         }
         return;
       }
 
+      setIsMessagesPaneOpen(false);
       setIsCreatePaneOpen(false);
+      setIsDoodlePaneOpen(false);
+      setDoodlePaneContext(null);
       setActiveTopNav(key);
       switch (key) {
         case 'home':
@@ -3763,7 +3791,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           handleTabChange('home');
       }
     },
-    [activeChildId, handleTabChange, isCreatePaneOpen, isMessagesPaneOpen, syncTopNavFromActiveTab]
+    [
+      activeChildId,
+      handleTabChange,
+      isCreatePaneOpen,
+      isDoodlePaneOpen,
+      isMessagesPaneOpen,
+      syncTopNavFromActiveTab,
+    ]
   );
 
   // Mode-aware landing route after onboarding completes
@@ -3790,6 +3825,32 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     window.addEventListener('openMessagesPane', handler);
     return () => window.removeEventListener('openMessagesPane', handler);
   }, [handleTopSelect]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const openPane = (context = null) => {
+      if (childDoodleBotDisabled) return;
+      setIsMessagesPaneOpen(false);
+      setIsCreatePaneOpen(false);
+      setDoodlePaneContext(context || null);
+      setIsDoodlePaneOpen(true);
+      setActiveTopNav('doodle');
+    };
+    const handleOpen = (event) => openPane(event?.detail?.context || null);
+    const handleKeyDown = (event) => {
+      if ((event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === 'k') {
+        event.preventDefault();
+        event.stopImmediatePropagation?.();
+        openPane();
+      }
+    };
+    window.addEventListener('openDoodleCommandBar', handleOpen);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      window.removeEventListener('openDoodleCommandBar', handleOpen);
+      window.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [childDoodleBotDisabled]);
 
   const mergeExplorerTourInProfile = useCallback((patch) => {
     setProfile((p) => {
@@ -3987,6 +4048,70 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     activeTab === 'calendar' || activeTab === 'planner';
 
   const plannerViewForWebContent = sanitizeLegacyPlanYearView(currentView);
+  const doodleCommandContext = isMessagesPaneOpen
+    ? 'messages'
+    : activeTab === 'calendar'
+      ? 'planner'
+      : activeTab === 'subjects'
+        ? 'learning'
+        : activeTab === 'profile'
+          ? 'settings'
+          : activeTab;
+  const doodleContextChild = activeChildId
+    ? children.find((child) => String(child?.id) === String(activeChildId))
+    : null;
+  const doodleContextChildName = doodleContextChild?.name
+    || doodleContextChild?.first_name
+    || doodleContextChild?.display_name
+    || null;
+  const doodleContextSchoolYear = resolveSchoolYearLabelFromAnchor(
+    currentMonth || new Date(),
+    preloadedAcademicYears
+  );
+  const doodleEnabledFeatures = useMemo(() => {
+    const features = [];
+    if (workspaceCapabilities?.showLearning) features.push('learningAreas');
+    if (workspaceCapabilities?.showAssignments) features.push('assignments');
+    if (workspaceCapabilities?.showMaterials) features.push('materials');
+    if (workspaceCapabilities?.showAttendance) features.push('attendance');
+    if (workspaceCapabilities?.showGrades) features.push('grades');
+    if (workspaceCapabilities?.showCompliance) features.push('complianceRecords');
+    return features;
+  }, [workspaceCapabilities]);
+  const doodleShellContextInput = useMemo(() => ({
+    activeTab,
+    messagesPaneOpen: false,
+    familyId,
+    schoolYearLabel: doodleContextSchoolYear,
+    selectedChildIds: activeChildId
+      ? [String(activeChildId)]
+      : (selectedCalendarChildren || []).map(String),
+    plannerView: plannerViewForWebContent,
+    userId: authUserId,
+    userRole: resolvedShellUserRole === 'child' || resolvedShellUserRole === 'tutor'
+      ? resolvedShellUserRole
+      : 'parent',
+    enabledFeatures: doodleEnabledFeatures,
+  }), [
+    activeTab,
+    familyId,
+    doodleContextSchoolYear,
+    activeChildId,
+    selectedCalendarChildren,
+    plannerViewForWebContent,
+    authUserId,
+    resolvedShellUserRole,
+    doodleEnabledFeatures,
+  ]);
+  const doodleRoster = useMemo(() => ({
+    children: children || [],
+    subjects: subjects || fullSubjects || [],
+  }), [children, subjects, fullSubjects]);
+  const doodleCapabilities = useMemo(() => ({
+    ...workspaceCapabilities,
+    canManageEvents: !denyFamilyEventEdit,
+    canUseDoodleBot: !childDoodleBotDisabled,
+  }), [workspaceCapabilities, denyFamilyEventEdit, childDoodleBotDisabled]);
 
   /** When true, top segmented view chips should not use purple (full-screen plan/attendance view is primary). */
   const rightToolbarClaimsPlannerSegmentFocus =
@@ -4130,14 +4255,41 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         <ToastProvider>
       <FiltersProvider>
         <PlannerDiffProvider>
+        <DoodleCommandProvider>
         <AppShell
           disabled={onboardingBlocked}
           flushToEdge={activeTab === 'planner' || activeTab === 'calendar'}
           sectionNav={shellSectionNav}
           leftPane={{
-            visible: isMessagesPaneOpen || isCreatePaneOpen,
+            visible: isMessagesPaneOpen || isCreatePaneOpen || isDoodlePaneOpen,
             width: 340,
-            content: isCreatePaneOpen ? (
+            content: isDoodlePaneOpen ? (
+              <DoodleCommandPane
+                contextArea={doodlePaneContext || doodleCommandContext}
+                childName={doodleContextChildName}
+                schoolYearLabel={doodleContextSchoolYear}
+                shellContextInput={doodleShellContextInput}
+                roster={doodleRoster}
+                capabilities={doodleCapabilities}
+                onClosePane={() => {
+                  setIsDoodlePaneOpen(false);
+                  setDoodlePaneContext(null);
+                  syncTopNavFromActiveTab();
+                }}
+                onNavigate={(link) => {
+                  if (!link?.href) return;
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.history.pushState({}, '', link.href);
+                  }
+                  const href = String(link.href);
+                  if (href.includes('/planner')) handleTopSelect('planner');
+                  else if (href.includes('/learning') || href.includes('/subjects')) handleTopSelect('learning');
+                  else if (href.includes('materials')) handleTopSelect('materials');
+                  else if (href.includes('/settings') || href.includes('/family')) handleTopSelect('profile');
+                  else handleTopSelect('home');
+                }}
+              />
+            ) : isCreatePaneOpen ? (
               <FamilyCreatePane
                 placement="left"
                 onClosePane={() => {
@@ -4184,7 +4336,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             onSelectChildSection: handleChildSectionSelect,
             onExitChildView: handleExitChildView,
             onOpenNew: handleOpenNewMenu,
-            onOpenSearch: openSearch,
+            onOpenSearch: () => {
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('openDoodleCommandBar', {
+                  detail: { context: doodleCommandContext },
+                }));
+              }
+            },
             onAvatarPress: handleShellAvatarPress,
             user: user,
             userRole: resolvedShellUserRole,
@@ -6181,6 +6339,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         />
       )}
 
+        </DoodleCommandProvider>
         </PlannerDiffProvider>
       </FiltersProvider>
           </ToastProvider>

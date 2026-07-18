@@ -54,6 +54,19 @@ export default function SubjectClassworkSmartActions({
         variant="context"
         panelProps={disabled ? null : smartActionsHover.panelProps}
       >
+        <DropdownItem
+          icon={Sparkles}
+          label="Ask Doodle…"
+          onPress={() => {
+            setOpen(false);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('openDoodleCommandBar', {
+                detail: { context: 'learning' },
+              }));
+            }
+          }}
+          variant="context"
+        />
         {showGap ? (
           <DropdownItem
             icon={BarChart3}

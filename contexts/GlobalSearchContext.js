@@ -1,5 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, lazy, Suspense } from 'react';
-import { Platform } from 'react-native';
+import React, { createContext, useContext, useState, useCallback, lazy, Suspense } from 'react';
 
 const GlobalSearchModal = lazy(() => import('../components/GlobalSearchModal'));
 
@@ -24,23 +23,8 @@ export const GlobalSearchProvider = ({ children, onNavigate }) => {
     setIsOpen(false);
   }, []);
 
-  // Cmd+K / Ctrl+K keyboard shortcut
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-
-    const handler = (e) => {
-      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-      const metaPressed = isMac ? e.metaKey : e.ctrlKey;
-
-      if (metaPressed && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setIsOpen((prev) => !prev);
-      }
-    };
-
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
+  // Cmd/Ctrl+K is owned by WebLayout's global Doodle pane.
+  // Keep GlobalSearchModal available for explicit openSearch() callers only.
 
   return (
     <GlobalSearchContext.Provider value={{ openSearch, closeSearch, onNavigate }}>
