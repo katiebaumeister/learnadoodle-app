@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Modal, View, Text, TextInput, TouchableOpacity, Platform, Alert, ActivityIndicator } from 'react-native';
+import { Modal, View, Text, TextInput, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
 import { useToast } from '../Toast';
+import ConfirmDialog from '../ConfirmDialog';
 import CreateModalShell from './shared/CreateModalShell';
 import FamilyMemberPicker, { resolveDefaultAssigneeIds } from './shared/FamilyMemberPicker';
 import ScheduleDateFields from './shared/ScheduleDateFields';
@@ -72,6 +73,7 @@ export default function CalendarEventCreateModal({
   const [datePickerTarget, setDatePickerTarget] = useState(null);
   const [showAddMaterial, setShowAddMaterial] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [validationBanner, setValidationBanner] = useState('');
   const [errors, setErrors] = useState({});
   const [conflict, setConflict] = useState(null);
@@ -420,30 +422,20 @@ export default function CalendarEventCreateModal({
     handleSave({ allowConflict: true });
   };
 
-  const confirmDelete = () => {
+  const handleDeleteEvent = async () => {
     if (!resolvedEventId || submitting) return;
-    const runDelete = async () => {
-      setSubmitting(true);
-      try {
-        await deleteCalendarEvent({ eventId: resolvedEventId, familyId });
-        toast.push('Event deleted', 'success');
-        onDeleted?.(resolvedEventId);
-        onClose?.();
-      } catch (err) {
-        toast.push(err?.message || 'Failed to delete event', 'error');
-      } finally {
-        setSubmitting(false);
-      }
-    };
-
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm('Delete this event?')) runDelete();
-      return;
+    setSubmitting(true);
+    try {
+      await deleteCalendarEvent({ eventId: resolvedEventId, familyId });
+      setShowDeleteConfirm(false);
+      toast.push('Event deleted', 'success');
+      onDeleted?.(resolvedEventId);
+      onClose?.();
+    } catch (err) {
+      toast.push(err?.message || 'Failed to delete event', 'error');
+    } finally {
+      setSubmitting(false);
     }
-    Alert.alert('Delete event', 'Delete this event?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: runDelete },
-    ]);
   };
 
   if (!visible) return null;
@@ -484,7 +476,10 @@ export default function CalendarEventCreateModal({
               primaryLabel={submitting ? 'Saving…' : 'Save changes'}
               onCancel={onClose}
               onPrimary={handleSave}
-              onDelete={confirmDelete}
+              onDelete={() => {
+                if (!resolvedEventId || submitting) return;
+                setShowDeleteConfirm(true);
+              }}
               destructiveLabel="Delete event"
               secondaryActions={scopeSecondaryActions}
               accent="#9ECFFB"
@@ -736,6 +731,19 @@ export default function CalendarEventCreateModal({
           }}
         />
       ) : null}
+
+      <ConfirmDialog
+        visible={showDeleteConfirm}
+        title="Delete event?"
+        message="This calendar event will be removed from the planner. This cannot be undone."
+        confirmLabel={submitting ? 'Deleting…' : 'Delete event'}
+        cancelLabel="Cancel"
+        destructive
+        onCancel={() => {
+          if (!submitting) setShowDeleteConfirm(false);
+        }}
+        onConfirm={handleDeleteEvent}
+      />
     </>
   );
 }

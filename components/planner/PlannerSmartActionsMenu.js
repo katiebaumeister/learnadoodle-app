@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
-import { ClipboardCheck, FileDown, Download, Settings, Sparkles } from 'lucide-react';
+import { ClipboardCheck, FileDown, Download, Settings } from 'lucide-react';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { PLANNER_SMART_ACTION_TOOLS, PLANNER_SMART_ACTION_UTILITIES, dispatchPlannerSmartAction } from './plannerSmartActionsConfig';
 import { PLANNING_MODES } from '../../lib/planningMode';
@@ -50,19 +50,6 @@ export default function PlannerSmartActionsMenu({ visible, triggerRef, onClose, 
       panelProps={panelProps}
     >
       <View style={styles.menu}>
-        <DropdownItem
-          icon={Sparkles}
-          label="Ask Doodle…"
-          onPress={() => {
-            onClose?.();
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('openDoodleCommandBar', {
-                detail: { context: 'planner' },
-              }));
-            }
-          }}
-          variant="context"
-        />
         {utilities.map((mode, index) => (
           <DropdownItem
             key={mode.id}

@@ -118,9 +118,9 @@ export default function PlannerCalendarToolbar({
           </TouchableOpacity>
           {showFilters ? (
             <View style={styles.filterMenu}>
-              {Array.isArray(children) && children.length > 1 ? (
+              {Array.isArray(children) && children.length > 0 ? (
                 <>
-                  <Text style={styles.filterHeading}>By child</Text>
+                  <Text style={styles.filterHeading}>Children</Text>
                   {(() => {
                     const activeChildId = Array.isArray(selectedChildIds) && selectedChildIds.length === 1
                       ? String(selectedChildIds[0])

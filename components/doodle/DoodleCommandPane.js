@@ -27,7 +27,13 @@ import {
   makeAttachmentId,
   releaseDoodleAttachment,
 } from '../../lib/assistant/commands/attachmentHold';
-import { ACCENT_TEXT, ACCENT_CHIP_BORDER, ACCENT_SOFT_BG, ACCENT_CHIP_BG } from '../create/shared/createModalStyles';
+import {
+  ACCENT,
+  ACCENT_TEXT,
+  ACCENT_CHIP_BORDER,
+  ACCENT_SOFT_BG,
+  ACCENT_CHIP_BG,
+} from '../create/shared/createModalStyles';
 
 function formatMessageTime(createdAt) {
   if (!createdAt) return '';
@@ -295,9 +301,14 @@ export default function DoodleCommandPane({
     trackDoodleEvent('doodle_opened', { area: contextArea });
   }, [contextArea]);
 
+  const scrollToBottom = useCallback((animated = false) => {
+    scrollRef.current?.scrollToEnd?.({ animated });
+  }, []);
+
+  // Jump (no animation) when thread content changes — avoids the open-from-top scroll transition.
   useEffect(() => {
-    scrollRef.current?.scrollToEnd?.({ animated: true });
-  }, [messages, pendingResponse, status]);
+    scrollToBottom(false);
+  }, [messages, pendingResponse, status, scrollToBottom]);
 
   const composerFloor = draftAttachments.length > 0
     ? COMPOSER_ATTACHED_MIN_HEIGHT
@@ -484,6 +495,7 @@ export default function DoodleCommandPane({
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        onContentSizeChange={() => scrollToBottom(false)}
       >
         {firstMessageAt ? (
           <Text style={styles.dateDivider}>{formatDateDivider(firstMessageAt)}</Text>
@@ -656,6 +668,7 @@ export default function DoodleCommandPane({
 }
 
 const FONT = '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const FONT_DISPLAY = '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 
 const styles = StyleSheet.create({
   container: {
@@ -786,32 +799,32 @@ const styles = StyleSheet.create({
   optionChipText: {
     fontSize: 13,
     color: ACCENT_TEXT,
-    fontWeight: '600',
-    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
   },
   links: {
     marginTop: 8,
     gap: 4,
   },
   linkText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
     color: ACCENT_TEXT,
-    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
   },
   linkBtn: {
     marginTop: 8,
     alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
     backgroundColor: ACCENT_CHIP_BG,
   },
   linkBtnText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
     color: ACCENT_TEXT,
-    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
   },
   previewCard: {
     marginTop: 12,
@@ -823,10 +836,10 @@ const styles = StyleSheet.create({
   },
   previewTitle: {
     marginBottom: 10,
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '700',
-    color: ACCENT_TEXT,
-    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+    color: '#0F172A',
+    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
   },
   previewRow: {
     marginBottom: 6,
@@ -855,35 +868,39 @@ const styles = StyleSheet.create({
     marginTop: 12,
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    alignItems: 'center',
     gap: 8,
   },
   cancelBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.35)',
   },
   cancelBtnText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#475569',
-    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
   },
   confirmBtn: {
     minWidth: 120,
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 8,
-    backgroundColor: ACCENT_TEXT,
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: ACCENT,
+    borderWidth: 1,
+    borderColor: ACCENT,
   },
   confirmBtnText: {
     fontSize: 13,
     fontWeight: '700',
     color: '#FFFFFF',
-    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
   },
   loadingRow: {
     marginTop: 10,

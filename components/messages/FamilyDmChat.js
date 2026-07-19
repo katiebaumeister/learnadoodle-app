@@ -18,6 +18,7 @@ import {
   buildSendPayload,
   buildSendPayloads,
   formatChatEventDateLabel,
+  getCachedFamilyDmThread,
   insertFamilyDirectMessage,
   isDirectMessageRecipient,
   isUnifiedMessageMine,
@@ -30,6 +31,7 @@ import {
   resolveGroupThreadParticipant,
   resolveLinkedEventId,
   sendGroupDirectMessage,
+  setCachedFamilyDmThread,
   familyDirectMessagesSupportAttachments,
 } from '../../lib/familyDmClient';
 import DmAttachEventModal from './DmAttachEventModal';
@@ -79,8 +81,9 @@ export default function FamilyDmChat({
   onBack,
   onGroupThreadCreated = null,
 }) {
-  const [loading, setLoading] = useState(true);
-  const [messages, setMessages] = useState([]);
+  const cachedThread = getCachedFamilyDmThread(familyId, participant);
+  const [loading, setLoading] = useState(() => !cachedThread);
+  const [messages, setMessages] = useState(() => cachedThread?.messages || []);
   const [composerText, setComposerText] = useState('');
   const [composerInputHeight, setComposerInputHeight] = useState(COMPOSER_BUTTON_SIZE);
   const [sending, setSending] = useState(false);
@@ -96,7 +99,7 @@ export default function FamilyDmChat({
   const sendInFlightRef = useRef(false);
   const scrollToBottomOnLoadRef = useRef(true);
   const swipeBackRef = useRef(null);
-  const chatReadyRef = useRef(false);
+  const chatReadyRef = useRef(Boolean(cachedThread));
   const loadInFlightRef = useRef(false);
   const pendingLoadRef = useRef(false);
   const participantRef = useRef(participant);
@@ -255,6 +258,7 @@ export default function FamilyDmChat({
       });
       // Paint the thread immediately — don't wait on event dates, enrichment, or mark-read.
       setMessages(unified);
+      setCachedFamilyDmThread(familyId, activeParticipant, unified);
       chatReadyRef.current = true;
       if (showLoadingUi) setLoading(false);
 
@@ -304,9 +308,11 @@ export default function FamilyDmChat({
             eventDatesById,
           });
           setMessages(withEventDates);
+          setCachedFamilyDmThread(familyId, activeParticipant, withEventDates);
 
           const enriched = await enrichMessages(withEventDates, assignmentList);
           setMessages(enriched);
+          setCachedFamilyDmThread(familyId, activeParticipant, enriched);
         } catch (enrichErr) {
           console.warn('[FamilyDmChat] enrich messages:', enrichErr?.message || enrichErr);
         }
@@ -328,11 +334,19 @@ export default function FamilyDmChat({
   loadMessagesRef.current = loadMessages;
 
   useEffect(() => {
-    chatReadyRef.current = false;
     scrollToBottomOnLoadRef.current = true;
+    const cached = getCachedFamilyDmThread(familyId, participantRef.current);
+    if (cached) {
+      setMessages(cached.messages || []);
+      chatReadyRef.current = true;
+      setLoading(false);
+      loadMessagesRef.current({ silent: true });
+      return;
+    }
+    chatReadyRef.current = false;
     setMessages([]);
     loadMessagesRef.current({ silent: false });
-  }, [participantId, participantType]);
+  }, [familyId, participantId, participantType]);
 
   useEffect(() => {
     if (!chatReadyRef.current) return;
@@ -484,7 +498,7 @@ export default function FamilyDmChat({
       setShowAttachMenu(false);
       scrollToBottomOnLoadRef.current = true;
       dispatchFamilyDirectMessagesUpdated();
-      await loadMessages();
+      await loadMessages({ silent: true });
     } catch (error) {
       console.error('[FamilyDmChat] send exception:', error);
       if (Platform.OS === 'web' && typeof window !== 'undefined') {

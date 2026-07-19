@@ -17,10 +17,12 @@ import {
   buildCompositeParticipant,
   buildPreviewMapFromUnified,
   formatDmRelativeTime,
+  getCachedFamilyDmInbox,
   mergeGroupThreadParticipants,
   participantKey,
   queryFamilyDirectMessages,
   queryFamilyDmThreads,
+  setCachedFamilyDmInbox,
   sortParticipantsByActivity,
 } from '../../lib/familyDmClient';
 import FamilyDmChat from './FamilyDmChat';
@@ -40,13 +42,18 @@ export default function FamilyMessagesPane({
   onClosePane = null,
 }) {
   const showPaneClose = placement === 'left' && typeof onClosePane === 'function';
-  const [loading, setLoading] = useState(false);
-  const [participants, setParticipants] = useState([]);
-  const [previewMap, setPreviewMap] = useState(new Map());
+  const cachedInbox = familyId ? getCachedFamilyDmInbox(familyId) : null;
+  const [loading, setLoading] = useState(() => !cachedInbox);
+  const [participants, setParticipants] = useState(() => cachedInbox?.participants || []);
+  const [previewMap, setPreviewMap] = useState(
+    () => (cachedInbox ? new Map(cachedInbox.previewEntries) : new Map()),
+  );
   const [paneView, setPaneView] = useState('inbox');
   const [chatParticipant, setChatParticipant] = useState(null);
-  const [familyMembersList, setFamilyMembersList] = useState([]);
-  const inboxReadyRef = useRef(false);
+  const [familyMembersList, setFamilyMembersList] = useState(
+    () => cachedInbox?.familyMembers || [],
+  );
+  const inboxReadyRef = useRef(Boolean(cachedInbox));
   const loadInFlightRef = useRef(false);
   const pendingInboxRefreshRef = useRef(false);
 
@@ -149,6 +156,11 @@ export default function FamilyMessagesPane({
 
       setParticipants(sorted);
       setPreviewMap(previews);
+      setCachedFamilyDmInbox(familyId, {
+        participants: sorted,
+        previewMap: previews,
+        familyMembers: members,
+      });
       inboxReadyRef.current = true;
       setChatParticipant((prev) => {
         if (!prev) return null;
@@ -181,10 +193,23 @@ export default function FamilyMessagesPane({
     }
   }, [currentUserId, familyChildrenKey, familyId, viewerChildId, viewerRole]);
 
+  // Re-hydrate if familyId arrives/changes after mount (e.g. session warm-up).
+  useEffect(() => {
+    if (!familyId) return;
+    const cached = getCachedFamilyDmInbox(familyId);
+    if (!cached) return;
+    setParticipants(cached.participants || []);
+    setPreviewMap(new Map(cached.previewEntries || []));
+    setFamilyMembersList(cached.familyMembers || []);
+    inboxReadyRef.current = true;
+    setLoading(false);
+  }, [familyId]);
+
   useEffect(() => {
     if (!active) return;
-    loadInbox({ silent: inboxReadyRef.current });
-  }, [active, loadInbox]);
+    const hasCache = Boolean(familyId && getCachedFamilyDmInbox(familyId));
+    loadInbox({ silent: inboxReadyRef.current || hasCache });
+  }, [active, familyId, loadInbox]);
 
   useEffect(() => {
     if (!active || Platform.OS !== 'web' || typeof window === 'undefined') return;

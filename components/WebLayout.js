@@ -3191,6 +3191,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
     const handler = (event) => {
+      const role = resolvedShellUserRole;
+      if (sessionIsChild || role === 'child' || role === 'student') {
+        Alert.alert('Not available', 'Only parents and tutors can add days off.');
+        return;
+      }
       const defaultDate = event?.detail?.defaultDate || plannerAnchorRef.current || new Date();
       const schoolYearLabel = String(event?.detail?.schoolYearLabel || '').trim()
         || resolveSchoolYearLabelFromAnchor(defaultDate instanceof Date ? defaultDate : new Date());
@@ -3200,7 +3205,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     };
     window.addEventListener('openDayOffModal', handler);
     return () => window.removeEventListener('openDayOffModal', handler);
-  }, []);
+  }, [resolvedShellUserRole, sessionIsChild]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
@@ -3550,8 +3555,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   const openPlannerCreateModal = useCallback((kind) => {
     if (kind === 'day_off') {
-      if (sessionRestricted && !familyUserControls.allowed('planning_preferences')) {
-        Alert.alert('Not available', 'Your family admin has disabled school year settings.');
+      // Parents and tutors may manage days off; children may not.
+      if (sessionIsChild || resolvedShellUserRole === 'child' || resolvedShellUserRole === 'student') {
+        Alert.alert('Not available', 'Only parents and tutors can add days off.');
         return;
       }
       setShowPlannerCreateMenu(false);
@@ -3585,7 +3591,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       eventType: kind === 'assignment' ? 'Assignment' : null,
     });
     setShowPlannerCreateMenu(false);
-  }, [currentMonth, familyUserControls, openCreateModal, selectedCalendarChildren, sessionRestricted, sessionIsChild, viewerScopedChildIds]);
+  }, [
+    currentMonth,
+    familyUserControls,
+    openCreateModal,
+    resolvedShellUserRole,
+    selectedCalendarChildren,
+    sessionRestricted,
+    sessionIsChild,
+    viewerScopedChildIds,
+  ]);
 
   const handleLearningDaySubjectSelect = useCallback((subject) => {
     setShowLearningDaySubjectPicker(false);
@@ -3709,8 +3724,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
       setIsMessagesPaneOpen(false);
       setIsCreatePaneOpen(false);
-      setIsDoodlePaneOpen(false);
-      setDoodlePaneContext(null);
+      // Keep Doodle open across main tab switches; only X / Doodle nav toggles close it.
       setActiveTopNav(key);
       switch (key) {
         case 'home':
@@ -4141,11 +4155,24 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     children: children || [],
     subjects: subjects || fullSubjects || [],
   }), [children, subjects, fullSubjects]);
-  const doodleCapabilities = useMemo(() => ({
-    ...workspaceCapabilities,
-    canManageEvents: !denyFamilyEventEdit,
-    canUseDoodleBot: !childDoodleBotDisabled,
-  }), [workspaceCapabilities, denyFamilyEventEdit, childDoodleBotDisabled]);
+  const doodleCapabilities = useMemo(() => {
+    const perms = familyUserControls.effectivePermissions || {};
+    const canMarkAttendance = resolvedShellUserRole === 'parent'
+      || (resolvedShellUserRole === 'tutor' && perms.canMarkAttendance !== false)
+      || (resolvedShellUserRole === 'child' && perms.canMarkComplete !== false);
+    return {
+      ...workspaceCapabilities,
+      canManageEvents: !denyFamilyEventEdit,
+      canMarkAttendance,
+      canUseDoodleBot: !childDoodleBotDisabled,
+    };
+  }, [
+    workspaceCapabilities,
+    denyFamilyEventEdit,
+    childDoodleBotDisabled,
+    familyUserControls.effectivePermissions,
+    resolvedShellUserRole,
+  ]);
 
   /** When true, top segmented view chips should not use purple (full-screen plan/attendance view is primary). */
   const rightToolbarClaimsPlannerSegmentFocus =
@@ -4312,15 +4339,36 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 }}
                 onNavigate={(link) => {
                   if (!link?.href) return;
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.history.pushState({}, '', link.href);
-                  }
                   const href = String(link.href);
+                  let section = null;
+                  try {
+                    const parsed = new URL(href, 'https://learnadoodle.local');
+                    section = parsed.searchParams.get('section');
+                  } catch {
+                    section = null;
+                  }
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.history.pushState({}, '', href);
+                  }
                   if (href.includes('/planner')) handleTopSelect('planner');
                   else if (href.includes('/learning') || href.includes('/subjects')) handleTopSelect('learning');
                   else if (href.includes('materials')) handleTopSelect('materials');
-                  else if (href.includes('/settings') || href.includes('/family')) handleTopSelect('profile');
-                  else handleTopSelect('home');
+                  else if (href.includes('/settings') || href.includes('/family')) {
+                    // Settings sections: profile | preferences→appearance | notifications | planner-settings | …
+                    let normalized = 'profile';
+                    if (section === 'preferences' || section === 'appearance') normalized = 'appearance';
+                    else if (
+                      section === 'notifications'
+                      || section === 'profile'
+                      || section === 'feedback'
+                      || section === 'planner-settings'
+                      || section === 'members'
+                      || section === 'courses'
+                    ) {
+                      normalized = section;
+                    }
+                    handleTabChange('settings', normalized);
+                  } else handleTopSelect('home');
                 }}
               />
             ) : isCreatePaneOpen ? (
@@ -4669,8 +4717,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                       }}
                     >
-                      {/* By child: All or exactly one learner (radio). Child sessions stay locked to themselves. */}
-                      {!sessionIsChild && children && children.length > 1 ? (
+                      {/* Children: All or exactly one learner (radio). Child sessions stay locked to themselves. */}
+                      {!sessionIsChild && children && children.length > 0 ? (
                         <>
                       <View style={{
                         paddingVertical: 6,
@@ -4687,7 +4735,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           letterSpacing: 0.5,
                           fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                         }}>
-                          By child
+                          Children
                         </Text>
                       </View>
                       {(() => {
@@ -5571,6 +5619,19 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           onSaved={(detail) => {
             handlePlannerLearningDaySaved(detail);
             closeLearningDayModal();
+          }}
+          onDeleted={(deletedEventId) => {
+            closeLearningDayModal();
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('refreshCalendar', {
+                detail: { skipCacheClear: true },
+              }));
+              window.dispatchEvent(new CustomEvent('refreshSubjects'));
+              window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
+              window.dispatchEvent(new CustomEvent('eventDeleted', {
+                detail: { eventId: deletedEventId || learningDayModalState.event?.id || null },
+              }));
+            }
           }}
         />
       ) : null}

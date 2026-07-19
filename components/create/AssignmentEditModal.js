@@ -8,11 +8,11 @@ import {
   Text,
   TextInput,
   ScrollView,
-  Alert,
   Platform,
   ActivityIndicator,
 } from 'react-native';
 import { useToast } from '../Toast';
+import ConfirmDialog from '../ConfirmDialog';
 import CreateModalShell from './shared/CreateModalShell';
 import InstructionsEditor from './shared/InstructionsEditor';
 import AssignmentResourceFields from './shared/AssignmentResourceFields';
@@ -102,6 +102,7 @@ export default function AssignmentEditModal({
   const [showSubmissions, setShowSubmissions] = useState(initialView === 'submissions');
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [validationBanner, setValidationBanner] = useState('');
   const [errors, setErrors] = useState({});
 
@@ -346,40 +347,24 @@ export default function AssignmentEditModal({
     toast,
   ]);
 
-  const confirmDelete = useCallback(() => {
+  const handleDeleteAssignment = useCallback(async () => {
     if (!eventId || deleting) return;
-    const runDelete = async () => {
-      setDeleting(true);
-      try {
-        await deleteAssignmentAndEvent({
-          eventId,
-          familyId,
-          subjectId,
-        });
-        toast.push('Assignment deleted', 'success');
-        onDeleted?.(eventId);
-        onClose?.();
-      } catch (err) {
-        toast.push(err?.message || 'Failed to delete assignment', 'error');
-      } finally {
-        setDeleting(false);
-      }
-    };
-
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm('Delete this assignment? Students will no longer see it.')) {
-        runDelete();
-      }
-      return;
+    setDeleting(true);
+    try {
+      await deleteAssignmentAndEvent({
+        eventId,
+        familyId,
+        subjectId,
+      });
+      setShowDeleteConfirm(false);
+      toast.push('Assignment deleted', 'success');
+      onDeleted?.(eventId);
+      onClose?.();
+    } catch (err) {
+      toast.push(err?.message || 'Failed to delete assignment', 'error');
+    } finally {
+      setDeleting(false);
     }
-    Alert.alert(
-      'Delete assignment',
-      'Delete this assignment? Students will no longer see it.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: runDelete },
-      ],
-    );
   }, [eventId, deleting, familyId, subjectId, onDeleted, onClose, toast]);
 
   const handleReviewed = useCallback(() => {
@@ -430,7 +415,10 @@ export default function AssignmentEditModal({
               primaryLabel={submitting ? 'Saving…' : 'Save changes'}
               destructiveLabel="Delete assignment"
               onCancel={onClose}
-              onDelete={confirmDelete}
+              onDelete={() => {
+                if (!eventId || deleting) return;
+                setShowDeleteConfirm(true);
+              }}
               onPrimary={handleSave}
               onBlockedPrimary={() => validate()}
               secondaryActions={[
@@ -639,6 +627,19 @@ export default function AssignmentEditModal({
           }}
         />
       ) : null}
+
+      <ConfirmDialog
+        visible={showDeleteConfirm}
+        title="Delete assignment?"
+        message="Students will no longer see this assignment. This cannot be undone."
+        confirmLabel={deleting ? 'Deleting…' : 'Delete assignment'}
+        cancelLabel="Cancel"
+        destructive
+        onCancel={() => {
+          if (!deleting) setShowDeleteConfirm(false);
+        }}
+        onConfirm={handleDeleteAssignment}
+      />
     </>
   );
 }

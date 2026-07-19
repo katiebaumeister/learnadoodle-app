@@ -5,8 +5,9 @@ import {
   Text,
   TextInput,
 } from 'react-native';
-import { CalendarDays, Plus } from 'lucide-react';
+import { CalendarDays } from 'lucide-react';
 import { useToast } from '../Toast';
+import ConfirmDialog from '../ConfirmDialog';
 import { ModalFooter } from '../ui/ModalFooter';
 import CreateModalShell from '../create/shared/CreateModalShell';
 import ClassworkPlacementFields from '../create/shared/ClassworkPlacementFields';
@@ -26,12 +27,11 @@ import {
 } from '../../lib/subjectConfigureSchedule';
 import { getEventStartDate, linkLessonToEvent } from '../../lib/subjectLessonLinking';
 import { getPlannerLearningDayLessonTitle } from '../../lib/planner/plannerLearningDayChip';
-import { updateEvent } from '../../lib/services/plannerClientWithOffline';
+import { deleteEvent, updateEvent } from '../../lib/services/plannerClientWithOffline';
 import { getPlanYearFullDataFromCache } from '../../lib/planEditListCache';
 import {
   resolveLearningDayDurationMinutes,
   resolveLearningDaySubjectName,
-  dispatchCreateAssignmentForLearningDay,
 } from '../../lib/planner/learningDayModalNavigation';
 import {
   applyLearningDayTimeOverride,
@@ -48,6 +48,7 @@ export default function LearningDayModal({
   visible,
   onClose,
   onSaved,
+  onDeleted,
   familyId,
   event,
   subjects = [],
@@ -55,6 +56,8 @@ export default function LearningDayModal({
 }) {
   const toast = useToast();
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [sessionEvent, setSessionEvent] = useState(null);
   const [sessionDate, setSessionDate] = useState(new Date());
   const [startTime, setStartTime] = useState('09:00');
@@ -131,6 +134,7 @@ export default function LearningDayModal({
     setNotes(String(row?.description || '').trim());
     setMaterialId(resolveMaterialId(row));
     setShowAddMaterial(false);
+    setShowDeleteConfirm(false);
     setFormDirty(false);
   }, []);
 
@@ -284,15 +288,6 @@ export default function LearningDayModal({
     }
   };
 
-  const handleAddAssignment = () => {
-    if (!eventId || isSkipped) return;
-    dispatchCreateAssignmentForLearningDay({
-      event: activeEvent,
-      subjectId,
-      childIds: sessionChildIds,
-    });
-  };
-
   const handleEditSubjectSchedule = () => {
     if (!subjectId) return;
     dispatchOpenSubjectSettings({
@@ -302,23 +297,31 @@ export default function LearningDayModal({
     });
   };
 
+  const handleDeleteLearningDay = useCallback(async () => {
+    if (!eventId || deleting || isSkipped) return;
+    setDeleting(true);
+    try {
+      const { error } = await deleteEvent(eventId, familyId);
+      if (error) throw error;
+      setShowDeleteConfirm(false);
+      toast.push('Learning day deleted', 'success');
+      onDeleted?.(eventId);
+      onClose?.();
+    } catch (err) {
+      toast.push(err?.message || 'Failed to delete learning day', 'error');
+    } finally {
+      setDeleting(false);
+    }
+  }, [eventId, deleting, isSkipped, familyId, onDeleted, onClose, toast]);
+
   if (!visible || !event) return null;
 
-  const secondaryActions = [
-    {
-      key: 'add-assignment',
-      label: 'Add assignment',
-      icon: Plus,
-      onPress: handleAddAssignment,
-      disabled: isSkipped || !eventId,
-    },
-    ...(subjectId ? [{
-      key: 'edit-schedule',
-      label: 'Edit subject schedule',
-      icon: CalendarDays,
-      onPress: handleEditSubjectSchedule,
-    }] : []),
-  ];
+  const secondaryActions = subjectId ? [{
+    key: 'edit-schedule',
+    label: 'Edit subject schedule',
+    icon: CalendarDays,
+    onPress: handleEditSubjectSchedule,
+  }] : [];
 
   return (
     <>
@@ -326,18 +329,23 @@ export default function LearningDayModal({
         <CreateModalShell
           title="Learning day"
           onClose={onClose}
-          saving={saving}
+          saving={saving || deleting}
           saveDisabled={!formDirty || isSkipped}
           footer={(
             <ModalFooter
               mode="edit"
               primaryLabel={saving ? 'Saving…' : 'Save'}
+              destructiveLabel="Delete learning day"
               onCancel={onClose}
+              onDelete={() => {
+                if (!eventId || deleting || isSkipped) return;
+                setShowDeleteConfirm(true);
+              }}
               onPrimary={handleSave}
               accent="#9ECFFB"
-              disabled={saving}
+              disabled={saving || deleting}
               visuallyDisabled={!formDirty || isSkipped}
-              loading={saving}
+              loading={saving || deleting}
               secondaryActions={secondaryActions}
             />
           )}
@@ -490,6 +498,19 @@ export default function LearningDayModal({
           setFormDirty(true);
           setDatePickerOpen(false);
         }}
+      />
+
+      <ConfirmDialog
+        visible={showDeleteConfirm}
+        title="Delete learning day?"
+        message="This learning day will be removed from the planner. This cannot be undone."
+        confirmLabel={deleting ? 'Deleting…' : 'Delete learning day'}
+        cancelLabel="Cancel"
+        destructive
+        onCancel={() => {
+          if (!deleting) setShowDeleteConfirm(false);
+        }}
+        onConfirm={handleDeleteLearningDay}
       />
     </>
   );
