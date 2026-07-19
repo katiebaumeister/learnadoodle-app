@@ -10,11 +10,11 @@ import {
   View,
 } from 'react-native';
 import {
+  ArrowUp,
   FileText,
   Pencil,
   Plus,
   Search,
-  Send,
   X,
 } from 'lucide-react';
 import MessagesPaneCloseButton from '../messages/MessagesPaneCloseButton';
@@ -28,6 +28,29 @@ import {
   releaseDoodleAttachment,
 } from '../../lib/assistant/commands/attachmentHold';
 import { ACCENT_TEXT, ACCENT_CHIP_BORDER, ACCENT_SOFT_BG, ACCENT_CHIP_BG } from '../create/shared/createModalStyles';
+
+function formatMessageTime(createdAt) {
+  if (!createdAt) return '';
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatDateDivider(createdAt) {
+  if (!createdAt) return '';
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('en-US', {
+    month: 'numeric',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
 
 const MAX_ATTACHMENTS = 4;
 const ACCEPT_FILES = 'image/*,.pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.gif,.webp';
@@ -91,70 +114,75 @@ function AttachmentChip({ item, onRemove, onOpen, removable = true }) {
 function MessageBubble({ message, onSelectOption, onNavigate }) {
   const structured = message.structured;
   const isUser = message.role === 'user';
+  const isSystem = message.role === 'system';
   const display = String(message.content || '').replace(/^#{1,6}\s+/gm, '').trim();
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  const senderName = isUser ? 'You' : (isSystem ? 'Doodle' : 'Doodle');
+  const timeLabel = formatMessageTime(message.createdAt);
+  const metaLabel = timeLabel ? `${senderName} · ${timeLabel}` : senderName;
   return (
-    <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
-      {attachments.length ? (
-        <View style={styles.bubbleAttachRow}>
-          {attachments.map((att) => (
-            <AttachmentChip
-              key={att.id || att.fileName}
-              item={att}
-              removable={false}
-              onOpen={(item) => {
-                if (Platform.OS === 'web' && item.previewUrl) {
-                  window.open(item.previewUrl, '_blank', 'noopener,noreferrer');
-                }
-              }}
-            />
-          ))}
-        </View>
-      ) : null}
-      {display ? (
-        <Text style={[styles.bubbleText, isUser && styles.bubbleTextUser]}>
-          {display}
-        </Text>
-      ) : null}
-      {structured?.type === DOODLE_RESPONSE_TYPES.CLARIFICATION && structured.options?.length ? (
-        <View style={styles.options}>
-          {structured.options.map((opt) => (
-            <TouchableOpacity
-              key={opt.id}
-              style={styles.optionChip}
-              onPress={() => onSelectOption?.(opt)}
-            >
-              <Text style={styles.optionChipText}>{opt.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      ) : null}
-      {structured?.type === DOODLE_RESPONSE_TYPES.NAVIGATION && structured.destination ? (
-        <TouchableOpacity
-          style={styles.linkBtn}
-          onPress={() => onNavigate?.(structured.destination)}
-        >
-          <Text style={styles.linkBtnText}>{structured.destination.label}</Text>
-        </TouchableOpacity>
-      ) : null}
-      {structured?.links?.length ? (
-        <View style={styles.links}>
-          {structured.links.slice(0, 6).map((link) => (
-            <TouchableOpacity key={`${link.href}-${link.label}`} onPress={() => onNavigate?.(link)}>
-              <Text style={styles.linkText}>{link.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      ) : null}
-      {structured?.affectedRecords?.length ? (
-        <View style={styles.links}>
-          {structured.affectedRecords.map((link) => (
-            <TouchableOpacity key={`${link.entityId || link.href}-${link.label}`} onPress={() => onNavigate?.(link)}>
-              <Text style={styles.linkText}>{link.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      ) : null}
+    <View style={[styles.messageRow, isUser ? styles.messageRowMine : styles.messageRowOther]}>
+      <Text style={styles.senderLabel}>{metaLabel}</Text>
+      <View style={[styles.bubble, isUser ? styles.bubbleMine : styles.bubbleOther]}>
+        {attachments.length ? (
+          <View style={styles.bubbleAttachRow}>
+            {attachments.map((att) => (
+              <AttachmentChip
+                key={att.id || att.fileName}
+                item={att}
+                removable={false}
+                onOpen={(item) => {
+                  if (Platform.OS === 'web' && item.previewUrl) {
+                    window.open(item.previewUrl, '_blank', 'noopener,noreferrer');
+                  }
+                }}
+              />
+            ))}
+          </View>
+        ) : null}
+        {display ? (
+          <Text style={styles.bubbleText}>{display}</Text>
+        ) : null}
+        {structured?.type === DOODLE_RESPONSE_TYPES.CLARIFICATION && structured.options?.length ? (
+          <View style={styles.options}>
+            {structured.options.map((opt) => (
+              <TouchableOpacity
+                key={opt.id}
+                style={styles.optionChip}
+                onPress={() => onSelectOption?.(opt)}
+              >
+                <Text style={styles.optionChipText}>{opt.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
+        {structured?.type === DOODLE_RESPONSE_TYPES.NAVIGATION && structured.destination ? (
+          <TouchableOpacity
+            style={styles.linkBtn}
+            onPress={() => onNavigate?.(structured.destination)}
+          >
+            <Text style={styles.linkBtnText}>{structured.destination.label}</Text>
+          </TouchableOpacity>
+        ) : null}
+        {structured?.links?.length ? (
+          <View style={styles.links}>
+            {structured.links.slice(0, 6).map((link) => (
+              <TouchableOpacity key={`${link.href}-${link.label}`} onPress={() => onNavigate?.(link)}>
+                <Text style={styles.linkText}>{link.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
+        {structured?.affectedRecords?.length ? (
+          <View style={styles.links}>
+            {structured.affectedRecords.map((link) => (
+              <TouchableOpacity key={`${link.entityId || link.href}-${link.label}`} onPress={() => onNavigate?.(link)}>
+                <Text style={styles.linkText}>{link.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -243,7 +271,9 @@ export default function DoodleCommandPane({
     context,
     pendingResponse,
     error,
+    hydrated,
     setContextFromShell,
+    hydrateConversation,
     submitMessage,
     confirmPending,
     cancelPending,
@@ -253,6 +283,13 @@ export default function DoodleCommandPane({
   useEffect(() => {
     if (shellContextInput) setContextFromShell(shellContextInput);
   }, [shellContextInput, setContextFromShell]);
+
+  useEffect(() => {
+    const familyId = shellContextInput?.familyId || context?.householdId;
+    if (familyId && !hydrated) {
+      hydrateConversation(familyId);
+    }
+  }, [shellContextInput?.familyId, context?.householdId, hydrated, hydrateConversation]);
 
   useEffect(() => {
     trackDoodleEvent('doodle_opened', { area: contextArea });
@@ -429,6 +466,7 @@ export default function DoodleCommandPane({
   };
 
   const canSend = Boolean(query.trim() || draftAttachments.length) && !busy;
+  const firstMessageAt = messages[0]?.createdAt || null;
 
   return (
     <View style={styles.container}>
@@ -440,70 +478,122 @@ export default function DoodleCommandPane({
         />
       </View>
 
-      <View style={styles.composerWrap}>
-        {Platform.OS === 'web' ? (
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={ACCEPT_FILES}
-            multiple
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              addFiles(e?.target?.files);
-              e.target.value = '';
-            }}
-          />
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {firstMessageAt ? (
+          <Text style={styles.dateDivider}>{formatDateDivider(firstMessageAt)}</Text>
         ) : null}
-        <View
-          style={[
-            styles.commandBox,
-            draftAttachments.length > 0 && styles.commandBoxWithAttachments,
-            isDragging && styles.commandBoxDragging,
-          ]}
-          {...(Platform.OS === 'web' ? {
-            onDragEnter: (e) => {
-              e.preventDefault?.();
-              e.stopPropagation?.();
-              setIsDragging(true);
-            },
-            onDragOver: (e) => {
-              e.preventDefault?.();
-              e.stopPropagation?.();
-              setIsDragging(true);
-            },
-            onDragLeave: (e) => {
-              e.preventDefault?.();
-              e.stopPropagation?.();
-              setIsDragging(false);
-            },
-            onDrop: (e) => {
-              e.preventDefault?.();
-              e.stopPropagation?.();
-              setIsDragging(false);
-              const files = e?.dataTransfer?.files;
-              if (files?.length) addFiles(files);
-            },
-          } : {})}
-        >
-          {draftAttachments.length ? (
-            <View style={styles.attachRow}>
-              {draftAttachments.map((att) => (
-                <AttachmentChip
-                  key={att.attachmentId}
-                  item={att}
-                  onRemove={removeDraftAttachment}
-                  onOpen={openDraftAttachment}
-                />
-              ))}
+
+        <View style={styles.thread}>
+          {messages.map((message) => (
+            <MessageBubble
+              key={message.id}
+              message={message}
+              onSelectOption={(opt) => answerClarification(opt, { roster, capabilities })}
+              onNavigate={handleNavigate}
+            />
+          ))}
+        </View>
+
+        {status === DOODLE_PANE_STATUS.SUBMITTING ? (
+          <View style={styles.loadingRow}>
+            <ActivityIndicator size="small" color={ACCENT_TEXT} />
+            <Text style={styles.loadingText}>Thinking…</Text>
+          </View>
+        ) : null}
+
+        <ActionPreviewCard
+          pending={pendingResponse}
+          busy={status === DOODLE_PANE_STATUS.EXECUTING}
+          onConfirm={() => confirmPending({ capabilities })}
+          onCancel={cancelPending}
+        />
+
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      </ScrollView>
+
+      <View style={styles.bottomDock}>
+        <View style={styles.suggestionList}>
+          {SUGGESTIONS.map((suggestion) => (
+            <SuggestionRow
+              key={suggestion.label}
+              suggestion={suggestion}
+              disabled={busy}
+              onPress={() => {
+                trackDoodleEvent('doodle_suggestion_selected', { area, label: suggestion.label });
+                setQuery(suggestion.seed || suggestion.label);
+                setTimeout(() => inputRef.current?.focus?.(), 0);
+              }}
+            />
+          ))}
+        </View>
+
+        <View style={styles.composerWrap}>
+          {Platform.OS === 'web' ? (
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPT_FILES}
+              multiple
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                addFiles(e?.target?.files);
+                e.target.value = '';
+              }}
+            />
+          ) : null}
+          {(draftAttachments.length || isDragging || attachCapHint) ? (
+            <View style={styles.pendingAttachments}>
+              {draftAttachments.length ? (
+                <View style={styles.attachRow}>
+                  {draftAttachments.map((att) => (
+                    <AttachmentChip
+                      key={att.attachmentId}
+                      item={att}
+                      onRemove={removeDraftAttachment}
+                      onOpen={openDraftAttachment}
+                    />
+                  ))}
+                </View>
+              ) : null}
+              {isDragging ? <Text style={styles.dropHint}>Drop file to attach</Text> : null}
+              {attachCapHint ? (
+                <Text style={styles.attachCapHint}>Up to {MAX_ATTACHMENTS} files per message</Text>
+              ) : null}
             </View>
           ) : null}
-          {isDragging ? (
-            <Text style={styles.dropHint}>Drop file to attach</Text>
-          ) : null}
-          {attachCapHint ? (
-            <Text style={styles.attachCapHint}>Up to {MAX_ATTACHMENTS} files per message</Text>
-          ) : null}
-          <View style={styles.composerRow}>
+          <View
+            style={[styles.composerRow, isDragging && styles.composerRowDragging]}
+            {...(Platform.OS === 'web' ? {
+              onDragEnter: (e) => {
+                e.preventDefault?.();
+                e.stopPropagation?.();
+                setIsDragging(true);
+              },
+              onDragOver: (e) => {
+                e.preventDefault?.();
+                e.stopPropagation?.();
+                setIsDragging(true);
+              },
+              onDragLeave: (e) => {
+                e.preventDefault?.();
+                e.stopPropagation?.();
+                setIsDragging(false);
+              },
+              onDrop: (e) => {
+                e.preventDefault?.();
+                e.stopPropagation?.();
+                setIsDragging(false);
+                const files = e?.dataTransfer?.files;
+                if (files?.length) addFiles(files);
+              },
+            } : {})}
+          >
             <TouchableOpacity
               style={styles.attachButton}
               onPress={pickFiles}
@@ -511,7 +601,7 @@ export default function DoodleCommandPane({
               accessibilityRole="button"
               accessibilityLabel="Add attachment"
             >
-              <Plus size={16} color="#64748B" strokeWidth={2.2} />
+              <Plus size={18} color="#64748B" strokeWidth={2.2} />
             </TouchableOpacity>
             <TextInput
               ref={inputRef}
@@ -520,8 +610,8 @@ export default function DoodleCommandPane({
               onSubmitEditing={() => runSubmit(query)}
               blurOnSubmit={false}
               placeholder={draftAttachments.length
-                ? 'Add a note, or send\nto add to Materials…'
-                : 'Ask Doodle…'}
+                ? 'Add a note, or send…'
+                : 'Type a message...'}
               placeholderTextColor="#94A3B8"
               returnKeyType="send"
               editable={!busy}
@@ -544,8 +634,7 @@ export default function DoodleCommandPane({
                 },
               } : {})}
               style={[
-                styles.input,
-                draftAttachments.length > 0 && styles.inputWithAttachments,
+                styles.composerInput,
                 { height: Math.max(inputHeight, composerFloor) },
               ]}
               accessibilityLabel="Ask Doodle"
@@ -557,63 +646,11 @@ export default function DoodleCommandPane({
               accessibilityRole="button"
               accessibilityLabel="Send to Doodle"
             >
-              <Send size={14} color="#FFFFFF" strokeWidth={2.2} />
+              <ArrowUp size={16} color="#FFFFFF" strokeWidth={2.2} />
             </TouchableOpacity>
           </View>
         </View>
       </View>
-
-      <ScrollView
-        ref={scrollRef}
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {messages.length === 0 ? (
-          <View style={styles.suggestionList}>
-            {SUGGESTIONS.map((suggestion) => (
-              <SuggestionRow
-                key={suggestion.label}
-                suggestion={suggestion}
-                disabled={busy}
-                onPress={() => {
-                  trackDoodleEvent('doodle_suggestion_selected', { area, label: suggestion.label });
-                  setQuery(suggestion.seed || suggestion.label);
-                  setTimeout(() => inputRef.current?.focus?.(), 0);
-                }}
-              />
-            ))}
-          </View>
-        ) : (
-          <View style={styles.thread}>
-            {messages.map((message) => (
-              <MessageBubble
-                key={message.id}
-                message={message}
-                onSelectOption={(opt) => answerClarification(opt, { roster, capabilities })}
-                onNavigate={handleNavigate}
-              />
-            ))}
-          </View>
-        )}
-
-        {status === DOODLE_PANE_STATUS.SUBMITTING ? (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator size="small" color={ACCENT_TEXT} />
-            <Text style={styles.loadingText}>Thinking…</Text>
-          </View>
-        ) : null}
-
-        <ActionPreviewCard
-          pending={pendingResponse}
-          busy={status === DOODLE_PANE_STATUS.EXECUTING}
-          onConfirm={() => confirmPending({ capabilities })}
-          onCancel={cancelPending}
-        />
-
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-      </ScrollView>
     </View>
   );
 }
@@ -634,6 +671,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
   headerTitle: {
     flex: 1,
@@ -649,12 +688,25 @@ const styles = StyleSheet.create({
     minHeight: 0,
   },
   content: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 8,
     paddingBottom: 20,
+    gap: 10,
+  },
+  dateDivider: {
+    alignSelf: 'center',
+    fontSize: 11,
+    color: '#94A3B8',
+    marginVertical: 4,
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+  },
+  bottomDock: {
+    backgroundColor: '#FFFFFF',
   },
   suggestionList: {
     gap: 2,
-    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingTop: 8,
   },
   suggestion: {
     minHeight: 40,
@@ -677,32 +729,47 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
   thread: {
-    gap: 10,
+    gap: 12,
+  },
+  messageRow: {
+    gap: 4,
+    maxWidth: '88%',
+  },
+  messageRowMine: {
+    alignSelf: 'flex-end',
+    alignItems: 'flex-end',
+  },
+  messageRowOther: {
+    alignSelf: 'flex-start',
+    alignItems: 'flex-start',
+  },
+  senderLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   bubble: {
-    maxWidth: '100%',
-    paddingHorizontal: 12,
+    borderRadius: 16,
+    paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 12,
-  },
-  bubbleUser: {
-    alignSelf: 'flex-end',
-    backgroundColor: ACCENT_TEXT,
-  },
-  bubbleAssistant: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#F8FAFC',
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.2)',
+    borderColor: '#E2E8F0',
+    gap: 8,
+    minWidth: 48,
+  },
+  bubbleMine: {
+    backgroundColor: '#FFFFFF',
+  },
+  bubbleOther: {
+    backgroundColor: '#F8FAFC',
   },
   bubbleText: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: '#334155',
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#0F172A',
     ...(Platform.OS === 'web' && { fontFamily: FONT }),
-  },
-  bubbleTextUser: {
-    color: '#FFFFFF',
   },
   options: {
     marginTop: 8,
@@ -836,41 +903,20 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
   composerWrap: {
-    paddingHorizontal: 16,
-    paddingTop: 4,
-    paddingBottom: 12,
+    paddingBottom: 10,
   },
-  commandBox: {
-    minHeight: COMPOSER_MIN_HEIGHT + 12,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: ACCENT_CHIP_BORDER,
-    borderRadius: 22,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-  },
-  commandBoxWithAttachments: {
-    paddingTop: 16,
-    paddingBottom: 14,
-    paddingHorizontal: 14,
-    borderRadius: 24,
-    minHeight: 128,
-  },
-  commandBoxDragging: {
-    borderColor: ACCENT_TEXT,
-    backgroundColor: ACCENT_SOFT_BG,
+  pendingAttachments: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    gap: 6,
   },
   attachRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
-    marginBottom: 12,
-    paddingTop: 2,
     paddingRight: 4,
   },
   attachCapHint: {
-    marginBottom: 8,
     fontSize: 11,
     fontWeight: '600',
     color: '#94A3B8',
@@ -880,7 +926,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 8,
   },
   attachChip: {
     position: 'relative',
@@ -941,7 +986,6 @@ const styles = StyleSheet.create({
     borderColor: '#FFFFFF',
   },
   dropHint: {
-    marginBottom: 8,
     fontSize: 12,
     fontWeight: '600',
     color: ACCENT_TEXT,
@@ -949,53 +993,54 @@ const styles = StyleSheet.create({
   },
   composerRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    alignItems: 'flex-end',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  input: {
+  composerRowDragging: {
+    backgroundColor: ACCENT_SOFT_BG,
+  },
+  composerInput: {
     flex: 1,
     minHeight: COMPOSER_MIN_HEIGHT,
     maxHeight: COMPOSER_MAX_HEIGHT,
-    paddingTop: 7,
-    paddingBottom: 7,
-    paddingHorizontal: 2,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 8,
     fontSize: 14,
     lineHeight: 20,
     color: '#0F172A',
-    textAlignVertical: 'center',
-    outlineStyle: 'none',
+    textAlignVertical: 'top',
     ...(Platform.OS === 'web' && {
       fontFamily: FONT,
-      display: 'flex',
-      alignItems: 'center',
+      outlineStyle: 'none',
+      resize: 'none',
+      overflow: 'hidden',
     }),
   },
-  inputWithAttachments: {
-    minHeight: COMPOSER_ATTACHED_MIN_HEIGHT,
-    paddingTop: 8,
-    paddingBottom: 8,
-    textAlignVertical: 'top',
-    ...(Platform.OS === 'web' && { alignItems: 'flex-start' }),
-  },
   attachButton: {
-    width: COMPOSER_BTN_SIZE,
-    height: COMPOSER_BTN_SIZE,
+    width: COMPOSER_BTN_SIZE + 4,
+    height: COMPOSER_BTN_SIZE + 4,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: COMPOSER_BTN_SIZE / 2,
-    backgroundColor: 'rgba(148, 163, 184, 0.12)',
-    alignSelf: 'center',
+    borderRadius: (COMPOSER_BTN_SIZE + 4) / 2,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
   },
   sendButton: {
-    width: COMPOSER_BTN_SIZE,
-    height: COMPOSER_BTN_SIZE,
+    width: COMPOSER_BTN_SIZE + 4,
+    height: COMPOSER_BTN_SIZE + 4,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: COMPOSER_BTN_SIZE / 2,
-    backgroundColor: ACCENT_TEXT,
-    alignSelf: 'center',
+    borderRadius: (COMPOSER_BTN_SIZE + 4) / 2,
+    backgroundColor: '#1E293B',
   },
   sendButtonDisabled: {
-    opacity: 0.35,
+    opacity: 0.45,
   },
 });

@@ -120,27 +120,31 @@ export default function PlannerCalendarToolbar({
             <View style={styles.filterMenu}>
               {Array.isArray(children) && children.length > 1 ? (
                 <>
-                  <Text style={styles.filterHeading}>Children</Text>
+                  <Text style={styles.filterHeading}>By child</Text>
+                  {(() => {
+                    const activeChildId = Array.isArray(selectedChildIds) && selectedChildIds.length === 1
+                      ? String(selectedChildIds[0])
+                      : null;
+                    return (
+                      <>
                   <TouchableOpacity
                     style={styles.filterRow}
                     onPress={() => onSelectedChildIdsChange?.(null)}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Text style={styles.filterLabel}>All children</Text>
+                    <Text style={[styles.filterLabel, activeChildId == null && styles.filterLabelActive]}>
+                      All children
+                    </Text>
                   </TouchableOpacity>
                   {children.map((child) => {
                     const id = child.id;
-                    const selected = Array.isArray(selectedChildIds) && selectedChildIds.includes(id);
+                    const selected = activeChildId != null && activeChildId === String(id);
                     return (
                       <TouchableOpacity
                         key={id}
                         style={styles.filterRow}
                         onPress={() => {
-                          const current = Array.isArray(selectedChildIds) ? selectedChildIds : [];
-                          const next = selected
-                            ? current.filter((cid) => cid !== id)
-                            : [...current, id];
-                          onSelectedChildIdsChange?.(next.length > 0 ? next : null);
+                          onSelectedChildIdsChange?.(selected ? null : [id]);
                         }}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
@@ -150,6 +154,9 @@ export default function PlannerCalendarToolbar({
                       </TouchableOpacity>
                     );
                   })}
+                      </>
+                    );
+                  })()}
                 </>
               ) : null}
               <Text style={styles.filterHeading}>Event types</Text>

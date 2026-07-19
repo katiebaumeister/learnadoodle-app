@@ -2817,70 +2817,110 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
     const handleEventPatched = (event) => {
       const patch = event?.detail?.patch;
-      const eventId = patch?.id;
+      const eventId = patch?.id != null ? String(patch.id) : '';
       if (!eventId) return;
+      const idsEqual = (a, b) => a != null && b != null && String(a) === String(b);
 
-      setCalendarEvents((prevEvents) => {
-        let prior = null;
-        let priorDateKey = null;
-        for (const dateKey of Object.keys(prevEvents)) {
-          const dayEvents = prevEvents[dateKey];
+      let prior = null;
+      let priorDateKey = null;
+      const liveEvents = calendarEventsRef?.current || null;
+      const searchBuckets = [];
+      if (liveEvents && typeof liveEvents === 'object') searchBuckets.push(liveEvents);
+      const cacheSnap = calendarDataCacheRef.current || {};
+      Object.values(cacheSnap).forEach((monthData) => {
+        if (monthData && typeof monthData === 'object') searchBuckets.push(monthData);
+      });
+      for (const bucket of searchBuckets) {
+        for (const dateKey of Object.keys(bucket)) {
+          const dayEvents = bucket[dateKey];
           if (!Array.isArray(dayEvents)) continue;
-          const hit = dayEvents.find((e) => e && e.id === eventId);
+          const hit = dayEvents.find((e) => e && idsEqual(e.id, eventId));
           if (hit) {
             prior = hit;
             priorDateKey = dateKey;
             break;
           }
         }
+        if (prior) break;
+      }
 
-        if (!prior) {
-          const cache = calendarDataCacheRef.current || {};
-          for (const monthData of Object.values(cache)) {
-            if (!monthData || typeof monthData !== 'object') continue;
-            for (const dateKey of Object.keys(monthData)) {
-              const dayEvents = monthData[dateKey];
-              if (!Array.isArray(dayEvents)) continue;
-              const hit = dayEvents.find((e) => e && e.id === eventId);
-              if (hit) {
-                prior = hit;
-                priorDateKey = dateKey;
-                break;
-              }
-            }
-            if (prior) break;
-          }
-        }
+      const newDateKey =
+        localDateKeyFromTs(patch.start_ts || prior?.start_ts || prior?.start || prior?.start_local) ||
+        (prior?.date_local ? String(prior.date_local).trim().slice(0, 10) : null) ||
+        (patch.previous_start_ts ? localDateKeyFromTs(patch.previous_start_ts) : null) ||
+        priorDateKey;
+      if (!newDateKey) return;
 
-        const newDateKey =
-          localDateKeyFromTs(patch.start_ts || prior?.start_ts || prior?.start || prior?.start_local) ||
-          (prior?.date_local ? String(prior.date_local).trim().slice(0, 10) : null) ||
-          (patch.previous_start_ts ? localDateKeyFromTs(patch.previous_start_ts) : null) ||
-          priorDateKey;
-        if (!newDateKey) return prevEvents;
-
-        const patched = {
-          ...(prior || {}),
+      const patched = {
+        ...(prior || {}),
+        ...patch,
+        id: prior?.id ?? patch.id,
+        date_local: newDateKey,
+        data: {
+          ...((prior && prior.data) || {}),
           ...patch,
           date_local: newDateKey,
-          data: {
-            ...((prior && prior.data) || {}),
-            ...patch,
-            date_local: newDateKey,
-          },
-        };
+        },
+      };
 
+      // Hold this id through the soft refresh so month refetch can't snap it back.
+      try {
+        pendingOptimisticUpdatesRef.current.add(eventId);
+        setTimeout(() => {
+          try { pendingOptimisticUpdatesRef.current.delete(eventId); } catch (_) {}
+        }, 4000);
+      } catch (_) {}
+
+      setCalendarEvents((prevEvents) => {
         const nextEvents = { ...prevEvents };
         Object.keys(nextEvents).forEach((dateKey) => {
           const dayEvents = nextEvents[dateKey];
           if (!Array.isArray(dayEvents)) return;
-          const filtered = dayEvents.filter((e) => !e || e.id !== eventId);
+          const filtered = dayEvents.filter((e) => !e || !idsEqual(e.id, eventId));
           if (filtered.length === 0) delete nextEvents[dateKey];
           else nextEvents[dateKey] = filtered;
         });
-
         nextEvents[newDateKey] = [...(nextEvents[newDateKey] || []), patched];
         return nextEvents;
+      });
+
+      setCalendarDataCache((prev) => {
+        if (!prev || typeof prev !== 'object') return prev;
+        let changed = false;
+        const next = {};
+        const yyyymm = newDateKey.slice(0, 7);
+        for (const [monthKey, monthData] of Object.entries(prev)) {
+          if (!monthData || typeof monthData !== 'object') {
+            next[monthKey] = monthData;
+            continue;
+          }
+          const nextMonth = { ...monthData };
+          let monthChanged = false;
+          Object.keys(nextMonth).forEach((dateKey) => {
+            const dayEvents = nextMonth[dateKey];
+            if (!Array.isArray(dayEvents)) return;
+            const filtered = dayEvents.filter((e) => !e || !idsEqual(e.id, eventId));
+            if (filtered.length !== dayEvents.length) {
+              monthChanged = true;
+              if (filtered.length === 0) delete nextMonth[dateKey];
+              else nextMonth[dateKey] = filtered;
+            }
+          });
+          const monthOwnsDay =
+            String(monthKey).includes(yyyymm)
+            || Object.prototype.hasOwnProperty.call(monthData, newDateKey)
+            || (priorDateKey && Object.prototype.hasOwnProperty.call(monthData, priorDateKey));
+          if (monthOwnsDay || monthChanged) {
+            const list = Array.isArray(nextMonth[newDateKey]) ? nextMonth[newDateKey] : [];
+            if (!list.some((e) => idsEqual(e?.id, eventId))) {
+              nextMonth[newDateKey] = [...list, patched];
+              monthChanged = true;
+            }
+          }
+          if (monthChanged) changed = true;
+          next[monthKey] = nextMonth;
+        }
+        return changed ? next : prev;
       });
 
       setHomeData((prev) => {
@@ -10248,7 +10288,11 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           }
         }}
         filters={{
-          childIds: propSelectedCalendarChildren && propSelectedCalendarChildren.length > 0 ? propSelectedCalendarChildren : null,
+          // By child: All (null) or a single child id. Ignore multi-select leftovers.
+          childIds: Array.isArray(propSelectedCalendarChildren)
+            && propSelectedCalendarChildren.length === 1
+            ? [propSelectedCalendarChildren[0]]
+            : null,
           eventTypes: String(propPlannerView || '').toLowerCase() === 'year'
             ? null
             : (propSelectedEventTypes && propSelectedEventTypes.length > 0 ? propSelectedEventTypes : null),

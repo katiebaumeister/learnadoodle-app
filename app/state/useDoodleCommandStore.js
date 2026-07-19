@@ -4,15 +4,36 @@ import React, {
   useContext,
   useMemo,
   useReducer,
+  useRef,
 } from 'react';
 import { DOODLE_PANE_STATUS, DOODLE_RESPONSE_TYPES } from '../../lib/assistant/commands/types';
 import { collectDoodleContext } from '../../lib/assistant/commands/contextCollector';
 import { doodleRespond } from '../../lib/assistant/commands/respond';
 import { doodleCancelPending, doodleExecute } from '../../lib/assistant/commands/execute';
 import { trackDoodleEvent } from '../../lib/assistant/commands/analytics';
+import { AIConversationService } from '../../lib/aiConversationService';
+
+const DOODLE_COMMAND_TYPE = 'doodle_command';
 
 function makeId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function serializeStructured(structured) {
+  if (!structured || typeof structured !== 'object') return null;
+  // Persist UI-relevant fields only (avoid huge command blobs / attachment binaries).
+  return {
+    type: structured.type,
+    message: structured.message,
+    options: structured.options,
+    clarification: structured.clarification,
+    links: structured.links,
+    destination: structured.destination,
+    affectedRecords: structured.affectedRecords,
+    preview: structured.preview,
+    confirmationLabel: structured.confirmationLabel,
+    warnings: structured.warnings,
+  };
 }
 
 const initialState = {
@@ -23,12 +44,22 @@ const initialState = {
   pendingClarification: null,
   error: null,
   conversationId: null,
+  hydrated: false,
 };
 
 function reducer(state, action) {
   switch (action.type) {
     case 'SET_CONTEXT':
       return { ...state, context: action.context };
+    case 'HYDRATE':
+      return {
+        ...state,
+        conversationId: action.conversationId || null,
+        messages: Array.isArray(action.messages) ? action.messages : [],
+        hydrated: true,
+      };
+    case 'SET_CONVERSATION_ID':
+      return { ...state, conversationId: action.conversationId || null };
     case 'APPEND_MESSAGE':
       return { ...state, messages: [...state.messages, action.message] };
     case 'SET_STATUS':
@@ -71,18 +102,105 @@ const DoodleCommandContext = createContext(null);
 
 export function DoodleCommandProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const hydrateInFlightRef = useRef(false);
 
   const setContextFromShell = useCallback((shellInput) => {
     dispatch({ type: 'SET_CONTEXT', context: collectDoodleContext(shellInput) });
   }, []);
 
+  const persistMessage = useCallback(async (conversationId, message) => {
+    if (!conversationId || !message) return;
+    try {
+      await AIConversationService.addMessage(
+        conversationId,
+        message.role === 'system' ? 'system' : message.role,
+        String(message.content || ''),
+        {
+          structured: serializeStructured(message.structured),
+          attachments: Array.isArray(message.attachments)
+            ? message.attachments.map((a) => ({
+              id: a.id || a.attachmentId,
+              fileName: a.fileName,
+              mime: a.mime,
+              mimeLabel: a.mimeLabel,
+              bytes: a.bytes,
+            }))
+            : [],
+          clientId: message.id || null,
+        },
+      );
+    } catch (_) {
+      // Persistence is best-effort; chat still works in-memory.
+    }
+  }, []);
+
+  const ensureConversationId = useCallback(async () => {
+    const current = stateRef.current;
+    if (current.conversationId) return current.conversationId;
+    const familyId = current.context?.householdId;
+    if (!familyId) return null;
+    try {
+      const id = await AIConversationService.createConversation(
+        familyId,
+        DOODLE_COMMAND_TYPE,
+        'Doodle',
+        { channel: 'doodle_pane' },
+      );
+      if (id) {
+        dispatch({ type: 'SET_CONVERSATION_ID', conversationId: String(id) });
+        return String(id);
+      }
+    } catch (_) {
+      // ignore
+    }
+    return null;
+  }, []);
+
+  const hydrateConversation = useCallback(async (familyId) => {
+    if (!familyId || hydrateInFlightRef.current) return;
+    if (stateRef.current.hydrated && stateRef.current.conversationId) return;
+    hydrateInFlightRef.current = true;
+    try {
+      const latest = await AIConversationService.getLatestDoodleCommandConversation(familyId);
+      if (latest?.conversationId) {
+        dispatch({
+          type: 'HYDRATE',
+          conversationId: String(latest.conversationId),
+          messages: (latest.messages || []).map((m) => ({
+            id: m.id || makeId(m.role || 'msg'),
+            role: m.role,
+            content: m.content || '',
+            createdAt: m.createdAt || new Date(m.timestamp || Date.now()).toISOString(),
+            structured: m.structured || null,
+            attachments: m.attachments || [],
+          })),
+        });
+      } else {
+        dispatch({ type: 'HYDRATE', conversationId: null, messages: stateRef.current.messages || [] });
+      }
+    } catch (_) {
+      dispatch({ type: 'HYDRATE', conversationId: null, messages: stateRef.current.messages || [] });
+    } finally {
+      hydrateInFlightRef.current = false;
+    }
+  }, []);
+
+  const appendAndPersist = useCallback(async (message) => {
+    dispatch({ type: 'APPEND_MESSAGE', message });
+    const conversationId = await ensureConversationId();
+    if (conversationId) await persistMessage(conversationId, message);
+  }, [ensureConversationId, persistMessage]);
+
   const submitMessage = useCallback(async (text, { roster, capabilities, clarificationOption, attachments } = {}) => {
     const trimmed = String(text || '').trim();
     const attachmentList = Array.isArray(attachments) ? attachments : [];
-    if ((!trimmed && !attachmentList.length) || !state.context) return null;
+    const current = stateRef.current;
+    if ((!trimmed && !attachmentList.length) || !current.context) return null;
     if (
-      state.status === DOODLE_PANE_STATUS.SUBMITTING ||
-      state.status === DOODLE_PANE_STATUS.EXECUTING
+      current.status === DOODLE_PANE_STATUS.SUBMITTING ||
+      current.status === DOODLE_PANE_STATUS.EXECUTING
     ) {
       return null;
     }
@@ -92,45 +210,40 @@ export function DoodleCommandProvider({ children }) {
         ? `Add ${attachmentList[0].fileName || 'file'} to Materials`
         : `Add ${attachmentList.length} files to Materials`);
 
-    dispatch({
-      type: 'APPEND_MESSAGE',
-      message: {
-        id: makeId('user'),
-        role: 'user',
-        content: displayContent,
-        createdAt: new Date().toISOString(),
-        attachments: attachmentList.map((a) => ({
-          id: a.attachmentId,
-          fileName: a.fileName,
-          mime: a.mime,
-          mimeLabel: a.mimeLabel,
-          bytes: a.bytes,
-          previewUrl: a.previewUrl,
-        })),
-      },
-    });
+    const userMessage = {
+      id: makeId('user'),
+      role: 'user',
+      content: displayContent,
+      createdAt: new Date().toISOString(),
+      attachments: attachmentList.map((a) => ({
+        id: a.attachmentId,
+        fileName: a.fileName,
+        mime: a.mime,
+        mimeLabel: a.mimeLabel,
+        bytes: a.bytes,
+        previewUrl: a.previewUrl,
+      })),
+    };
+    await appendAndPersist(userMessage);
     dispatch({ type: 'SET_STATUS', status: DOODLE_PANE_STATUS.SUBMITTING, error: null });
 
     try {
       const response = await doodleRespond({
         message: trimmed,
-        context: state.context,
+        context: current.context,
         roster,
-        conversationId: state.conversationId,
-        pendingClarification: state.pendingClarification,
+        conversationId: stateRef.current.conversationId,
+        pendingClarification: current.pendingClarification,
         clarificationOption: clarificationOption || null,
         attachments: attachmentList,
       });
 
-      dispatch({
-        type: 'APPEND_MESSAGE',
-        message: {
-          id: makeId('assistant'),
-          role: 'assistant',
-          content: response.message || '',
-          createdAt: new Date().toISOString(),
-          structured: response,
-        },
+      await appendAndPersist({
+        id: makeId('assistant'),
+        role: 'assistant',
+        content: response.message || '',
+        createdAt: new Date().toISOString(),
+        structured: response,
       });
 
       if (response.type === DOODLE_RESPONSE_TYPES.ACTION_PREVIEW ||
@@ -164,32 +277,30 @@ export function DoodleCommandProvider({ children }) {
       });
       return null;
     }
-  }, [state.context, state.conversationId, state.pendingClarification, state.status]);
+  }, [appendAndPersist]);
 
   const confirmPending = useCallback(async ({ capabilities } = {}) => {
-    const pending = state.pendingResponse;
-    if (!pending?.command || !state.context) return null;
-    if (state.status === DOODLE_PANE_STATUS.EXECUTING) return null;
+    const current = stateRef.current;
+    const pending = current.pendingResponse;
+    if (!pending?.command || !current.context) return null;
+    if (current.status === DOODLE_PANE_STATUS.EXECUTING) return null;
 
     dispatch({ type: 'SET_STATUS', status: DOODLE_PANE_STATUS.EXECUTING, error: null });
     try {
       const result = await doodleExecute({
         command: pending.command,
-        context: state.context,
+        context: current.context,
         capabilities,
         idempotencyKey: pending.idempotencyKey,
-        conversationId: state.conversationId,
+        conversationId: current.conversationId,
       });
 
-      dispatch({
-        type: 'APPEND_MESSAGE',
-        message: {
-          id: makeId('assistant'),
-          role: 'assistant',
-          content: result.message || '',
-          createdAt: new Date().toISOString(),
-          structured: result,
-        },
+      await appendAndPersist({
+        id: makeId('assistant'),
+        role: 'assistant',
+        content: result.message || '',
+        createdAt: new Date().toISOString(),
+        structured: result,
       });
       dispatch({
         type: 'CLEAR_PENDING',
@@ -208,27 +319,24 @@ export function DoodleCommandProvider({ children }) {
       });
       return null;
     }
-  }, [state.context, state.conversationId, state.pendingResponse, state.status]);
+  }, [appendAndPersist]);
 
   const cancelPending = useCallback(() => {
-    const cmd = state.pendingResponse?.command;
+    const cmd = stateRef.current.pendingResponse?.command;
     doodleCancelPending(cmd?.type);
     if (cmd?.attachmentId) {
       import('../../lib/assistant/commands/attachmentHold').then(({ releaseDoodleAttachment }) => {
         releaseDoodleAttachment(cmd.attachmentId);
       }).catch(() => {});
     }
-    dispatch({
-      type: 'APPEND_MESSAGE',
-      message: {
-        id: makeId('system'),
-        role: 'system',
-        content: 'Cancelled. Nothing was changed.',
-        createdAt: new Date().toISOString(),
-      },
+    appendAndPersist({
+      id: makeId('system'),
+      role: 'system',
+      content: 'Cancelled. Nothing was changed.',
+      createdAt: new Date().toISOString(),
     });
     dispatch({ type: 'CLEAR_PENDING', status: DOODLE_PANE_STATUS.IDLE });
-  }, [state.pendingResponse]);
+  }, [appendAndPersist]);
 
   const answerClarification = useCallback(async (option, { roster, capabilities } = {}) => {
     if (!option?.label && !option?.value) return null;
@@ -243,6 +351,7 @@ export function DoodleCommandProvider({ children }) {
   const value = useMemo(() => ({
     ...state,
     setContextFromShell,
+    hydrateConversation,
     submitMessage,
     confirmPending,
     cancelPending,
@@ -250,6 +359,7 @@ export function DoodleCommandProvider({ children }) {
   }), [
     state,
     setContextFromShell,
+    hydrateConversation,
     submitMessage,
     confirmPending,
     cancelPending,

@@ -265,6 +265,7 @@ export default function AttendanceView({
   plannerYearAnchor = null,
   academicYears = null,
   plannerChildFilterIds = null,
+  onPlannerChildFilterChange = null,
   renderBelowToolbar = null,
   readOnly = false,
 }) {
@@ -610,20 +611,33 @@ export default function AttendanceView({
     return byChild;
   }, [children, yearStartKey, yearEndKey, eventsByDateChild, attendanceRecords]);
 
+  // Year planner: Filters "By child" is All (empty) or exactly one id.
+  const yearChildFilterId = useMemo(() => {
+    if (!Array.isArray(plannerChildFilterIds) || plannerChildFilterIds.length !== 1) return null;
+    return String(plannerChildFilterIds[0]);
+  }, [plannerChildFilterIds]);
+
+  // Prefer toolbar Filters; fall back to local chip state when Filters isn't wired.
+  const effectiveYearChildId = useMemo(() => {
+    if (yearChildFilterId) return yearChildFilterId;
+    if (
+      selectedHeatmapChildId
+      && selectedHeatmapChildId !== FAMILY_HEATMAP_CHILD_ID
+      && typeof onPlannerChildFilterChange !== 'function'
+    ) {
+      return String(selectedHeatmapChildId);
+    }
+    return null;
+  }, [yearChildFilterId, selectedHeatmapChildId, onPlannerChildFilterChange]);
+
   const visibleHeatmapChildren = useMemo(() => {
     if (!isYearPlannerLayout) return children;
-    let base = children;
-    if (Array.isArray(plannerChildFilterIds) && plannerChildFilterIds.length > 0) {
-      const idSet = new Set(plannerChildFilterIds.map(String));
-      base = children.filter((child) => idSet.has(String(child?.id)));
+    if (effectiveYearChildId) {
+      const narrowed = children.filter((child) => String(child?.id) === effectiveYearChildId);
+      return narrowed.length > 0 ? narrowed : children;
     }
-    // An explicit inline child selection (year-planner chips) narrows to that child.
-    if (selectedHeatmapChildId && selectedHeatmapChildId !== FAMILY_HEATMAP_CHILD_ID) {
-      const narrowed = base.filter((child) => String(child?.id) === String(selectedHeatmapChildId));
-      if (narrowed.length > 0) return narrowed;
-    }
-    return base;
-  }, [children, isYearPlannerLayout, plannerChildFilterIds, selectedHeatmapChildId]);
+    return children;
+  }, [children, isYearPlannerLayout, effectiveYearChildId]);
 
   const heatmapSelectedChildId = useMemo(() => {
     if (!isYearPlannerLayout) return selectedHeatmapChildId;
@@ -631,6 +645,15 @@ export default function AttendanceView({
     if (visibleHeatmapChildren.length === 0) return null;
     return FAMILY_HEATMAP_CHILD_ID;
   }, [isYearPlannerLayout, selectedHeatmapChildId, visibleHeatmapChildren]);
+
+  const setYearChildFilter = useCallback((childIdOrNull) => {
+    if (typeof onPlannerChildFilterChange === 'function') {
+      onPlannerChildFilterChange(childIdOrNull ? [childIdOrNull] : null);
+      return;
+    }
+    // Fallback when Filters is not wired (standalone attendance).
+    setSelectedHeatmapChildId(childIdOrNull || null);
+  }, [onPlannerChildFilterChange]);
 
   const heatmapDayStatusByChild = useMemo(() => {
     if (heatmapSelectedChildId !== FAMILY_HEATMAP_CHILD_ID) return dayStatusByChild;
@@ -1663,23 +1686,23 @@ export default function AttendanceView({
         <View style={styles.yearPlannerControlsRow}>
           <View style={styles.childFilterChips}>
             <TouchableOpacity
-              style={[styles.childFilterChip, !selectedHeatmapChildId && styles.childFilterChipSelected]}
-              onPress={() => setSelectedHeatmapChildId(null)}
+              style={[styles.childFilterChip, !effectiveYearChildId && styles.childFilterChipSelected]}
+              onPress={() => setYearChildFilter(null)}
               activeOpacity={0.8}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={[styles.childFilterChipText, !selectedHeatmapChildId && styles.childFilterChipTextSelected]}>
+              <Text style={[styles.childFilterChipText, !effectiveYearChildId && styles.childFilterChipTextSelected]}>
                 All children
               </Text>
             </TouchableOpacity>
             {children.map((child) => {
-              const selected = String(selectedHeatmapChildId) === String(child.id);
+              const selected = effectiveYearChildId != null && effectiveYearChildId === String(child.id);
               const childName = child.first_name || child.name || 'Child';
               return (
                 <TouchableOpacity
                   key={child.id}
                   style={[styles.childFilterChip, selected && styles.childFilterChipSelected]}
-                  onPress={() => setSelectedHeatmapChildId(child.id)}
+                  onPress={() => setYearChildFilter(selected ? null : child.id)}
                   activeOpacity={0.8}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >

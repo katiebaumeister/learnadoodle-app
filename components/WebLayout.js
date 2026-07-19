@@ -828,6 +828,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   const [selectedCalendarChildren, setSelectedCalendarChildren] = useState(null);
   const [selectedEventTypes, setSelectedEventTypes] = useState(null);
+  // By child is All (null) or exactly one id — coerce any legacy multi-select.
+  useEffect(() => {
+    if (!Array.isArray(selectedCalendarChildren)) return;
+    if (selectedCalendarChildren.length === 0) {
+      setSelectedCalendarChildren(null);
+      return;
+    }
+    if (selectedCalendarChildren.length > 1) {
+      setSelectedCalendarChildren([selectedCalendarChildren[0]]);
+    }
+  }, [selectedCalendarChildren]);
   // Unread direct-message count for the signed-in user (drives the Messages nav badge,
   // so a parent is notified when a child sends a message / asks a question).
   const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
@@ -4078,27 +4089,50 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     if (workspaceCapabilities?.showCompliance) features.push('complianceRecords');
     return features;
   }, [workspaceCapabilities]);
-  const doodleShellContextInput = useMemo(() => ({
-    activeTab,
-    messagesPaneOpen: false,
-    familyId,
-    schoolYearLabel: doodleContextSchoolYear,
-    selectedChildIds: activeChildId
-      ? [String(activeChildId)]
-      : (selectedCalendarChildren || []).map(String),
-    plannerView: plannerViewForWebContent,
-    userId: authUserId,
-    userRole: resolvedShellUserRole === 'child' || resolvedShellUserRole === 'tutor'
-      ? resolvedShellUserRole
-      : 'parent',
-    enabledFeatures: doodleEnabledFeatures,
-  }), [
+  const doodleShellContextInput = useMemo(() => {
+    const anchor = currentMonth instanceof Date && !Number.isNaN(currentMonth.getTime())
+      ? currentMonth
+      : new Date();
+    const viewKey = String(plannerViewForWebContent || '').toLowerCase();
+    const rangeStart = (viewKey === 'board' || viewKey === 'week')
+      ? startOfWeek(anchor)
+      : anchor;
+    const ymd = (d) => {
+      const x = new Date(d);
+      const y = x.getFullYear();
+      const m = String(x.getMonth() + 1).padStart(2, '0');
+      const day = String(x.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+    return {
+      activeTab,
+      messagesPaneOpen: false,
+      familyId,
+      schoolYearLabel: doodleContextSchoolYear,
+      selectedChildIds: activeChildId
+        ? [String(activeChildId)]
+        : (selectedCalendarChildren || []).map(String),
+      plannerView: plannerViewForWebContent,
+      visibleDateStart: ymd(rangeStart),
+      visibleDateEnd: ymd(
+        viewKey === 'board' || viewKey === 'week'
+          ? addDays(startOfWeek(anchor), 6)
+          : anchor,
+      ),
+      userId: authUserId,
+      userRole: resolvedShellUserRole === 'child' || resolvedShellUserRole === 'tutor'
+        ? resolvedShellUserRole
+        : 'parent',
+      enabledFeatures: doodleEnabledFeatures,
+    };
+  }, [
     activeTab,
     familyId,
     doodleContextSchoolYear,
     activeChildId,
     selectedCalendarChildren,
     plannerViewForWebContent,
+    currentMonth,
     authUserId,
     resolvedShellUserRole,
     doodleEnabledFeatures,
@@ -4635,7 +4669,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                       }}
                     >
-                      {/* A child/student never picks another child; the filter is locked to them. */}
+                      {/* By child: All or exactly one learner (radio). Child sessions stay locked to themselves. */}
                       {!sessionIsChild && children && children.length > 1 ? (
                         <>
                       <View style={{
@@ -4653,9 +4687,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           letterSpacing: 0.5,
                           fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                         }}>
-                          Children
+                          By child
                         </Text>
                       </View>
+                      {(() => {
+                        const activeChildFilterId = Array.isArray(selectedCalendarChildren)
+                          && selectedCalendarChildren.length === 1
+                          ? String(selectedCalendarChildren[0])
+                          : null;
+                        const allChildrenSelected = activeChildFilterId == null;
+                        return (
+                          <>
                       <TouchableOpacity
                         style={{
                           flexDirection: 'row',
@@ -4672,23 +4714,29 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         <View style={{
                           width: 14,
                           height: 14,
-                          borderRadius: 3,
+                          borderRadius: 7,
                           borderWidth: 1.5,
-                          borderColor: selectedCalendarChildren === null ? '#8B5CF6' : '#D1D5DB',
-                          backgroundColor: selectedCalendarChildren === null ? '#8B5CF6' : 'transparent',
+                          borderColor: allChildrenSelected ? '#8B5CF6' : '#D1D5DB',
+                          backgroundColor: 'transparent',
                           alignItems: 'center',
                           justifyContent: 'center',
                         }}>
-                          {selectedCalendarChildren === null && (
-                            <Text style={{ color: '#ffffff', fontSize: 10, fontWeight: 'bold' }}>✓</Text>
-                          )}
+                          {allChildrenSelected ? (
+                            <View style={{
+                              width: 7,
+                              height: 7,
+                              borderRadius: 4,
+                              backgroundColor: '#8B5CF6',
+                            }} />
+                          ) : null}
                         </View>
                         <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-                          All Children
+                          All children
                         </Text>
                       </TouchableOpacity>
                       {children.map((child) => {
-                        const isSelected = selectedCalendarChildren !== null && selectedCalendarChildren?.includes(child.id);
+                        const childId = String(child.id);
+                        const isSelected = activeChildFilterId === childId;
                         return (
                           <TouchableOpacity
                             key={child.id}
@@ -4701,31 +4749,30 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                               borderRadius: 4,
                             }}
                             onPress={() => {
-                              const current = selectedCalendarChildren === null
-                                ? []
-                                : (selectedCalendarChildren || []);
-                              const newSelection = isSelected
-                                ? current.filter(id => id !== child.id)
-                                : [...current, child.id];
-                              const allSelected = newSelection.length === children.length;
-                              setSelectedCalendarChildren(allSelected ? null : (newSelection.length > 0 ? newSelection : null));
+                              // Exclusive: one child or all — never multi-select.
+                              setSelectedCalendarChildren(isSelected ? null : [child.id]);
                             }}
                           >
                             <View
                               style={{
                                 width: 14,
                                 height: 14,
-                                borderRadius: 3,
+                                borderRadius: 7,
                                 borderWidth: 1.5,
                                 borderColor: isSelected ? '#8B5CF6' : '#D1D5DB',
-                                backgroundColor: isSelected ? '#8B5CF6' : 'transparent',
+                                backgroundColor: 'transparent',
                                 alignItems: 'center',
                                 justifyContent: 'center',
                               }}
                             >
-                              {isSelected && (
-                                <Check size={10} color="#FFFFFF" />
-                              )}
+                              {isSelected ? (
+                                <View style={{
+                                  width: 7,
+                                  height: 7,
+                                  borderRadius: 4,
+                                  backgroundColor: '#8B5CF6',
+                                }} />
+                              ) : null}
                             </View>
                             <View
                               style={{
@@ -4754,6 +4801,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           </TouchableOpacity>
                         );
                       })}
+                          </>
+                        );
+                      })()}
                         <View style={{
                           height: 1,
                           backgroundColor: 'rgba(15,23,42,0.06)',

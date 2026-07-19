@@ -132,26 +132,28 @@ export default function CenterPane({
     // These won't be in the current month's events, so we need to fetch them separately
     // For now, we'll work with what we have - the backlog filter in TasksView will handle it
     
-    // Only filter by childIds if filters.childIds is an array with items (not null)
+    // Only filter by childIds if filters.childIds is an array with items (not null).
+    // Planner "By child" is All or exactly one id; compare as strings for UUID safety.
     if (filters?.childIds && Array.isArray(filters.childIds) && filters.childIds.length > 0) {
+      const selectedChildIds = new Set(filters.childIds.map(String));
       out = out.filter(e => {
         // Check single child_id
         const childId = e.childId || e.student_id || e.child_id;
-        if (childId && filters.childIds.includes(childId)) {
+        if (childId != null && selectedChildIds.has(String(childId))) {
           return true;
         }
-        
+
         // Check child_ids array (multiple children) - if any child in the event matches selected filter
         if (e.child_ids && Array.isArray(e.child_ids) && e.child_ids.length > 0) {
-          return e.child_ids.some(id => filters.childIds.includes(id));
+          return e.child_ids.some((id) => selectedChildIds.has(String(id)));
         }
-        
+
         // If event has no child_id or child_ids, it might be a family event - show it
         // (Family events should show for all children)
         if (!childId && (!e.child_ids || e.child_ids.length === 0)) {
           return true;
         }
-        
+
         return false;
       });
     }
@@ -364,6 +366,7 @@ export default function CenterPane({
               plannerYearAnchor={viewDate}
               academicYears={academicYears}
               plannerChildFilterIds={filters?.childIds || []}
+              onPlannerChildFilterChange={onChildFilterChange}
               readOnly={readOnly}
             />
           )}
