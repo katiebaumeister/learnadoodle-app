@@ -5144,8 +5144,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           All event types
                         </Text>
                       </TouchableOpacity>
-                      {PLANNER_EVENT_CATEGORIES.map(({ key, label, color }) => {
+                      {PLANNER_EVENT_CATEGORIES.map(({ key, label, color, accent, chipText }) => {
                         const isSelected = selectedEventTypes?.includes(key);
+                        const accentColor = accent || chipText;
                         return (
                           <TouchableOpacity
                             key={key}
@@ -5155,7 +5156,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                               gap: 8,
                               paddingVertical: 6,
                               paddingHorizontal: 10,
-                              borderRadius: 4,
+                              borderRadius: 6,
                               backgroundColor: color,
                             }}
                             onPress={() => {
@@ -5172,8 +5173,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                                 height: 14,
                                 borderRadius: 3,
                                 borderWidth: 1.5,
-                                borderColor: isSelected ? '#8B5CF6' : '#D1D5DB',
-                                backgroundColor: isSelected ? '#8B5CF6' : 'transparent',
+                                borderColor: isSelected ? accentColor : '#D1D5DB',
+                                backgroundColor: isSelected ? accentColor : 'transparent',
                                 alignItems: 'center',
                                 justifyContent: 'center',
                               }}
@@ -5182,7 +5183,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                                 <Check size={10} color="#FFFFFF" />
                               )}
                             </View>
-                            <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+                            <Text style={{ fontSize: 15, color: accentColor, fontWeight: '600', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
                               {label}
                             </Text>
                           </TouchableOpacity>

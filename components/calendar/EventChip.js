@@ -12,6 +12,7 @@ import {
   getPlannerCategoryMeta,
   isPlannerFamilyDayOffEvent,
   isPlannerPublicHolidayEvent,
+  PLANNER_CHIP_RADIUS,
 } from '../../lib/planner/plannerEventCategories';
 import { getPlannerEventChipTitle } from '../../lib/planner/plannerLearningDayChip';
 
@@ -73,8 +74,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
 
   const getTitleColor = () => {
     if (isPlaceholder) return '#6B7280';
-    if (isPlannerDayOffOrBreak) return categoryMeta.chipText;
-    return '#111827';
+    if (isBlankHolidayChip) return '#111827';
+    return categoryMeta.chipText;
   };
 
   const getTitleWeight = () => '500';
@@ -399,10 +400,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       ...(Platform.OS === 'web' && {
         cursor: (effectiveOnPress || onRightClick) && !effectiveDisableTouchable ? 'pointer' : 'default',
         outline: 'none',
+        boxShadow: 'none',
+        borderStyle: 'solid',
         borderWidth: baseStyle.borderWidth !== undefined ? baseStyle.borderWidth : 0,
         borderColor: 'transparent',
-        borderStyle: 'solid',
-        boxShadow: 'none',
       }),
     };
 
@@ -417,28 +418,14 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
           {...(Platform.OS === 'web' && {
             onMouseEnter: (e) => {
               setIsHovered(true);
-              if (e.currentTarget && e.currentTarget.style) {
-                e.currentTarget.style.backgroundColor = getHoverBackgroundColor();
-                e.currentTarget.style.outline = 'none';
-                e.currentTarget.style.border = 'none';
-                e.currentTarget.style.boxShadow = 'none';
-              }
+              applyChipHoverStyles(e.currentTarget, true);
             },
             onMouseLeave: (e) => {
               setIsHovered(false);
-              if (e.currentTarget && e.currentTarget.style) {
-                e.currentTarget.style.backgroundColor = getBackgroundColor();
-                e.currentTarget.style.outline = 'none';
-                e.currentTarget.style.border = 'none';
-                e.currentTarget.style.boxShadow = 'none';
-              }
+              applyChipHoverStyles(e.currentTarget, false);
             },
             onFocus: (e) => {
-              if (e.currentTarget && e.currentTarget.style) {
-                e.currentTarget.style.outline = 'none';
-                e.currentTarget.style.border = 'none';
-                e.currentTarget.style.boxShadow = 'none';
-              }
+              applyChipHoverStyles(e.currentTarget, false);
             },
           })}
           {...(typeof window !== 'undefined' && onRightClick && {
@@ -468,15 +455,11 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         {...(Platform.OS === 'web' && {
           onMouseEnter: (e) => {
             setIsHovered(true);
-            if (e.currentTarget && e.currentTarget.style) {
-              e.currentTarget.style.backgroundColor = getHoverBackgroundColor();
-            }
+            applyChipHoverStyles(e.currentTarget, true);
           },
           onMouseLeave: (e) => {
             setIsHovered(false);
-            if (e.currentTarget && e.currentTarget.style) {
-              e.currentTarget.style.backgroundColor = getBackgroundColor();
-            }
+            applyChipHoverStyles(e.currentTarget, false);
           },
         })}
       >
@@ -490,17 +473,23 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   // Always show lighter text for completed events, but only strikethrough when hideDoneStyling is false
   const shouldShowLighterText = isDone;
 
-  // Get accent color values for styling (used for borders, text accents, etc.)
-  const getAccentColor = () => categoryMeta.chipText;
+  const applyChipHoverStyles = (target, hovering) => {
+    if (!target?.style) return;
+    target.style.backgroundColor = hovering ? getHoverBackgroundColor() : getBackgroundColor();
+    target.style.outline = 'none';
+    target.style.boxShadow = 'none';
+    target.style.border = 'none';
+  };
 
   if (compact && fullWidth) {
     const baseStyle = {
-      borderRadius: 6,
+      borderRadius: PLANNER_CHIP_RADIUS,
       backgroundColor: getBackgroundColor(),
-      paddingHorizontal: 4,
+      paddingHorizontal: 6,
       paddingVertical: 4,
       width: '100%',
       opacity: shouldShowLighterText ? 0.5 : 1,
+      overflow: 'hidden',
     };
 
     const content = (
@@ -513,18 +502,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         minWidth: 0,
         paddingVertical: 2, // Significantly reduced spacing
       }}
-      {...(Platform.OS === 'web' && {
-        onMouseEnter: (e) => {
-          if (e.currentTarget && e.currentTarget.style) {
-            e.currentTarget.style.backgroundColor = getHoverBackgroundColor();
-          }
-        },
-        onMouseLeave: (e) => {
-          if (e.currentTarget && e.currentTarget.style) {
-            e.currentTarget.style.backgroundColor = getBackgroundColor();
-          }
-        },
-      })}
       >
         {/* Conflict Indicator */}
         {conflictInfo && (
@@ -796,12 +773,13 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
 
   if (compact) {
     const baseStyle = {
-      borderRadius: 6,
+      borderRadius: PLANNER_CHIP_RADIUS,
       backgroundColor: getBackgroundColor(),
       paddingHorizontal: 6,
       paddingVertical: 3,
       maxWidth: '100%',
       opacity: shouldShowLighterText ? 0.5 : 1,
+      overflow: 'hidden',
     };
 
     const { IconComponent: SubjectIcon, iconColor: subjectIconColor } = getSubjectIcon();
@@ -816,18 +794,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         minWidth: 0,
         paddingVertical: 2, // Significantly reduced spacing
       }}
-      {...(Platform.OS === 'web' && {
-        onMouseEnter: (e) => {
-          if (e.currentTarget && e.currentTarget.style) {
-            e.currentTarget.style.backgroundColor = getHoverBackgroundColor();
-          }
-        },
-        onMouseLeave: (e) => {
-          if (e.currentTarget && e.currentTarget.style) {
-            e.currentTarget.style.backgroundColor = getBackgroundColor();
-          }
-        },
-      })}
       >
         {/* Conflict Indicator */}
         {conflictInfo && (
