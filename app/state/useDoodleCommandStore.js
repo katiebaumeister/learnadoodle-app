@@ -92,6 +92,14 @@ function reducer(state, action) {
         pendingResponse: null,
         pendingClarification: null,
       };
+    case 'CLEAR_ERROR':
+      return {
+        ...state,
+        error: null,
+        status: state.status === DOODLE_PANE_STATUS.ERROR
+          ? DOODLE_PANE_STATUS.IDLE
+          : state.status,
+      };
     case 'RESET_TRANSIENT':
       return {
         ...state,
@@ -378,6 +386,10 @@ export function DoodleCommandProvider({ children }) {
     dispatch({ type: 'CLEAR_PENDING', status: DOODLE_PANE_STATUS.IDLE });
   }, [appendAndPersist]);
 
+  const dismissError = useCallback(() => {
+    dispatch({ type: 'CLEAR_ERROR' });
+  }, []);
+
   const answerClarification = useCallback(async (option, { roster, capabilities } = {}) => {
     if (!option?.label && !option?.value) return null;
     const followUp = option.label || String(option.value);
@@ -395,6 +407,7 @@ export function DoodleCommandProvider({ children }) {
     submitMessage,
     confirmPending,
     cancelPending,
+    dismissError,
     answerClarification,
   }), [
     state,
@@ -403,6 +416,7 @@ export function DoodleCommandProvider({ children }) {
     submitMessage,
     confirmPending,
     cancelPending,
+    dismissError,
     answerClarification,
   ]);
 

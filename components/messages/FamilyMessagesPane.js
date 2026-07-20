@@ -41,18 +41,21 @@ import DmParticipantAvatar from './DmParticipantAvatar';
 import ConfirmDialog from '../ConfirmDialog';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { ACCENT_TEXT, ACCENT_CHIP_BORDER, ACCENT_SOFT_BG } from '../create/shared/createModalStyles';
+import { sanitizeDoodlePreviewText } from '../../lib/messages/doodleErrorCopy';
 
-const DOODLE_FALLBACK_PREVIEW = 'Your built-in helper';
+const DOODLE_FALLBACK_PREVIEW = 'Your learning assistant';
 
 function isWeakDoodlePreview(text) {
   const t = String(text || '').trim();
-  return !t || t === DOODLE_FALLBACK_PREVIEW || t === 'No messages yet';
+  return !t || t === DOODLE_FALLBACK_PREVIEW || t === 'No messages yet' || t === 'Your built-in helper';
 }
 
 function previewFromDoodleMessages(messages) {
   if (!Array.isArray(messages) || messages.length === 0) return null;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const content = String(messages[i]?.content || '').replace(/\s+/g, ' ').trim();
+    const content = sanitizeDoodlePreviewText(
+      String(messages[i]?.content || '').replace(/\s+/g, ' ').trim(),
+    );
     if (content && !isWeakDoodlePreview(content)) {
       return {
         preview: content.slice(0, 80),
@@ -629,7 +632,7 @@ export default function FamilyMessagesPane({
               <DmParticipantAvatar
                 participant={participant}
                 familyChildren={familyChildren}
-                size={48}
+                size={40}
                 style={styles.threadAvatar}
               />
               <View style={styles.threadBody}>
@@ -639,9 +642,10 @@ export default function FamilyMessagesPane({
                     <Text style={styles.threadTime}>{formatDmRelativeTime(lastActivityAt)}</Text>
                   ) : null}
                 </View>
-                {preview ? (
-                  <Text style={styles.threadPreview} numberOfLines={1}>{preview}</Text>
-                ) : null}
+                <Text style={styles.threadPreview} numberOfLines={1}>
+                  {sanitizeDoodlePreviewText(preview)
+                    || (isDoodleHelperParticipant(participant) ? '' : 'No messages yet')}
+                </Text>
               </View>
             </TouchableOpacity>
           ))}
@@ -782,7 +786,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 12,
   },
   threadAvatar: {
     flexShrink: 0,
@@ -790,7 +794,7 @@ const styles = StyleSheet.create({
   threadBody: {
     flex: 1,
     minWidth: 0,
-    gap: 2,
+    gap: 3,
   },
   threadTopRow: {
     flexDirection: 'row',
@@ -803,13 +807,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#0F172A',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   threadTime: {
     fontSize: 12,
     color: '#94A3B8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   threadPreview: {
     fontSize: 13,
     color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

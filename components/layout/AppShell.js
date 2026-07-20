@@ -18,7 +18,7 @@ export default function AppShell({
   flushToEdge = false,
   disabled = false,
 }) {
-  const leftPaneWidth = leftPane?.width || 340;
+  const leftPaneWidth = leftPane?.width || 360;
 
   return (
     <View style={styles.appContainer}>

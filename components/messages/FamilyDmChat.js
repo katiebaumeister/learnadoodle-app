@@ -66,8 +66,10 @@ function formatEventChipWhen(event) {
   });
 }
 
-const COMPOSER_BUTTON_SIZE = 36;
+const COMPOSER_BUTTON_SIZE = 44;
 const COMPOSER_MAX_HEIGHT = 120;
+const FONT = '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const FONT_DISPLAY = '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 
 export default function FamilyDmChat({
   participant,
@@ -716,10 +718,19 @@ export default function FamilyDmChat({
         <DmParticipantAvatar
           participant={participant}
           familyChildren={familyChildren}
-          size={32}
+          size={36}
           style={styles.headerAvatar}
         />
-        <Text style={styles.headerName} numberOfLines={1}>{participant?.name}</Text>
+        <View style={styles.headerTextCol}>
+          <Text style={styles.headerName} numberOfLines={1}>{participant?.name}</Text>
+          {isGroupThread || participantType === 'multicast' ? (
+            <Text style={styles.headerSubtitle} numberOfLines={1}>
+              {participantType === 'multicast'
+                ? 'Separate chats for each person'
+                : `${Math.max(2, (participant?.memberIds || participant?.recipientIds || []).length || 2)} members`}
+            </Text>
+          ) : null}
+        </View>
         {typeof onClosePane === 'function' ? (
           <MessagesPaneCloseButton onPress={onClosePane} />
         ) : null}
@@ -736,27 +747,55 @@ export default function FamilyDmChat({
           contentContainerStyle={styles.scrollContent}
           onContentSizeChange={handleScrollContentSizeChange}
         >
-          <View style={styles.introBlock}>
-            <DmParticipantAvatar
-              participant={participant}
-              familyChildren={familyChildren}
-              size={72}
-              style={styles.introAvatar}
-            />
-            <Text style={styles.introName}>{participant?.name}</Text>
-            {participantType === 'multicast' ? (
-              <Text style={styles.introSubtitle}>
-                Your message will be sent to each person separately.
+          {(isGroupThread || participantType === 'multicast') && messages.length > 0 ? (
+            <View style={styles.systemCard}>
+              <Text style={styles.systemCardTitle}>{participant?.name}</Text>
+              <Text style={styles.systemCardBody}>
+                {participantType === 'multicast'
+                  ? 'Your message will be sent to each person separately.'
+                  : 'Messages here are shared with everyone in this group.'}
               </Text>
-            ) : null}
-            {participantType === 'group' ? (
-              <Text style={styles.introSubtitle}>
-                Group conversation — messages here go to everyone in this group.
-              </Text>
-            ) : null}
-          </View>
+            </View>
+          ) : null}
 
-          {firstMessageAt ? (
+          {messages.length === 0 && !loading ? (
+            <View style={styles.emptyPrompts}>
+              {(isGroupThread || participantType === 'multicast') ? (
+                <View style={styles.systemCard}>
+                  <Text style={styles.systemCardTitle}>{participant?.name}</Text>
+                  <Text style={styles.systemCardBody}>
+                    {participantType === 'multicast'
+                      ? 'Your message will be sent to each person separately.'
+                      : 'Messages here are shared with everyone in this group.'}
+                  </Text>
+                </View>
+              ) : (
+                <Text style={styles.emptyTitle}>Say hello to {participant?.name || 'them'}</Text>
+              )}
+              <View style={styles.promptRow}>
+                {['Share an update', "Ask about today's schedule", 'Send a photo'].map((label) => (
+                  <TouchableOpacity
+                    key={label}
+                    style={styles.promptChip}
+                    onPress={() => {
+                      if (label === 'Send a photo') {
+                        pickFile();
+                        return;
+                      }
+                      setComposerText(label === 'Share an update' ? 'Quick update: ' : "What's on today's schedule?");
+                      composerInputRef.current?.focus?.();
+                    }}
+                    activeOpacity={0.85}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={styles.promptChipText}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {firstMessageAt && messages.length > 0 ? (
             <Text style={styles.dateDivider}>
               {new Date(firstMessageAt).toLocaleString('en-US', {
                 month: 'numeric',
@@ -768,14 +807,10 @@ export default function FamilyDmChat({
             </Text>
           ) : null}
 
-          {messages.map((message) => {
+          {messages.map((message, index) => {
             const isMine = isUnifiedMessageMine(message, viewerRole, currentUserId);
             const displayBody = message.displayBody || message.body;
-            const senderName = isMine
-              ? 'You'
-              : (String(participant?.name || '').trim() || 'Student');
             const timeLabel = formatMessageTime(message.createdAt);
-            const metaLabel = timeLabel ? `${senderName} · ${timeLabel}` : senderName;
             const actionLink = message.actionLink || null;
             const actionIsLink = actionLink?.kind === 'submission';
             const hasBody = Boolean(String(displayBody || '').trim());
@@ -783,44 +818,74 @@ export default function FamilyDmChat({
             const hasMaterialChip = Boolean(message.materialAttachment);
             const hasAction = Boolean(actionLink?.label);
             const showBubble = hasBody || hasEventChip || hasMaterialChip || hasAction;
+            const prev = messages[index - 1];
+            const prevMine = prev
+              ? isUnifiedMessageMine(prev, viewerRole, currentUserId)
+              : null;
+            const showAvatar = !isMine && (index === 0 || prevMine === true || prevMine == null);
+
+            const bubbleInner = showBubble ? (
+              <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther]}>
+                {hasBody ? (
+                  <Text style={styles.bubbleText}>{displayBody}</Text>
+                ) : null}
+                {hasEventChip ? renderEventChip(
+                  message.eventAttachment,
+                  () => openEventAttachment(message.linkedEventId),
+                ) : null}
+                {hasMaterialChip ? renderMaterialChip(
+                  message.materialAttachment,
+                  () => openMaterialAttachment(message.materialAttachment),
+                ) : null}
+                {hasAction ? (
+                  actionIsLink ? (
+                    <TouchableOpacity
+                      onPress={() => openStreamActionLink(actionLink)}
+                      activeOpacity={0.7}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={styles.actionInBubbleLink}>{actionLink.label}</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <Text style={styles.actionInBubble}>{actionLink.label}</Text>
+                  )
+                ) : null}
+              </View>
+            ) : null;
 
             return (
               <View
                 key={message.id}
                 style={[styles.messageRow, isMine ? styles.messageRowMine : styles.messageRowOther]}
               >
-                <Text style={styles.senderLabel}>{metaLabel}</Text>
-                {showBubble ? (
-                  <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther]}>
-                    {hasBody ? (
-                      <Text style={styles.bubbleText}>{displayBody}</Text>
+                {!isMine ? (
+                  <View style={styles.otherRow}>
+                    {showAvatar ? (
+                      <DmParticipantAvatar
+                        participant={participant}
+                        familyChildren={familyChildren}
+                        size={28}
+                        style={styles.messageAvatar}
+                      />
+                    ) : (
+                      <View style={styles.messageAvatarSpacer} />
+                    )}
+                    <View style={styles.otherCol}>
+                      {bubbleInner}
+                      {timeLabel ? <Text style={styles.bubbleTime}>{timeLabel}</Text> : null}
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.mineCol}>
+                    {bubbleInner}
+                    {timeLabel ? (
+                      <Text style={[styles.bubbleTime, styles.bubbleTimeMine]}>{timeLabel}</Text>
                     ) : null}
-                    {hasEventChip ? renderEventChip(
-                      message.eventAttachment,
-                      () => openEventAttachment(message.linkedEventId),
-                    ) : null}
-                    {hasMaterialChip ? renderMaterialChip(
-                      message.materialAttachment,
-                      () => openMaterialAttachment(message.materialAttachment),
-                    ) : null}
-                    {hasAction ? (
-                      actionIsLink ? (
-                        <TouchableOpacity
-                          onPress={() => openStreamActionLink(actionLink)}
-                          activeOpacity={0.7}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={styles.actionInBubbleLink}>{actionLink.label}</Text>
-                        </TouchableOpacity>
-                      ) : (
-                        <Text style={styles.actionInBubble}>{actionLink.label}</Text>
-                      )
+                    {isMine && message.source === 'dm' && message.id === seenOnMessageId ? (
+                      <Text style={styles.seenLabel}>Seen</Text>
                     ) : null}
                   </View>
-                ) : null}
-                {isMine && message.source === 'dm' && message.id === seenOnMessageId ? (
-                  <Text style={styles.seenLabel}>Seen</Text>
-                ) : null}
+                )}
               </View>
             );
           })}
@@ -906,7 +971,7 @@ export default function FamilyDmChat({
               ref={composerInputRef}
               value={composerText}
               onChangeText={setComposerText}
-              placeholder="Type a message..."
+              placeholder={`Message ${participant?.name || ''}…`}
               placeholderTextColor="#94A3B8"
               style={[
                 styles.composerInput,
@@ -981,11 +1046,11 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
-    gap: 8,
+    gap: 10,
   },
   backButton: {
     width: 32,
@@ -996,11 +1061,22 @@ const styles = StyleSheet.create({
   headerAvatar: {
     flexShrink: 0,
   },
-  headerName: {
+  headerTextCol: {
     flex: 1,
-    fontSize: 15,
-    fontWeight: '600',
+    minWidth: 0,
+    gap: 2,
+  },
+  headerName: {
+    fontSize: 17,
+    fontWeight: '700',
     color: '#0F172A',
+    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748B',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
   loadingState: {
     flex: 1,
@@ -1012,75 +1088,134 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 14,
-    paddingTop: 20,
+    paddingTop: 12,
     paddingBottom: 16,
     gap: 10,
   },
-  introBlock: {
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
+  systemCard: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 4,
+    marginBottom: 4,
   },
-  introAvatar: {
-    flexShrink: 0,
-  },
-  introName: {
-    fontSize: 16,
+  systemCardTitle: {
+    fontSize: 14,
     fontWeight: '700',
     color: '#0F172A',
+    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
   },
-  introSubtitle: {
-    marginTop: 6,
+  systemCardBody: {
     fontSize: 13,
     lineHeight: 18,
     color: '#64748B',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+  },
+  emptyPrompts: {
+    gap: 12,
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#334155',
     textAlign: 'center',
-    paddingHorizontal: 16,
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+  },
+  promptRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  promptChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  promptChipText: {
+    fontSize: 13,
+    color: '#334155',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
   dateDivider: {
     alignSelf: 'center',
     fontSize: 11,
     color: '#94A3B8',
     marginVertical: 8,
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
   messageRow: {
     gap: 4,
-    maxWidth: '88%',
+    maxWidth: '100%',
   },
   messageRowMine: {
     alignSelf: 'flex-end',
     alignItems: 'flex-end',
+    maxWidth: '78%',
   },
   messageRowOther: {
-    alignSelf: 'flex-start',
-    alignItems: 'flex-start',
+    alignSelf: 'stretch',
+    maxWidth: '92%',
   },
-  senderLabel: {
-    fontSize: 11,
-    color: '#64748B',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+  otherRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  otherCol: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  mineCol: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  messageAvatar: {
+    marginBottom: 16,
+    flexShrink: 0,
+  },
+  messageAvatarSpacer: {
+    width: 28,
+    flexShrink: 0,
   },
   bubble: {
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
     gap: 8,
     minWidth: 48,
   },
   bubbleMine: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#DBEAFE',
+    borderWidth: 0,
   },
   bubbleOther: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F1F5F9',
+    borderWidth: 0,
   },
   bubbleText: {
     fontSize: 14,
     color: '#0F172A',
     lineHeight: 20,
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+  },
+  bubbleTime: {
+    fontSize: 11,
+    color: '#94A3B8',
+    paddingHorizontal: 4,
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+  },
+  bubbleTimeMine: {
+    textAlign: 'right',
   },
   actionInBubble: {
     fontSize: 13,
@@ -1136,7 +1271,8 @@ const styles = StyleSheet.create({
   seenLabel: {
     fontSize: 11,
     color: '#94A3B8',
-    marginTop: 4,
+    marginTop: 2,
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
   composerWrap: {
     borderTopWidth: 1,
@@ -1162,8 +1298,8 @@ const styles = StyleSheet.create({
   composerRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 8,
-    paddingHorizontal: 12,
+    gap: 10,
+    paddingHorizontal: 14,
     paddingVertical: 10,
   },
   attachWrap: {
@@ -1181,7 +1317,7 @@ const styles = StyleSheet.create({
   },
   attachMenu: {
     position: 'absolute',
-    bottom: 44,
+    bottom: 52,
     left: 0,
     minWidth: 160,
     backgroundColor: '#FFFFFF',
@@ -1204,19 +1340,22 @@ const styles = StyleSheet.create({
   attachMenuText: {
     fontSize: 14,
     color: '#334155',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
   composerInput: {
     flex: 1,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#E2E8F0',
     borderRadius: COMPOSER_BUTTON_SIZE / 2,
-    paddingHorizontal: 14,
-    paddingTop: 8,
-    paddingBottom: 8,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
     fontSize: 14,
     lineHeight: 20,
     color: '#0F172A',
+    minHeight: COMPOSER_BUTTON_SIZE,
     ...(Platform.OS === 'web' && {
+      fontFamily: FONT,
       outlineStyle: 'none',
       resize: 'none',
       overflow: 'hidden',
@@ -1226,11 +1365,13 @@ const styles = StyleSheet.create({
     width: COMPOSER_BUTTON_SIZE,
     height: COMPOSER_BUTTON_SIZE,
     borderRadius: COMPOSER_BUTTON_SIZE / 2,
-    backgroundColor: '#1E293B',
+    backgroundColor: '#3B82F6',
     alignItems: 'center',
     justifyContent: 'center',
   },
   sendButtonDisabled: {
-    opacity: 0.45,
+    backgroundColor: '#CBD5E1',
+    opacity: 1,
   },
 });
+

@@ -12,6 +12,7 @@ import {
 import {
   ArrowLeft,
   ArrowUp,
+  Check,
   FileText,
   Plus,
   X,
@@ -36,6 +37,7 @@ import {
   ACCENT_SOFT_BG,
   ACCENT_CHIP_BG,
 } from '../create/shared/createModalStyles';
+import { humanizeDoodleError } from '../../lib/messages/doodleErrorCopy';
 
 function formatMessageTime(createdAt) {
   if (!createdAt) return '';
@@ -86,10 +88,10 @@ function dataTransferHasFiles(ev) {
   return Array.from(dt.types).includes('Files');
 }
 
-const COMPOSER_MIN_HEIGHT = 36;
-const COMPOSER_ATTACHED_MIN_HEIGHT = 56; // room for 2-line placeholder
+const COMPOSER_MIN_HEIGHT = 44;
+const COMPOSER_ATTACHED_MIN_HEIGHT = 56;
 const COMPOSER_MAX_HEIGHT = 120;
-const COMPOSER_BTN_SIZE = 28;
+const COMPOSER_BTN_SIZE = 44;
 
 function formatBytes(bytes) {
   const n = Number(bytes) || 0;
@@ -143,78 +145,152 @@ function AttachmentChip({ item, onRemove, onOpen, removable = true }) {
   );
 }
 
-function MessageBubble({ message, onSelectOption, onNavigate }) {
+function MessageBubble({
+  message,
+  onSelectOption,
+  onNavigate,
+  selectedOptionId = null,
+  optionsDisabled = false,
+}) {
   const structured = message.structured;
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const display = String(message.content || '').replace(/^#{1,6}\s+/gm, '').trim();
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
-  const senderName = isUser ? 'You' : (isSystem ? 'Doodle' : 'Doodle');
   const timeLabel = formatMessageTime(message.createdAt);
-  const metaLabel = timeLabel ? `${senderName} · ${timeLabel}` : senderName;
+  const isErrorLike = structured?.type === DOODLE_RESPONSE_TYPES.ERROR
+    || (isSystem && /invalid input|couldn.?t|failed|error/i.test(display));
+
   return (
-    <View style={[styles.messageRow, isUser ? styles.messageRowMine : styles.messageRowOther]}>
-      <Text style={styles.senderLabel}>{metaLabel}</Text>
-      <View style={[styles.bubble, isUser ? styles.bubbleMine : styles.bubbleOther]}>
-        {attachments.length ? (
-          <View style={styles.bubbleAttachRow}>
-            {attachments.map((att) => (
-              <AttachmentChip
-                key={att.id || att.fileName}
-                item={att}
-                removable={false}
-                onOpen={(item) => {
-                  if (Platform.OS === 'web' && item.previewUrl) {
-                    window.open(item.previewUrl, '_blank', 'noopener,noreferrer');
-                  }
-                }}
-              />
-            ))}
+    <View style={[
+      styles.messageRow,
+      isUser ? styles.messageRowMine : styles.messageRowOther,
+    ]}
+    >
+      {!isUser ? (
+        <View style={styles.messageWithAvatar}>
+          <DmParticipantAvatar
+            participant={DOODLE_HELPER_PARTICIPANT}
+            size={28}
+            style={styles.messageAvatar}
+          />
+          <View style={styles.messageColumn}>
+            <View style={[
+              styles.bubble,
+              styles.bubbleOther,
+              isErrorLike && styles.bubbleError,
+            ]}
+            >
+              {attachments.length ? (
+                <View style={styles.bubbleAttachRow}>
+                  {attachments.map((att) => (
+                    <AttachmentChip
+                      key={att.id || att.fileName}
+                      item={att}
+                      removable={false}
+                      onOpen={(item) => {
+                        if (Platform.OS === 'web' && item.previewUrl) {
+                          window.open(item.previewUrl, '_blank', 'noopener,noreferrer');
+                        }
+                      }}
+                    />
+                  ))}
+                </View>
+              ) : null}
+              {display ? (
+                <Text style={styles.bubbleText}>{display}</Text>
+              ) : null}
+              {structured?.type === DOODLE_RESPONSE_TYPES.CLARIFICATION && structured.options?.length ? (
+                <View style={styles.options}>
+                  {structured.options.map((opt) => {
+                    const selected = selectedOptionId != null
+                      && String(selectedOptionId) === String(opt.id);
+                    const disabled = optionsDisabled || (selectedOptionId != null && !selected);
+                    return (
+                      <TouchableOpacity
+                        key={opt.id}
+                        style={[
+                          styles.optionCard,
+                          selected && styles.optionCardSelected,
+                          disabled && !selected && styles.optionCardDisabled,
+                        ]}
+                        onPress={() => onSelectOption?.(opt)}
+                        disabled={disabled}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected, disabled }}
+                      >
+                        <Text style={[
+                          styles.optionCardText,
+                          selected && styles.optionCardTextSelected,
+                        ]}
+                        >
+                          {opt.label}
+                        </Text>
+                        {selected ? <Check size={16} color={ACCENT_TEXT} strokeWidth={2.5} /> : null}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : null}
+              {structured?.type === DOODLE_RESPONSE_TYPES.NAVIGATION && structured.destination ? (
+                <TouchableOpacity
+                  style={styles.linkBtn}
+                  onPress={() => onNavigate?.(structured.destination)}
+                >
+                  <Text style={styles.linkBtnText}>{structured.destination.label}</Text>
+                </TouchableOpacity>
+              ) : null}
+              {structured?.links?.length ? (
+                <View style={styles.links}>
+                  {structured.links.slice(0, 6).map((link) => (
+                    <TouchableOpacity key={`${link.href}-${link.label}`} onPress={() => onNavigate?.(link)}>
+                      <Text style={styles.linkText}>{link.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+              {structured?.affectedRecords?.length ? (
+                <View style={styles.links}>
+                  {structured.affectedRecords.map((link) => (
+                    <TouchableOpacity
+                      key={`${link.entityId || link.href}-${link.label}`}
+                      onPress={() => onNavigate?.(link)}
+                    >
+                      <Text style={styles.linkText}>{link.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+            {timeLabel ? <Text style={styles.bubbleTime}>{timeLabel}</Text> : null}
           </View>
-        ) : null}
-        {display ? (
-          <Text style={styles.bubbleText}>{display}</Text>
-        ) : null}
-        {structured?.type === DOODLE_RESPONSE_TYPES.CLARIFICATION && structured.options?.length ? (
-          <View style={styles.options}>
-            {structured.options.map((opt) => (
-              <TouchableOpacity
-                key={opt.id}
-                style={styles.optionChip}
-                onPress={() => onSelectOption?.(opt)}
-              >
-                <Text style={styles.optionChipText}>{opt.label}</Text>
-              </TouchableOpacity>
-            ))}
+        </View>
+      ) : (
+        <View style={styles.messageColumnMine}>
+          <View style={[styles.bubble, styles.bubbleMine]}>
+            {attachments.length ? (
+              <View style={styles.bubbleAttachRow}>
+                {attachments.map((att) => (
+                  <AttachmentChip
+                    key={att.id || att.fileName}
+                    item={att}
+                    removable={false}
+                    onOpen={(item) => {
+                      if (Platform.OS === 'web' && item.previewUrl) {
+                        window.open(item.previewUrl, '_blank', 'noopener,noreferrer');
+                      }
+                    }}
+                  />
+                ))}
+              </View>
+            ) : null}
+            {display ? (
+              <Text style={styles.bubbleText}>{display}</Text>
+            ) : null}
           </View>
-        ) : null}
-        {structured?.type === DOODLE_RESPONSE_TYPES.NAVIGATION && structured.destination ? (
-          <TouchableOpacity
-            style={styles.linkBtn}
-            onPress={() => onNavigate?.(structured.destination)}
-          >
-            <Text style={styles.linkBtnText}>{structured.destination.label}</Text>
-          </TouchableOpacity>
-        ) : null}
-        {structured?.links?.length ? (
-          <View style={styles.links}>
-            {structured.links.slice(0, 6).map((link) => (
-              <TouchableOpacity key={`${link.href}-${link.label}`} onPress={() => onNavigate?.(link)}>
-                <Text style={styles.linkText}>{link.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        ) : null}
-        {structured?.affectedRecords?.length ? (
-          <View style={styles.links}>
-            {structured.affectedRecords.map((link) => (
-              <TouchableOpacity key={`${link.entityId || link.href}-${link.label}`} onPress={() => onNavigate?.(link)}>
-                <Text style={styles.linkText}>{link.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        ) : null}
-      </View>
+          {timeLabel ? <Text style={[styles.bubbleTime, styles.bubbleTimeMine]}>{timeLabel}</Text> : null}
+        </View>
+      )}
     </View>
   );
 }
@@ -268,6 +344,7 @@ export default function DoodleCommandPane({
   const [draftAttachments, setDraftAttachments] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
   const [attachCapHint, setAttachCapHint] = useState(false);
+  const [selectedOptions, setSelectedOptions] = useState({});
   const {
     status,
     messages,
@@ -280,6 +357,7 @@ export default function DoodleCommandPane({
     submitMessage,
     confirmPending,
     cancelPending,
+    dismissError,
     answerClarification,
   } = useDoodleCommandStore();
 
@@ -569,19 +647,22 @@ export default function DoodleCommandPane({
         ) : null}
         <DmParticipantAvatar
           participant={DOODLE_HELPER_PARTICIPANT}
-          size={32}
+          size={36}
           style={styles.headerAvatar}
         />
-        <View style={styles.headerTitleRow}>
-          <Text style={styles.headerTitle} numberOfLines={1}>Doodle</Text>
-          <View
-            style={styles.headerBetaBadge}
-            pointerEvents="none"
-            accessibilityElementsHidden
-            importantForAccessibility="no"
-          >
-            <Text style={styles.headerBetaText}>beta</Text>
+        <View style={styles.headerTextCol}>
+          <View style={styles.headerTitleRow}>
+            <Text style={styles.headerTitle} numberOfLines={1}>Doodle</Text>
+            <View
+              style={styles.headerBetaBadge}
+              pointerEvents="none"
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+            >
+              <Text style={styles.headerBetaText}>BETA</Text>
+            </View>
           </View>
+          <Text style={styles.headerSubtitle} numberOfLines={1}>Your learning assistant</Text>
         </View>
         {typeof onClosePane === 'function' ? (
           <MessagesPaneCloseButton
@@ -608,7 +689,12 @@ export default function DoodleCommandPane({
             <MessageBubble
               key={message.id}
               message={message}
-              onSelectOption={(opt) => answerClarification(opt, { roster, capabilities })}
+              selectedOptionId={selectedOptions[message.id] || null}
+              optionsDisabled={busy}
+              onSelectOption={(opt) => {
+                setSelectedOptions((prev) => ({ ...prev, [message.id]: opt.id }));
+                answerClarification(opt, { roster, capabilities });
+              }}
               onNavigate={handleNavigate}
             />
           ))}
@@ -628,7 +714,27 @@ export default function DoodleCommandPane({
           onCancel={cancelPending}
         />
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? (() => {
+          const friendly = humanizeDoodleError(error);
+          return (
+            <View style={styles.errorCard}>
+              <Text style={styles.errorCardText}>{friendly.message}</Text>
+              <TouchableOpacity
+                style={styles.errorActionBtn}
+                onPress={() => {
+                  dismissError?.();
+                  if (friendly.actionKind === 'choose_day') {
+                    submitMessage('update that learning day', { roster, capabilities });
+                  }
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={friendly.actionLabel || 'Retry'}
+              >
+                <Text style={styles.errorActionText}>{friendly.actionLabel || 'Retry'}</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        })() : null}
       </ScrollView>
 
       <View style={styles.bottomDock}>
@@ -684,7 +790,7 @@ export default function DoodleCommandPane({
               blurOnSubmit={false}
               placeholder={draftAttachments.length
                 ? 'Add a note, or send…'
-                : 'Type a message...'}
+                : 'Ask Doodle to update your plan…'}
               placeholderTextColor="#94A3B8"
               returnKeyType="send"
               editable={!busy}
@@ -728,7 +834,7 @@ export default function DoodleCommandPane({
   );
 }
 
-const FONT = '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const FONT = '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 const FONT_DISPLAY = '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 
 const styles = StyleSheet.create({
@@ -780,11 +886,12 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    gap: 8,
+    borderBottomColor: 'rgba(148, 163, 184, 0.28)',
+    backgroundColor: '#FFFFFF',
+    gap: 10,
   },
   backButton: {
     width: 32,
@@ -795,8 +902,12 @@ const styles = StyleSheet.create({
   headerAvatar: {
     flexShrink: 0,
   },
-  headerTitleRow: {
+  headerTextCol: {
     flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  headerTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -804,39 +915,43 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     flexShrink: 1,
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
     color: '#0F172A',
+    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748B',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
   headerBetaBadge: {
-    marginTop: -8,
-    marginLeft: -2,
     paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 999,
-    backgroundColor: '#0F172A',
+    paddingVertical: 1,
+    borderRadius: 4,
+    backgroundColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
   headerBetaText: {
-    fontSize: 9,
-    lineHeight: 12,
+    fontSize: 8,
+    lineHeight: 11,
     fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 0.4,
+    color: '#475569',
+    letterSpacing: 0.5,
     textAlign: 'center',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
   },
   scroll: {
     flex: 1,
     minHeight: 0,
+    backgroundColor: '#FFFFFF',
   },
   content: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingHorizontal: 14,
+    paddingTop: 10,
     paddingBottom: 20,
     gap: 10,
   },
@@ -849,43 +964,62 @@ const styles = StyleSheet.create({
   },
   bottomDock: {
     backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148, 163, 184, 0.28)',
   },
   thread: {
-    gap: 12,
+    gap: 14,
   },
   messageRow: {
-    gap: 4,
-    maxWidth: '88%',
+    maxWidth: '100%',
   },
   messageRowMine: {
     alignSelf: 'flex-end',
     alignItems: 'flex-end',
+    maxWidth: '78%',
   },
   messageRowOther: {
-    alignSelf: 'flex-start',
-    alignItems: 'flex-start',
+    alignSelf: 'stretch',
+    maxWidth: '100%',
   },
-  senderLabel: {
-    fontSize: 11,
-    color: '#64748B',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+  messageWithAvatar: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    maxWidth: '92%',
+  },
+  messageAvatar: {
+    marginBottom: 18,
+    flexShrink: 0,
+  },
+  messageColumn: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  messageColumnMine: {
+    alignItems: 'flex-end',
+    gap: 4,
+    maxWidth: '100%',
   },
   bubble: {
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
     gap: 8,
     minWidth: 48,
   },
   bubbleMine: {
     backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: ACCENT_CHIP_BORDER,
   },
   bubbleOther: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#E8EEF8',
+    borderWidth: 0,
+  },
+  bubbleError: {
+    backgroundColor: '#FEF2F2',
   },
   bubbleText: {
     fontSize: 14,
@@ -893,23 +1027,49 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
-  options: {
-    marginTop: 8,
-    gap: 6,
+  bubbleTime: {
+    fontSize: 11,
+    color: '#94A3B8',
+    paddingHorizontal: 4,
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
-  optionChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 8,
+  bubbleTimeMine: {
+    textAlign: 'right',
+  },
+  options: {
+    marginTop: 4,
+    gap: 8,
+  },
+  optionCard: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: ACCENT_CHIP_BORDER,
   },
-  optionChipText: {
-    fontSize: 13,
+  optionCardSelected: {
+    backgroundColor: ACCENT_SOFT_BG,
+    borderColor: ACCENT_TEXT,
+  },
+  optionCardDisabled: {
+    opacity: 0.45,
+  },
+  optionCardText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 18,
+    color: '#0F172A',
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+  },
+  optionCardTextSelected: {
     color: ACCENT_TEXT,
-    fontWeight: '700',
-    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
   },
   links: {
     marginTop: 8,
@@ -941,7 +1101,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: ACCENT_CHIP_BORDER,
-    backgroundColor: ACCENT_SOFT_BG,
+    backgroundColor: '#FFFFFF',
   },
   previewTitle: {
     marginBottom: 10,
@@ -1016,14 +1176,39 @@ const styles = StyleSheet.create({
     color: '#64748B',
     ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
-  errorText: {
-    marginTop: 10,
-    fontSize: 12,
-    color: '#B91C1C',
+  errorCard: {
+    marginTop: 8,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    gap: 10,
+  },
+  errorCardText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#7F1D1D',
     ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
+  errorActionBtn: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  errorActionText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#B91C1C',
+    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
+  },
   composerWrap: {
-    paddingBottom: 10,
+    paddingBottom: 12,
+    paddingTop: 4,
   },
   pendingAttachments: {
     paddingHorizontal: 12,
@@ -1114,8 +1299,8 @@ const styles = StyleSheet.create({
   composerRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 8,
-    paddingHorizontal: 12,
+    gap: 10,
+    paddingHorizontal: 14,
     paddingVertical: 10,
   },
   composerRowDragging: {
@@ -1125,15 +1310,16 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: COMPOSER_MIN_HEIGHT,
     maxHeight: COMPOSER_MAX_HEIGHT,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#E2E8F0',
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingTop: 8,
-    paddingBottom: 8,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
     fontSize: 14,
     lineHeight: 20,
     color: '#0F172A',
+    backgroundColor: '#FFFFFF',
     textAlignVertical: 'top',
     ...(Platform.OS === 'web' && {
       fontFamily: FONT,
@@ -1143,24 +1329,25 @@ const styles = StyleSheet.create({
     }),
   },
   attachButton: {
-    width: COMPOSER_BTN_SIZE + 4,
-    height: COMPOSER_BTN_SIZE + 4,
+    width: COMPOSER_BTN_SIZE,
+    height: COMPOSER_BTN_SIZE,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: (COMPOSER_BTN_SIZE + 4) / 2,
+    borderRadius: COMPOSER_BTN_SIZE / 2,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
   },
   sendButton: {
-    width: COMPOSER_BTN_SIZE + 4,
-    height: COMPOSER_BTN_SIZE + 4,
+    width: COMPOSER_BTN_SIZE,
+    height: COMPOSER_BTN_SIZE,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: (COMPOSER_BTN_SIZE + 4) / 2,
-    backgroundColor: '#1E293B',
+    borderRadius: COMPOSER_BTN_SIZE / 2,
+    backgroundColor: '#3B82F6',
   },
   sendButtonDisabled: {
-    opacity: 0.45,
+    backgroundColor: '#CBD5E1',
+    opacity: 1,
   },
 });

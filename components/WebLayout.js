@@ -4348,7 +4348,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           sectionNav={shellSectionNav}
           leftPane={{
             visible: isMessagesPaneOpen || isCreatePaneOpen || isDoodlePaneOpen,
-            width: 340,
+            width: isDoodlePaneOpen ? 400 : 360,
             content: isDoodlePaneOpen ? (
               <DoodleCommandPane
                 contextArea={doodlePaneContext || doodleCommandContext}
