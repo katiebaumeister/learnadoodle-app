@@ -1185,37 +1185,92 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const getPlannerViewStorageKey = () =>
     (authUserId ? `plannerDefaultView:${authUserId}` : null);
 
+  const PLANNER_VIEW_SWITCHER_OPTIONS = [
+    { key: 'board', label: 'Week' },
+    { key: 'month', label: 'Month' },
+    { key: 'year', label: 'Year' },
+    { key: 'tasks', label: 'List' },
+  ];
+
   // Get default view from localStorage. Returns null (→ Week) until we know
   // which user is logged in, so the first login can never inherit a stale view.
   const getDefaultView = () => {
     const key = getPlannerViewStorageKey();
     if (key && Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-      return window.localStorage.getItem(key) || null;
+      const stored = window.localStorage.getItem(key);
+      if (!stored) return null;
+      return sanitizeLegacyPlanYearView(stored);
     }
     return null;
   };
-  
-  // Set default view in localStorage
+
+  const [defaultView, setDefaultViewState] = useState(() => getDefaultView());
+
+  const resolvePlannerHomeView = () => (
+    sanitizeLegacyPlanYearView(getDefaultView() || defaultView || PLANNER_DEFAULT_CALENDAR_VIEW)
+  );
+
+  // Set default view in localStorage + React state
   const setDefaultView = (view) => {
+    const sanitized = sanitizeLegacyPlanYearView(view);
     const key = getPlannerViewStorageKey();
     if (key && Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem(key, view);
+      window.localStorage.setItem(key, sanitized);
     }
+    setDefaultViewState(sanitized);
   };
-  
-  const [defaultView, setDefaultViewState] = useState(() => getDefaultView());
-  
-  // Get current view from URL params, localStorage default, or week (board)
+
+  // Get current view from URL params, saved default, or week (board)
   const [currentView, setCurrentView] = useState(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
       const urlView = urlParams.get('view');
       if (urlView) return sanitizeLegacyPlanYearView(urlView);
-      // Always default to Week on load; ignore any previously remembered view.
-      return PLANNER_DEFAULT_CALENDAR_VIEW;
+      return sanitizeLegacyPlanYearView(getDefaultView() || PLANNER_DEFAULT_CALENDAR_VIEW);
     }
     return PLANNER_DEFAULT_CALENDAR_VIEW;
   });
+
+  const openPlannerDefaultViewMenu = useCallback((event) => {
+    if (Platform.OS !== 'web') return;
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    const clientX = event?.clientX ?? event?.nativeEvent?.clientX ?? 0;
+    const clientY = event?.clientY ?? event?.nativeEvent?.clientY ?? 0;
+    setShowViewDropdown(false);
+    setContextMenuPosition({ top: clientY, left: clientX });
+    setContextMenuView('chooser');
+  }, []);
+
+  const choosePlannerDefaultView = useCallback((viewKey) => {
+    const sanitized = sanitizeLegacyPlanYearView(viewKey);
+    const key = authUserId ? `plannerDefaultView:${authUserId}` : null;
+    if (key && Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(key, sanitized);
+    }
+    setDefaultViewState(sanitized);
+    setContextMenuView(null);
+    const label = PLANNER_VIEW_SWITCHER_OPTIONS.find((o) => o.key === sanitized)?.label
+      || sanitized;
+    setContextMenuPosition((pos) => {
+      setTooltip({
+        visible: true,
+        text: `${label} is now your default planner view`,
+        x: pos.left || 24,
+        y: Math.max(8, (pos.top || 80) - 36),
+      });
+      return pos;
+    });
+    if (typeof window !== 'undefined') {
+      window.setTimeout(() => {
+        setTooltip((prev) => (
+          prev.text?.includes('default planner view')
+            ? { visible: false, text: '', x: 0, y: 0 }
+            : prev
+        ));
+      }, 2200);
+    }
+  }, [authUserId]);
 
   // Close filter dropdown when clicking outside
   useEffect(() => {
@@ -1468,12 +1523,40 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, [showViewDropdown]);
 
-  // Close context menu when dropdown closes
+  // Close nested default-view context menu when the view dropdown closes
+  // (not the segment-control "chooser" menu, which opens independently).
   useEffect(() => {
     if (!showViewDropdown) {
-      setContextMenuView(null);
+      setContextMenuView((prev) => (prev && prev !== 'chooser' ? null : prev));
     }
   }, [showViewDropdown]);
+
+  // Close default planner view menu on click outside
+  useEffect(() => {
+    if (!contextMenuView || Platform.OS !== 'web' || typeof document === 'undefined') {
+      return undefined;
+    }
+
+    const handleClickOutside = (event) => {
+      if (event.button === 2 || event.which === 3) return;
+      const menuEl = document.getElementById('planner-default-view-menu')
+        || document.querySelector('[data-context-menu="view-default"]');
+      if (menuEl && typeof menuEl.contains === 'function' && menuEl.contains(event.target)) {
+        return;
+      }
+      setContextMenuView(null);
+    };
+
+    // Delay attach so the opening contextmenu/click doesn't immediately close it
+    const timeoutId = setTimeout(() => {
+      document.addEventListener('mousedown', handleClickOutside, true);
+    }, 0);
+
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener('mousedown', handleClickOutside, true);
+    };
+  }, [contextMenuView]);
 
   // Listen for openQuickReschedule event from right-click menu or conflict banner
   useEffect(() => {
@@ -1588,7 +1671,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         // Close context menu if clicking outside
         if (contextMenuView) {
           // Check if click is inside context menu
-          const contextMenuElement = document.querySelector('[data-context-menu="view-default"]');
+          const contextMenuElement = document.getElementById('planner-default-view-menu')
+            || document.querySelector('[data-context-menu="view-default"]');
           if (contextMenuElement && contextMenuElement.contains(event.target)) {
             return; // Click is inside context menu, don't close
           }
@@ -1677,7 +1761,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         if (urlView) {
           setCurrentView(sanitizeLegacyPlanYearView(urlView));
         } else {
-          setCurrentView(PLANNER_DEFAULT_CALENDAR_VIEW);
+          const key = authUserId ? `plannerDefaultView:${authUserId}` : null;
+          const stored = key && window.localStorage
+            ? window.localStorage.getItem(key)
+            : null;
+          setCurrentView(sanitizeLegacyPlanYearView(stored || PLANNER_DEFAULT_CALENDAR_VIEW));
         }
       };
       
@@ -1713,13 +1801,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, []);
 
-  // Once the logged-in user resolves, default the planner to Week on login.
-  // We never override an explicit ?view= deep link or manual selection.
+  // Once the logged-in user resolves, apply their saved default planner view.
+  // We never override an explicit ?view= deep link.
   useEffect(() => {
     if (!authUserId || Platform.OS !== 'web' || typeof window === 'undefined') return;
     const urlView = new URLSearchParams(window.location.search).get('view');
     if (urlView) return;
-    setCurrentView(PLANNER_DEFAULT_CALENDAR_VIEW);
+    const key = `plannerDefaultView:${authUserId}`;
+    const stored = window.localStorage?.getItem(key);
+    const next = sanitizeLegacyPlanYearView(stored || PLANNER_DEFAULT_CALENDAR_VIEW);
+    setDefaultViewState(stored ? sanitizeLegacyPlanYearView(stored) : null);
+    setCurrentView(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUserId]);
 
@@ -4656,7 +4748,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   
                   {/* View Mode - Segmented control with sliding highlight */}
                   <View
+                    onContextMenu={openPlannerDefaultViewMenu}
                     style={{
+                      position: 'relative',
                       flexDirection: 'row',
                       alignItems: 'center',
                       borderRadius: 9999,
@@ -4666,6 +4760,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       padding: 6,
                       flexShrink: 0,
                     }}
+                    {...(Platform.OS === 'web' && {
+                      title: 'Right-click to set default view',
+                    })}
                   >
                     {/* Sliding highlight — matches Learning / filter chip active blue */}
                     {showTopPlannerSegmentHighlight && viewChipSlider.width > 0 && (
@@ -4683,12 +4780,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         }}
                       />
                     )}
-                    {[
-                      { key: 'board', label: 'Week' },
-                      { key: 'month', label: 'Month' },
-                      { key: 'year', label: 'Year' },
-                      { key: 'tasks', label: 'List' },
-                    ].map((view) => {
+                    {PLANNER_VIEW_SWITCHER_OPTIONS.map((view) => {
                       const isActive = showTopPlannerSegmentHighlight && currentView === view.key;
                       return (
                         <TouchableOpacity
@@ -4710,7 +4802,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                             }
                             setActiveRightTool(null);
                             setCurrentView(viewValue);
-                            setDefaultView(viewValue);
+                            setContextMenuView(null);
                             if (Platform.OS === 'web') {
                               const url = new URL(window.location);
                               url.searchParams.set('view', viewValue);
@@ -4718,6 +4810,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                               window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: viewValue }));
                             }
                           }}
+                          {...(Platform.OS === 'web' ? {
+                            onContextMenu: (e) => openPlannerDefaultViewMenu(e),
+                            cursor: 'pointer',
+                          } : {})}
                           style={[
                             {
                               paddingVertical: 8,
@@ -4733,7 +4829,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                               borderColor: 'rgba(139, 92, 246, 0.5)',
                             },
                           ]}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                         >
                           <Text style={{
                             fontSize: 15,
@@ -4747,6 +4842,71 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       );
                     })}
                   </View>
+
+                  {contextMenuView && Platform.OS === 'web' ? (
+                    <View
+                      id="planner-default-view-menu"
+                      nativeID="planner-default-view-menu"
+                      data-context-menu="view-default"
+                      style={{
+                        position: 'fixed',
+                        top: contextMenuPosition.top,
+                        left: contextMenuPosition.left,
+                        minWidth: 220,
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: 'rgba(15,23,42,0.08)',
+                        paddingVertical: 6,
+                        zIndex: 2000,
+                        boxShadow: '0 8px 24px rgba(15, 23, 42, 0.14)',
+                      }}
+                    >
+                      <Text style={{
+                        fontSize: 11,
+                        fontWeight: '700',
+                        color: '#94A3B8',
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.4,
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                        fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      }}>
+                        Default planner view
+                      </Text>
+                      {PLANNER_VIEW_SWITCHER_OPTIONS.map((view) => {
+                        const selected = sanitizeLegacyPlanYearView(
+                          defaultView || PLANNER_DEFAULT_CALENDAR_VIEW,
+                        ) === view.key;
+                        return (
+                          <TouchableOpacity
+                            key={`default-${view.key}`}
+                            onPress={() => choosePlannerDefaultView(view.key)}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 12,
+                              paddingHorizontal: 12,
+                              paddingVertical: 10,
+                              backgroundColor: selected ? 'rgba(139, 92, 246, 0.08)' : 'transparent',
+                            }}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={{
+                              fontSize: 14,
+                              fontWeight: selected ? '700' : '500',
+                              color: selected ? 'rgba(99, 102, 241, 1)' : '#0F172A',
+                              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                            }}>
+                              {view.label}
+                            </Text>
+                            {selected ? <Check size={14} color="rgba(99, 102, 241, 1)" strokeWidth={2.5} /> : null}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  ) : null}
                   
                 </View>
 
