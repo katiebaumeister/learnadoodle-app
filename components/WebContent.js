@@ -34,7 +34,7 @@ import {
   softDeleteEventSeries,
 } from '../lib/utils/recurringEventUtils'
 import { isDayOffOrHolidayEvent } from '../lib/create/eventOpenRouting'
-import { dispatchOpenSchoolYearSettingsModal } from '../lib/planYearRetirement'
+import { dispatchOpenSchoolYearSettingsModal, dispatchOpenDayOffForPlannerEvent } from '../lib/planYearRetirement'
 import { getPlannerEventCategory } from '../lib/planner/plannerEventCategories'
 import {
   dispatchOpenSubjectClasswork,
@@ -3412,6 +3412,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                     holiday_type: type === 'break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY',
                     status: null,
                     source: 'planner_exclusion',
+                    exclusion_id: row?.id || null,
                     start_ts: `${dateKey}T12:00:00.000Z`,
                     end_ts: `${dateKey}T12:30:00.000Z`,
                     start: `${dateKey}T12:00:00.000Z`,
@@ -5433,7 +5434,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const openEventEditorWithScopePrompt = useCallback(async (ev, options = {}) => {
     if (!ev?.id) return;
     if (isDayOffOrHolidayEvent(ev)) {
-      dispatchOpenSchoolYearSettingsModal();
+      void dispatchOpenDayOffForPlannerEvent(ev, {
+        familyId,
+        exclusions: plannerExclusionsCache,
+      });
       return;
     }
     if (getPlannerEventCategory(ev) === 'Learning day') {
@@ -5479,7 +5483,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       event: ev,
       options: options || {},
     });
-  }, [dispatchOpenEventModal, familyId]);
+  }, [dispatchOpenEventModal, familyId, plannerExclusionsCache]);
   const [showNoteEditor, setShowNoteEditor] = useState(false)
   const [noteEditorProps, setNoteEditorProps] = useState({
     linkedEventId: null,
@@ -6264,6 +6268,17 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             dispatchOpenSchoolYearSettingsModal();
           },
         });
+      } else if (isDayOffOrHolidayEvent(ev)) {
+        menuItems.push({
+          text: 'Edit day off',
+          iconKey: 'edit2',
+          action: () => {
+            void dispatchOpenDayOffForPlannerEvent(ev, {
+              familyId,
+              exclusions: plannerExclusionsCache,
+            });
+          },
+        });
       } else {
       let eventId = ev._originalId || ev.originalId || ev.id;
       eventId = cleanPlannerEventId(eventId);
@@ -6616,7 +6631,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
     window.addEventListener('plannerEventContextMenu', handlePlannerEventContextMenu);
     return () => window.removeEventListener('plannerEventContextMenu', handlePlannerEventContextMenu);
-  }, [familyId, propChildren, hideChildHelpAndSubmissionActions]);
+  }, [familyId, propChildren, hideChildHelpAndSubmissionActions, plannerExclusionsCache]);
 
   // Load month data when showing planner tab so grid and events show on first open or after login.
   // Also prefetch adjacent months because month grid includes spillover days from previous/next month.
@@ -10210,6 +10225,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             holiday_type: holidayType,
             status: null,
             source: 'planner_exclusion',
+            exclusion_id: row?.id || null,
             start_ts: `${dateKey}T12:00:00.000Z`,
             end_ts: `${dateKey}T12:30:00.000Z`,
             start: `${dateKey}T12:00:00.000Z`,
@@ -10302,7 +10318,10 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         onEventSelect={(event) => {
           if (isDayOffOrHolidayEvent(event)) {
             if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              dispatchOpenSchoolYearSettingsModal();
+              void dispatchOpenDayOffForPlannerEvent(event, {
+                familyId,
+                exclusions: plannerExclusionsCache,
+              });
             }
             return;
           }

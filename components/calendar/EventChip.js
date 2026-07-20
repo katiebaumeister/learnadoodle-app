@@ -25,6 +25,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   const hasSnakeHolidayType = Object.prototype.hasOwnProperty.call(ev || {}, 'holiday_type');
   const holidayTypeRaw = hasSnakeHolidayType ? ev?.holiday_type : (ev?.holidayType ?? '');
   // US public holidays are not editable events, but remain clickable to open School Year Settings.
+  // Family day offs open Edit day off directly.
   const holidayType = String(holidayTypeRaw || '').toUpperCase();
   const isPublicHoliday = isPlannerPublicHolidayEvent(ev) || holidayType === 'GLOBAL_HOLIDAY';
   const isPlannerDayOffOrBreak = isPlannerFamilyDayOffEvent(ev);

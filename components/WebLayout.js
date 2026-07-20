@@ -110,6 +110,7 @@ import {
   dispatchOpenSubjectUnitsEditor,
   dispatchOpenSchoolYearSettings,
   dispatchOpenSchoolYearSettingsModal,
+  dispatchOpenDayOffForPlannerEvent,
   handleLegacyPlanYearRequest,
   handleLegacyBuildCurriculumRequest,
   sanitizeLegacyPlanYearView,
@@ -579,6 +580,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showDayOffModal, setShowDayOffModal] = useState(false);
   const [dayOffModalDate, setDayOffModalDate] = useState(null);
   const [dayOffModalSchoolYearLabel, setDayOffModalSchoolYearLabel] = useState(null);
+  const [dayOffModalEditRow, setDayOffModalEditRow] = useState(null);
   const [showPlannerCreateMenu, setShowPlannerCreateMenu] = useState(false);
   const [showLearningDaySubjectPicker, setShowLearningDaySubjectPicker] = useState(false);
   const [learningDaySetupChoice, setLearningDaySetupChoice] = useState({ visible: false, subject: null });
@@ -2915,7 +2917,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           (initialEvent && isDayOffOrHolidayEvent(initialEvent)) ||
           String(eventId || '').startsWith('holiday-')
         ) {
-          dispatchOpenSchoolYearSettingsModal();
+          void dispatchOpenDayOffForPlannerEvent(initialEvent || { id: eventId }, {
+            familyId: familyId || sessionRef.current?.family_id || null,
+          });
           return;
         }
 
@@ -2930,14 +2934,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 isDayOffOrHolidayEvent(initialEvent) ||
                 String(eventId || '').startsWith('holiday-')
               ) {
-                dispatchOpenSchoolYearSettingsModal();
+                void dispatchOpenDayOffForPlannerEvent(initialEvent || { id: eventId }, {
+                  familyId: familyId || sessionRef.current?.family_id || null,
+                });
                 return;
               }
               throw new Error('Event not found');
             }
 
             if (isDayOffOrHolidayEvent(eventRow)) {
-              dispatchOpenSchoolYearSettingsModal();
+              void dispatchOpenDayOffForPlannerEvent(eventRow, {
+                familyId: familyId || sessionRef.current?.family_id || null,
+              });
               return;
             }
 
@@ -2988,7 +2996,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               isDayOffOrHolidayEvent(initialEvent) ||
               String(eventId || '').startsWith('holiday-')
             ) {
-              dispatchOpenSchoolYearSettingsModal();
+              void dispatchOpenDayOffForPlannerEvent(initialEvent || { id: eventId }, {
+                familyId: familyId || sessionRef.current?.family_id || null,
+              });
               return;
             }
             setEventModalEventId(eventId);
@@ -3059,7 +3069,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             eventRow = await fetchEventForAssignmentEdit(resolvedEventId);
           }
           if (eventRow && isDayOffOrHolidayEvent(eventRow)) {
-            dispatchOpenSchoolYearSettings();
+            void dispatchOpenDayOffForPlannerEvent(eventRow, {
+              familyId: resolvedFamilyId,
+            });
             return;
           }
           if (eventRow && !isWorkAssignmentEditEvent(eventRow.event_type)) {
@@ -3296,6 +3308,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         || resolveSchoolYearLabelFromAnchor(defaultDate instanceof Date ? defaultDate : new Date());
       setDayOffModalSchoolYearLabel(schoolYearLabel);
       setDayOffModalDate(defaultDate);
+      setDayOffModalEditRow(event?.detail?.editRow || null);
       setShowDayOffModal(true);
     };
     window.addEventListener('openDayOffModal', handler);
@@ -3670,6 +3683,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const anchorDate = currentMonth || new Date();
       setDayOffModalSchoolYearLabel(resolveSchoolYearLabelFromAnchor(anchorDate));
       setDayOffModalDate(anchorDate);
+      setDayOffModalEditRow(null);
       setShowDayOffModal(true);
       return;
     }
@@ -5670,10 +5684,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             setShowDayOffModal(false);
             setDayOffModalDate(null);
             setDayOffModalSchoolYearLabel(null);
+            setDayOffModalEditRow(null);
           }}
           familyId={familyId}
           schoolYearLabel={dayOffModalSchoolYearLabel}
           defaultDate={dayOffModalDate}
+          editRow={dayOffModalEditRow}
         />
       ) : null}
 
