@@ -34,6 +34,7 @@ import CalendarEventCreateModal from '../create/CalendarEventCreateModal';
 import { dispatchOpenSubjectUnitsEditor } from '../../lib/subjectUnitsEditor';
 import IDCardView from '../profile/IDCardView';
 import PlannerSettingsContent from './PlannerSettingsContent';
+import SettingsChatsPanel from './SettingsChatsPanel';
 import FamilyApproachSelector from './FamilyApproachSelector';
 import ConfirmDialog from '../ConfirmDialog';
 import GoogleDriveImportModal from './GoogleDriveImportModal';
@@ -132,7 +133,7 @@ import { getPlanningModeLabel } from '../../lib/planningMode';
 import { dispatchPlanningModeChanged } from '../../lib/useFamilyPlanningMode';
 
 const SETTINGS_SIDEBAR_ACCOUNT_KEYS = ['profile', 'appearance', 'notifications'];
-const SETTINGS_SIDEBAR_HOUSEHOLD_KEYS = ['planner-settings', 'members', 'courses'];
+const SETTINGS_SIDEBAR_HOUSEHOLD_KEYS = ['planner-settings', 'members', 'courses', 'chats'];
 const SETTINGS_SIDEBAR_SUPPORT_KEYS = ['feedback'];
 const SETTINGS_SIDEBAR_LEGAL_KEYS = ['about', 'terms', 'privacy'];
 
@@ -143,6 +144,7 @@ const SETTINGS_SIDEBAR_ITEMS = [
   { key: 'planner-settings', label: SCHOOL_YEAR_SETTINGS_UI.navLabel },
   { key: 'members', label: 'Family' },
   { key: 'courses', label: 'Subjects' },
+  { key: 'chats', label: 'Messages' },
   { key: 'subscription', label: 'Billing', requiresSubscription: true },
   { key: 'feedback', label: 'Feedback' },
   { key: 'about', label: 'About' },
@@ -913,6 +915,39 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     })();
     return () => { cancelled = true; };
   }, [family?.id, familyId, propFamilyId, childrenFetchKey]);
+
+  // Doodle / other surfaces: refresh Family Members children list without a full page reload
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const refreshRoster = () => {
+      setChildrenFetchKey((k) => k + 1);
+      (async () => {
+        try {
+          const { data, error: err } = await getFamilyMembers({ force: true });
+          if (!err && data) {
+            setFamily(data);
+            onFamilyUpdate?.(data);
+          } else {
+            onFamilyUpdate?.();
+          }
+        } catch (_) {
+          onFamilyUpdate?.();
+        }
+      })();
+    };
+    const onRefreshChildren = () => refreshRoster();
+    const onRefreshFamily = (event) => {
+      // WebLayout uses refreshFamily with planning-mode detail only — skip those.
+      if (event?.detail?.default_planning_mode !== undefined) return;
+      refreshRoster();
+    };
+    window.addEventListener('refreshChildren', onRefreshChildren);
+    window.addEventListener('refreshFamily', onRefreshFamily);
+    return () => {
+      window.removeEventListener('refreshChildren', onRefreshChildren);
+      window.removeEventListener('refreshFamily', onRefreshFamily);
+    };
+  }, [onFamilyUpdate]);
 
   // Update profile when prop changes (always prefer logged-in user's email so child sees own email)
   useEffect(() => {
@@ -4355,6 +4390,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           </View>
         );
       }
+
+      case 'chats':
+        return (
+          <View style={[styles.mainContentInner, { flex: 1, minHeight: 0 }]}>
+            <SettingsChatsPanel
+              familyId={familyId || family?.id}
+              currentUserId={user?.id || null}
+              children={children}
+              userRole={propUserRole || profile?.role || 'parent'}
+              readOnly={isChildRestrictedView || isTutorViewer}
+            />
+          </View>
+        );
       
       case 'subscription':
         return (

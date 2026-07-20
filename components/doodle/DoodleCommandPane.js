@@ -10,14 +10,15 @@ import {
   View,
 } from 'react-native';
 import {
+  ArrowLeft,
   ArrowUp,
   FileText,
-  Pencil,
   Plus,
-  Search,
   X,
 } from 'lucide-react';
 import MessagesPaneCloseButton from '../messages/MessagesPaneCloseButton';
+import DmParticipantAvatar from '../messages/DmParticipantAvatar';
+import { DOODLE_HELPER_PARTICIPANT } from '../../lib/doodleHelperParticipant';
 import { useDoodleCommandStore } from '../../app/state/useDoodleCommandStore';
 import { DOODLE_PANE_STATUS, DOODLE_RESPONSE_TYPES } from '../../lib/assistant/commands/types';
 import { trackDoodleEvent } from '../../lib/assistant/commands/analytics';
@@ -27,6 +28,7 @@ import {
   makeAttachmentId,
   releaseDoodleAttachment,
 } from '../../lib/assistant/commands/attachmentHold';
+import { getEventDataTransfer, resolveWebDomNode } from '../ui/webDragDrop';
 import {
   ACCENT,
   ACCENT_TEXT,
@@ -60,6 +62,30 @@ function formatDateDivider(createdAt) {
 
 const MAX_ATTACHMENTS = 4;
 const ACCEPT_FILES = 'image/*,.pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.gif,.webp';
+const ACCEPT_EXT_RE = /\.(pdf|doc|docx|txt|png|jpe?g|gif|webp)$/i;
+
+function isAcceptedAttachmentFile(file) {
+  if (!file) return false;
+  const mime = String(file.type || '').toLowerCase();
+  if (
+    mime.startsWith('image/')
+    || mime === 'application/pdf'
+    || mime === 'text/plain'
+    || mime.includes('msword')
+    || mime.includes('wordprocessingml')
+    || mime.includes('officedocument')
+  ) {
+    return true;
+  }
+  return ACCEPT_EXT_RE.test(String(file.name || ''));
+}
+
+function dataTransferHasFiles(ev) {
+  const dt = getEventDataTransfer(ev);
+  if (!dt?.types) return false;
+  return Array.from(dt.types).includes('Files');
+}
+
 const COMPOSER_MIN_HEIGHT = 36;
 const COMPOSER_ATTACHED_MIN_HEIGHT = 56; // room for 2-line placeholder
 const COMPOSER_MAX_HEIGHT = 120;
@@ -193,35 +219,6 @@ function MessageBubble({ message, onSelectOption, onNavigate }) {
   );
 }
 
-const SUGGESTIONS = [
-  { icon: Plus, label: 'Create an event, assignment, etc', seed: 'Create ' },
-  { icon: Pencil, label: 'Edit an event, assignment, etc', seed: 'Edit ' },
-  { icon: Search, label: 'Ask how to do something', seed: 'How do I ' },
-];
-
-function SuggestionRow({ suggestion, disabled, onPress }) {
-  const [hovered, setHovered] = useState(false);
-  const Icon = suggestion.icon;
-  return (
-    <TouchableOpacity
-      style={[styles.suggestion, hovered && styles.suggestionHovered]}
-      onPress={onPress}
-      disabled={disabled}
-      activeOpacity={0.85}
-      accessibilityRole="button"
-      accessibilityLabel={suggestion.label}
-      {...(Platform.OS === 'web' ? {
-        onMouseEnter: () => setHovered(true),
-        onMouseLeave: () => setHovered(false),
-        cursor: disabled ? 'default' : 'pointer',
-      } : {})}
-    >
-      <Icon size={16} color="#64748B" strokeWidth={2} />
-      <Text style={styles.suggestionText}>{suggestion.label}</Text>
-    </TouchableOpacity>
-  );
-}
-
 function ActionPreviewCard({ pending, busy, onConfirm, onCancel }) {
   if (!pending || pending.type !== DOODLE_RESPONSE_TYPES.ACTION_PREVIEW) return null;
   return (
@@ -232,9 +229,6 @@ function ActionPreviewCard({ pending, busy, onConfirm, onCancel }) {
           <Text style={styles.previewLabel}>{field.label}</Text>
           <Text style={styles.previewValue}>{field.value}</Text>
         </View>
-      ))}
-      {(pending.warnings || []).map((warning) => (
-        <Text key={warning} style={styles.warning}>{warning}</Text>
       ))}
       <View style={styles.previewActions}>
         <TouchableOpacity style={styles.cancelBtn} onPress={onCancel} disabled={busy}>
@@ -259,12 +253,15 @@ export default function DoodleCommandPane({
   shellContextInput = null,
   roster = null,
   capabilities = null,
+  onBack = null,
   onClosePane,
   onNavigate = null,
 }) {
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
   const fileInputRef = useRef(null);
+  const paneRef = useRef(null);
+  const addFilesRef = useRef(null);
   const runSubmitRef = useRef(null);
   const [query, setQuery] = useState('');
   const [inputHeight, setInputHeight] = useState(COMPOSER_MIN_HEIGHT);
@@ -351,17 +348,20 @@ export default function DoodleCommandPane({
     }
   };
 
-  const addFiles = (fileList) => {
-    const files = Array.from(fileList || []).filter(Boolean);
-    if (!files.length) return;
-    const room = Math.max(0, MAX_ATTACHMENTS - draftAttachments.length);
-    if (room === 0 || files.length > room) {
-      showAttachCapHint();
+  const addFiles = useCallback((fileList) => {
+    const raw = Array.from(fileList || []).filter(Boolean);
+    const files = raw.filter(isAcceptedAttachmentFile);
+    if (!files.length) {
+      if (raw.length) showAttachCapHint();
+      return;
     }
-    if (room === 0) return;
     setDraftAttachments((prev) => {
       const slots = Math.max(0, MAX_ATTACHMENTS - prev.length);
-      if (slots === 0) return prev;
+      if (slots === 0) {
+        showAttachCapHint();
+        return prev;
+      }
+      if (files.length > slots) showAttachCapHint();
       const next = [...prev];
       for (const file of files.slice(0, slots)) {
         const attachmentId = makeAttachmentId();
@@ -381,7 +381,69 @@ export default function DoodleCommandPane({
       }
       return next;
     });
-  };
+  }, []);
+  addFilesRef.current = addFiles;
+
+  // Whole-pane drag-and-drop (native listeners — RN View props miss drops over ScrollView).
+  useEffect(() => {
+    if (Platform.OS !== 'web') return undefined;
+    let el = null;
+    let cleaned = false;
+    let onDragEnter;
+    let onDragOver;
+    let onDragLeave;
+    let onDrop;
+    const bind = () => {
+      if (cleaned) return;
+      el = resolveWebDomNode(paneRef.current);
+      if (!el) {
+        requestAnimationFrame(bind);
+        return;
+      }
+      onDragEnter = (ev) => {
+        if (!dataTransferHasFiles(ev) || busy) return;
+        ev.preventDefault();
+        setIsDragging(true);
+      };
+      onDragOver = (ev) => {
+        if (!dataTransferHasFiles(ev) || busy) return;
+        ev.preventDefault();
+        const dt = getEventDataTransfer(ev);
+        if (dt) dt.dropEffect = 'copy';
+        setIsDragging(true);
+      };
+      onDragLeave = (ev) => {
+        if (!dataTransferHasFiles(ev)) return;
+        const related = ev.relatedTarget;
+        if (related && typeof el.contains === 'function' && el.contains(related)) return;
+        setIsDragging(false);
+      };
+      onDrop = (ev) => {
+        if (!dataTransferHasFiles(ev)) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        setIsDragging(false);
+        if (busy) return;
+        const dt = getEventDataTransfer(ev);
+        addFilesRef.current?.(dt?.files);
+      };
+      el.addEventListener('dragenter', onDragEnter);
+      el.addEventListener('dragover', onDragOver);
+      el.addEventListener('dragleave', onDragLeave);
+      el.addEventListener('drop', onDrop);
+    };
+    bind();
+    return () => {
+      cleaned = true;
+      setIsDragging(false);
+      if (el && onDragEnter) {
+        el.removeEventListener('dragenter', onDragEnter);
+        el.removeEventListener('dragover', onDragOver);
+        el.removeEventListener('dragleave', onDragLeave);
+        el.removeEventListener('drop', onDrop);
+      }
+    };
+  }, [busy]);
 
   const removeDraftAttachment = (item) => {
     setDraftAttachments((prev) => prev.filter((a) => a.attachmentId !== item.attachmentId));
@@ -480,13 +542,53 @@ export default function DoodleCommandPane({
   const firstMessageAt = messages[0]?.createdAt || null;
 
   return (
-    <View style={styles.container}>
+    <View
+      ref={paneRef}
+      style={[styles.container, isDragging && styles.containerDragging]}
+    >
+      {Platform.OS === 'web' && isDragging ? (
+        <View style={styles.dropOverlay} pointerEvents="none">
+          <View style={styles.dropOverlayCard}>
+            <Text style={styles.dropOverlayText}>Drop files to attach</Text>
+            <Text style={styles.dropOverlaySubtext}>Images, PDF, Word, or text · up to {MAX_ATTACHMENTS}</Text>
+          </View>
+        </View>
+      ) : null}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Doodle</Text>
-        <MessagesPaneCloseButton
-          onPress={onClosePane}
-          accessibilityLabel="Close Doodle panel"
+        {typeof onBack === 'function' ? (
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={onBack}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Back to Messages"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <ArrowLeft size={20} color="#0F172A" />
+          </TouchableOpacity>
+        ) : null}
+        <DmParticipantAvatar
+          participant={DOODLE_HELPER_PARTICIPANT}
+          size={32}
+          style={styles.headerAvatar}
         />
+        <View style={styles.headerTitleRow}>
+          <Text style={styles.headerTitle} numberOfLines={1}>Doodle</Text>
+          <View
+            style={styles.headerBetaBadge}
+            pointerEvents="none"
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          >
+            <Text style={styles.headerBetaText}>beta</Text>
+          </View>
+        </View>
+        {typeof onClosePane === 'function' ? (
+          <MessagesPaneCloseButton
+            onPress={onClosePane}
+            accessibilityLabel="Close Doodle panel"
+          />
+        ) : null}
       </View>
 
       <ScrollView
@@ -530,21 +632,6 @@ export default function DoodleCommandPane({
       </ScrollView>
 
       <View style={styles.bottomDock}>
-        <View style={styles.suggestionList}>
-          {SUGGESTIONS.map((suggestion) => (
-            <SuggestionRow
-              key={suggestion.label}
-              suggestion={suggestion}
-              disabled={busy}
-              onPress={() => {
-                trackDoodleEvent('doodle_suggestion_selected', { area, label: suggestion.label });
-                setQuery(suggestion.seed || suggestion.label);
-                setTimeout(() => inputRef.current?.focus?.(), 0);
-              }}
-            />
-          ))}
-        </View>
-
         <View style={styles.composerWrap}>
           {Platform.OS === 'web' ? (
             <input
@@ -573,39 +660,13 @@ export default function DoodleCommandPane({
                   ))}
                 </View>
               ) : null}
-              {isDragging ? <Text style={styles.dropHint}>Drop file to attach</Text> : null}
+              {isDragging ? <Text style={styles.dropHint}>Drop anywhere in chat to attach</Text> : null}
               {attachCapHint ? (
                 <Text style={styles.attachCapHint}>Up to {MAX_ATTACHMENTS} files per message</Text>
               ) : null}
             </View>
           ) : null}
-          <View
-            style={[styles.composerRow, isDragging && styles.composerRowDragging]}
-            {...(Platform.OS === 'web' ? {
-              onDragEnter: (e) => {
-                e.preventDefault?.();
-                e.stopPropagation?.();
-                setIsDragging(true);
-              },
-              onDragOver: (e) => {
-                e.preventDefault?.();
-                e.stopPropagation?.();
-                setIsDragging(true);
-              },
-              onDragLeave: (e) => {
-                e.preventDefault?.();
-                e.stopPropagation?.();
-                setIsDragging(false);
-              },
-              onDrop: (e) => {
-                e.preventDefault?.();
-                e.stopPropagation?.();
-                setIsDragging(false);
-                const files = e?.dataTransfer?.files;
-                if (files?.length) addFiles(files);
-              },
-            } : {})}
-          >
+          <View style={[styles.composerRow, isDragging && styles.composerRowDragging]}>
             <TouchableOpacity
               style={styles.attachButton}
               onPress={pickFiles}
@@ -675,23 +736,96 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' ? { position: 'relative' } : null),
+  },
+  containerDragging: {
+    ...(Platform.OS === 'web' ? {
+      outlineWidth: 2,
+      outlineStyle: 'dashed',
+      outlineColor: ACCENT_TEXT,
+      outlineOffset: -4,
+    } : null),
+  },
+  dropOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.72)',
+    paddingHorizontal: 24,
+  },
+  dropOverlayCard: {
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderRadius: 16,
+    backgroundColor: ACCENT_SOFT_BG,
+    borderWidth: 1,
+    borderColor: ACCENT_CHIP_BORDER,
+  },
+  dropOverlayText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: ACCENT_TEXT,
+    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
+  },
+  dropOverlaySubtext: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748B',
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
+    gap: 8,
+  },
+  backButton: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerAvatar: {
+    flexShrink: 0,
+  },
+  headerTitleRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minWidth: 0,
   },
   headerTitle: {
-    flex: 1,
-    fontSize: 22,
-    fontWeight: '700',
+    flexShrink: 1,
+    fontSize: 15,
+    fontWeight: '600',
     color: '#0F172A',
+  },
+  headerBetaBadge: {
+    marginTop: -8,
+    marginLeft: -2,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: '#0F172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  headerBetaText: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.4,
+    textAlign: 'center',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -715,31 +849,6 @@ const styles = StyleSheet.create({
   },
   bottomDock: {
     backgroundColor: '#FFFFFF',
-  },
-  suggestionList: {
-    gap: 2,
-    paddingHorizontal: 8,
-    paddingTop: 8,
-  },
-  suggestion: {
-    minHeight: 40,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: 'transparent',
-  },
-  suggestionHovered: {
-    backgroundColor: '#F3F4F6',
-  },
-  suggestionText: {
-    flex: 1,
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#64748B',
-    ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
   thread: {
     gap: 12,
@@ -856,12 +965,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 13,
     color: '#1E293B',
-    ...(Platform.OS === 'web' && { fontFamily: FONT }),
-  },
-  warning: {
-    marginTop: 6,
-    fontSize: 12,
-    color: '#B45309',
     ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
   previewActions: {

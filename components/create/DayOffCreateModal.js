@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal, View, Text, TextInput, TouchableOpacity, Platform } from 'react-native';
 import { useToast } from '../Toast';
 import ConfirmDialog from '../ConfirmDialog';
@@ -15,6 +15,10 @@ import {
   deleteDayOff,
   saveDayOff,
 } from '../../lib/create/saveDayOffHelpers';
+import {
+  useModalStackElevation,
+  NESTED_OVER_PARENT_MODAL_Z,
+} from '../hooks/useModalStackElevation';
 
 export default function DayOffCreateModal({
   visible,
@@ -25,8 +29,12 @@ export default function DayOffCreateModal({
   schoolYearLabel,
   defaultDate = null,
   editRow = null,
+  /** When opened from School Year Settings (or another elevated modal), sit above that parent. */
+  stackZIndex = NESTED_OVER_PARENT_MODAL_Z,
 }) {
   const toast = useToast();
+  const overlayRef = useRef(null);
+  useModalStackElevation(overlayRef, visible, stackZIndex);
   const isEditMode = !!editRow?.id;
   const [title, setTitle] = useState('');
   const [startDate, setStartDate] = useState(new Date());
@@ -164,33 +172,34 @@ export default function DayOffCreateModal({
   return (
     <>
       <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-        <CreateModalShell
-          title={isEditMode ? 'Edit day off' : 'Day off'}
-          onClose={onClose}
-          onSave={isEditMode ? undefined : handleSave}
-          saving={submitting}
-          saveDisabled={!title.trim()}
-          saveLabel="Save changes"
-          validationBanner={validationBanner}
-          maxWidth={CREATE_EVENT_MODAL_MAX_WIDTH}
-          footer={isEditMode ? (
-            <ModalFooter
-              mode="edit"
-              primaryLabel={submitting ? 'Saving…' : 'Save changes'}
-              onCancel={onClose}
-              onPrimary={handleSave}
-              onDelete={() => {
-                if (!submitting && !deleting) setShowDeleteConfirm(true);
-              }}
-              destructiveLabel={deleting ? 'Deleting…' : 'Delete day off'}
-              accent="#9ECFFB"
-              disabled={submitting || deleting}
-              visuallyDisabled={!title.trim()}
-              loading={submitting}
-              onBlockedPrimary={() => validate()}
-            />
-          ) : undefined}
-        >
+        <View ref={overlayRef} style={{ flex: 1 }}>
+          <CreateModalShell
+            title={isEditMode ? 'Edit day off' : 'Day off'}
+            onClose={onClose}
+            onSave={isEditMode ? undefined : handleSave}
+            saving={submitting}
+            saveDisabled={!title.trim()}
+            saveLabel="Save changes"
+            validationBanner={validationBanner}
+            maxWidth={CREATE_EVENT_MODAL_MAX_WIDTH}
+            footer={isEditMode ? (
+              <ModalFooter
+                mode="edit"
+                primaryLabel={submitting ? 'Saving…' : 'Save changes'}
+                onCancel={onClose}
+                onPrimary={handleSave}
+                onDelete={() => {
+                  if (!submitting && !deleting) setShowDeleteConfirm(true);
+                }}
+                destructiveLabel={deleting ? 'Deleting…' : 'Delete day off'}
+                accent="#9ECFFB"
+                disabled={submitting || deleting}
+                visuallyDisabled={!title.trim()}
+                loading={submitting}
+                onBlockedPrimary={() => validate()}
+              />
+            ) : undefined}
+          >
           <View style={styles.formGroup}>
             <Text style={styles.fieldLabel}>
               Title<Text style={styles.required}> *</Text>
@@ -275,7 +284,8 @@ export default function DayOffCreateModal({
           </View>
 
           <AdditionalNotesSection value={notes} onChangeText={setNotes} />
-        </CreateModalShell>
+          </CreateModalShell>
+        </View>
       </Modal>
 
       <AppCalendarDatePickerModal

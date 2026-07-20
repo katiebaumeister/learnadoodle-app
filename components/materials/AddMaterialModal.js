@@ -51,6 +51,22 @@ const DIFFICULTY_OPTIONS = [
   { value: 'too_hard', label: 'Too Hard' },
 ];
 
+/** Children linked on a subject row; family-wide subjects → all children in the picker. */
+function childIdsConnectedToSubject(subject, childrenList = []) {
+  if (!subject) return [];
+  const available = (Array.isArray(childrenList) ? childrenList : [])
+    .map((c) => String(c?.id ?? c?.child_id ?? '').trim())
+    .filter(Boolean);
+  const availableSet = new Set(available);
+  const fromSubject = parseChildIds(subject.child_id ?? '')
+    .map((id) => String(id).trim())
+    .filter(Boolean);
+  if (fromSubject.length > 0) {
+    return fromSubject.filter((id) => availableSet.size === 0 || availableSet.has(id));
+  }
+  return available;
+}
+
 // Style constants matching TaskCreateModal
 const BG = '#ffffff';
 const FG = '#111827';
@@ -149,6 +165,8 @@ export default function AddMaterialModal({
   const [allSubjects, setAllSubjects] = useState([]);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const loadingSubjectsRef = useRef(false);
+  /** Once per edit open: fill Children from subject when material_children is empty */
+  const hydratedSubjectChildrenRef = useRef(null);
   const overlayRef = useRef(null);
   useModalStackElevation(overlayRef, visible, stackZIndex);
 
@@ -368,6 +386,7 @@ export default function AddMaterialModal({
   // Edit mode: populate form from material (no allSubjects in deps to avoid update loop)
   useEffect(() => {
     if (!visible || !material) return;
+    hydratedSubjectChildrenRef.current = null;
     setTitle(material.title || '');
     const tags = material.tags || [];
     const roleTag = tags.find(t => t.startsWith('role:'));
@@ -428,6 +447,28 @@ export default function AddMaterialModal({
     setSelectedSubjectId(subject ? subject.id : null);
   }, [visible, material?.id, material?.subject_key, postUploadMaterial?.id, postUploadMaterial?.subject_key, allSubjects]);
 
+  // Edit: if material has a subject but no material_children rows, default Children to that subject's learners
+  useEffect(() => {
+    if (!visible || !material) return;
+    if ((material.material_children || []).length > 0) return;
+    if (hydratedSubjectChildrenRef.current === material.id) return;
+    const sid = material.subject_id || selectedSubjectId;
+    if (!sid || sid === DRAFT_SUBJECT_MATERIAL_ID || !allSubjects.length) return;
+    const subject = allSubjects.find((s) => String(s.id) === String(sid));
+    if (!subject) return;
+    const connected = childIdsConnectedToSubject(subject, children);
+    hydratedSubjectChildrenRef.current = material.id;
+    if (connected.length) setSelectedChildIds(connected);
+  }, [
+    visible,
+    material?.id,
+    material?.subject_id,
+    material?.material_children,
+    selectedSubjectId,
+    allSubjects,
+    children,
+  ]);
+
   // Apply type (role) from parent as soon as the add-material sheet opens — before paint so chips match "Add syllabus" / "Add lesson plan".
   useLayoutEffect(() => {
     if (!visible || material || postUploadMaterial) return;
@@ -448,7 +489,20 @@ export default function AddMaterialModal({
         Array.isArray(defaultChildIds) && defaultChildIds.length > 0
           ? defaultChildIds
           : (defaultChildId ? [defaultChildId] : []);
-      setSelectedChildIds(initialChildIds);
+      if (initialChildIds.length) {
+        setSelectedChildIds(initialChildIds);
+      } else if (useDraft) {
+        const draftIds = normalizeDraftChildIds(draftSubjectForMaterial);
+        setSelectedChildIds(draftIds.length ? draftIds : []);
+      } else if (defaultSubjectId) {
+        const subject =
+          (propAllSubjects.length ? propAllSubjects : allSubjects).find(
+            (s) => String(s.id) === String(defaultSubjectId)
+          ) || null;
+        setSelectedChildIds(childIdsConnectedToSubject(subject, children));
+      } else {
+        setSelectedChildIds([]);
+      }
       setProviderName('');
       setProviderUrl(defaultProviderUrlTrimmed);
       setPurchaseDate(null);
@@ -1173,7 +1227,15 @@ export default function AddMaterialModal({
                       <TouchableOpacity
                         key={subject.id}
                         style={[styles.optionChip, isSelected && styles.optionChipSelected]}
-                        onPress={() => setSelectedSubjectId(isSelected ? null : subject.id)}
+                        onPress={() => {
+                          if (isSelected) {
+                            setSelectedSubjectId(null);
+                            return;
+                          }
+                          setSelectedSubjectId(subject.id);
+                          const connected = childIdsConnectedToSubject(subject, children);
+                          if (connected.length) setSelectedChildIds(connected);
+                        }}
                       >
                         <Text style={[styles.optionChipText, isSelected && styles.optionChipTextSelected]}>
                           {subject.name}
@@ -1192,6 +1254,7 @@ export default function AddMaterialModal({
             </View>
 
             {isEditingExistingMaterial ? (
+            <View style={styles.rateReviewSection}>
             <ModalSectionCard
               Icon={Star}
               title="Rate and review material"
@@ -1317,6 +1380,7 @@ export default function AddMaterialModal({
                 />
               </View>
             </ModalSectionCard>
+            </View>
             ) : null}
           </AppModalShell>
         </View>
@@ -1691,6 +1755,9 @@ const styles = StyleSheet.create({
   },
   formGroupBeforeSection: {
     marginBottom: 8,
+  },
+  rateReviewSection: {
+    marginTop: 10,
   },
   formGroupLast: {
     marginBottom: 0,

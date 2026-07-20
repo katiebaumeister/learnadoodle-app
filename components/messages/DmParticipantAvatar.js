@@ -1,7 +1,10 @@
 import React from 'react';
 import { View, Image, StyleSheet, Platform } from 'react-native';
-import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
+import { Sparkles } from 'lucide-react';
+import { LEARNADOODLE_ICON_ASSET, resolveBundledAvatarSource } from '../../assets/imageAssetMap';
+import { isDoodleHelperParticipant } from '../../lib/doodleHelperParticipant';
 import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
+import { ACCENT_SOFT_BG, ACCENT_TEXT } from '../create/shared/createModalStyles';
 
 export function childIdsFromDmParticipant(participant) {
   if (!participant) return [];
@@ -39,6 +42,29 @@ export default function DmParticipantAvatar({
   size = 48,
   style,
 }) {
+  if (isDoodleHelperParticipant(participant)) {
+    const iconSize = Math.max(18, Math.round(size * 0.48));
+    return (
+      <View
+        style={[
+          styles.doodleAvatar,
+          { width: size, height: size, borderRadius: size / 2 },
+          style,
+        ]}
+      >
+        {LEARNADOODLE_ICON_ASSET ? (
+          <Image
+            source={LEARNADOODLE_ICON_ASSET}
+            style={{ width: size * 0.72, height: size * 0.72, borderRadius: size * 0.2 }}
+            resizeMode="contain"
+          />
+        ) : (
+          <Sparkles size={iconSize} color={ACCENT_TEXT} strokeWidth={2} />
+        )}
+      </View>
+    );
+  }
+
   const childIds = childIdsFromDmParticipant(participant);
   const useCluster =
     (participant?.type === 'group' || participant?.type === 'multicast')
@@ -78,6 +104,13 @@ export default function DmParticipantAvatar({
 }
 
 const styles = StyleSheet.create({
+  doodleAvatar: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: ACCENT_SOFT_BG,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && { flexShrink: 0 }),
+  },
   clusterWrap: {
     alignItems: 'center',
     justifyContent: 'center',

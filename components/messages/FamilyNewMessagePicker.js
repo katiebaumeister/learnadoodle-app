@@ -13,6 +13,8 @@ import { ArrowLeft, ArrowRight, Check, Search } from 'lucide-react';
 import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
 import { participantKey } from '../../lib/familyDmClient';
+import { DOODLE_HELPER_PARTICIPANT } from '../../lib/doodleHelperParticipant';
+import DmParticipantAvatar from './DmParticipantAvatar';
 import {
   ACCENT,
   ACCENT_TEXT,
@@ -34,6 +36,8 @@ function avatarSourceForParticipant(participant) {
 
 export default function FamilyNewMessagePicker({
   participants = [],
+  showDoodleHelper = false,
+  onSelectDoodle = null,
   onBack,
   onNext,
 }) {
@@ -173,6 +177,36 @@ export default function FamilyNewMessagePicker({
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {showDoodleHelper
+          && typeof onSelectDoodle === 'function'
+          && (() => {
+            const q = String(searchText || '').trim().toLowerCase();
+            return !q || 'doodle'.includes(q) || q.includes('doodle') || q.includes('helper');
+          })()
+          ? (
+          <>
+            <Text style={styles.sectionLabel}>Helpers</Text>
+            <TouchableOpacity
+              style={styles.row}
+              onPress={() => onSelectDoodle()}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Message Doodle"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <DmParticipantAvatar
+                participant={DOODLE_HELPER_PARTICIPANT}
+                size={48}
+                style={styles.avatar}
+              />
+              <View style={styles.helperText}>
+                <Text style={styles.name} numberOfLines={1}>Doodle</Text>
+                <Text style={styles.helperSubtitle} numberOfLines={1}>Built-in helper</Text>
+              </View>
+            </TouchableOpacity>
+          </>
+          ) : null}
+
         <Text style={styles.sectionLabel}>
           {showDeliveryMode ? `Selected (${selectedParticipants.length})` : 'Family'}
         </Text>
@@ -339,6 +373,15 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
+  },
+  helperText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  helperSubtitle: {
+    fontSize: 12,
+    color: '#94A3B8',
   },
   name: {
     flex: 1,

@@ -2751,6 +2751,8 @@ export default function SubjectsPage({
       onClose={closePlanningPreferencesModal}
       familyId={familyId}
       initialSchoolYearLabel={planningPreferencesSchoolYearLabel}
+      familyApproach={storedPlanningMode ?? planningMode ?? family?.default_planning_mode ?? null}
+      featureSettings={family?.feature_settings || null}
       onSaved={() => loadSubjects()}
     />
   );

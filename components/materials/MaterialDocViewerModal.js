@@ -16,6 +16,10 @@ import { X, ExternalLink } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { getMaterial } from '../../lib/services/materialsClient';
+import {
+  useModalStackElevation,
+  NESTED_OVER_PARENT_MODAL_Z,
+} from '../hooks/useModalStackElevation';
 
 const isUUID = (str) => {
   if (!str || typeof str !== 'string') return false;
@@ -276,7 +280,11 @@ export default function MaterialDocViewerModal({
   title,
   viewerKind = 'pdf',
 }) {
-  if (!visible || !url) return null;
+  const overlayRef = useRef(null);
+  const show = Boolean(visible && url);
+  useModalStackElevation(overlayRef, show, NESTED_OVER_PARENT_MODAL_Z);
+
+  if (!show) return null;
 
   const openExternal = () => {
     if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener,noreferrer');
@@ -292,8 +300,8 @@ export default function MaterialDocViewerModal({
       : null;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.pdfModalOverlay}>
+    <Modal visible={show} transparent animationType="fade" onRequestClose={onClose}>
+      <View ref={overlayRef} style={styles.pdfModalOverlay}>
         <TouchableOpacity style={styles.pdfModalOverlayTouchable} activeOpacity={1} onPress={onClose} />
         <View style={styles.pdfModalContainer} onStartShouldSetResponder={() => true}>
           <View style={styles.pdfModalHeader}>
@@ -416,7 +424,7 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         bottom: 0,
-        zIndex: 10000,
+        zIndex: NESTED_OVER_PARENT_MODAL_Z,
       },
     }),
   },

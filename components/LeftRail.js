@@ -28,7 +28,7 @@ const PERMANENT_SIDEBAR_NAV_INSET = 28;
 const SIDEBAR_BRAND_LOGO_ASPECT = 1392 / 400;
 /** Symmetric bleed cancels nav inset so the wordmark spans the full sidebar width, centered. */
 const SIDEBAR_BRAND_LOGO_BLEED = PERMANENT_SIDEBAR_NAV_INSET;
-const SHOW_SIDEBAR_BETA_BADGE = true;
+const SHOW_SIDEBAR_BETA_BADGE = false;
 
 const resolveAvatarSource = (avatarKey) => {
   return resolveBundledAvatarSource(avatarKey);
@@ -67,13 +67,13 @@ const NAV_ITEM_DEFS = {
 };
 
 const PARENT_NAV_BUCKET_KEYS = [
-  ['home', 'messages', 'doodle'],
+  ['home', 'messages'],
   ['planner', 'subjects', 'materials'],
   ['profile'],
 ];
 
 const TUTOR_NAV_BUCKET_KEYS = [
-  ['home', 'messages', 'doodle'],
+  ['home', 'messages'],
   ['tutorStudents', 'planner'],
 ];
 
@@ -202,7 +202,6 @@ export default function LeftRail({
     if (item.key === 'planner' && effectivePermissions.canViewPlanner === false) return false;
     if ((item.key === 'subjects' || item.key === 'learning') && effectivePermissions.canViewSubjects === false) return false;
     if (item.key === 'materials' && effectivePermissions.canViewLibrary === false) return false;
-    if (item.key === 'doodle' && effectivePermissions.canUseDoodleBot === false) return false;
     if ((userRole === 'child' || userRole === 'student') && (item.key === 'records' || item.key === 'explore')) return false;
     // Feature toggle gating
     if ((item.key === 'subjects' || item.key === 'learning') && !capabilities.showLearning) return false;
@@ -216,7 +215,6 @@ export default function LeftRail({
     effectivePermissions.canViewLibrary,
     effectivePermissions.canViewPlanner,
     effectivePermissions.canViewSubjects,
-    effectivePermissions.canUseDoodleBot,
     hideProfileNav,
     userRole,
   ]);
@@ -240,7 +238,7 @@ export default function LeftRail({
     if (userRole === 'tutor') {
       bucketKeys = SHOW_MATERIALS_IN_SIDEBAR
         ? [
-            ['home', 'messages', 'doodle'],
+            ['home', 'messages'],
             ['tutorStudents', 'planner', 'materials'],
           ]
         : TUTOR_NAV_BUCKET_KEYS;

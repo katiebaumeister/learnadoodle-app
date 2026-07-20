@@ -80,6 +80,12 @@ class GuestMemberOut(BaseModel):
     tutor_permission_profile: Optional[str] = None
 
 
+class ClearFamilyMessagesIn(BaseModel):
+    family_id: str
+    clear_all: bool = False
+    message_ids: List[str] = Field(default_factory=list)
+
+
 class GuestMemberIn(BaseModel):
     role: str = Field(..., description="parent or tutor")
     display_name: str = Field(..., min_length=1, max_length=40)
@@ -1517,6 +1523,75 @@ async def update_family(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save family name: {str(e)}",
+        )
+
+
+@router.post("/clear_messages")
+async def clear_family_messages(
+    body: ClearFamilyMessagesIn,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Parent-only: clear family direct messages.
+    Uses service role. Keeps group threads so streams stay listed with 0 messages.
+    """
+    family_id = str(body.family_id or "").strip()
+    if not family_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing family id")
+
+    user_family_id = get_family_id_for_user(user["id"])
+    if not user_family_id or str(user_family_id) != family_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this family")
+
+    supabase = get_admin_client()
+    if not _user_is_parent_for_family(supabase, user["id"], family_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only parents can clear family messages",
+        )
+
+    deleted = 0
+    try:
+        # Delete messages only — keep group threads so streams stay listed at 0.
+        if body.clear_all:
+            msg_res = (
+                supabase.table("family_direct_messages")
+                .delete()
+                .eq("family_id", family_id)
+                .execute()
+            )
+            deleted = len(msg_res.data or []) if msg_res.data is not None else 0
+        else:
+            ids = [str(i).strip() for i in (body.message_ids or []) if str(i).strip()]
+            if not ids:
+                return {"ok": True, "deleted": 0}
+            for i in range(0, len(ids), 100):
+                chunk = ids[i : i + 100]
+                msg_res = (
+                    supabase.table("family_direct_messages")
+                    .delete()
+                    .eq("family_id", family_id)
+                    .in_("id", chunk)
+                    .execute()
+                )
+                deleted += len(msg_res.data or []) if msg_res.data is not None else 0
+
+        log_event(
+            "family.clear_messages.ok",
+            family_id=family_id,
+            user_id=user["id"],
+            clear_all=bool(body.clear_all),
+            deleted=deleted,
+        )
+        return {"ok": True, "deleted": deleted}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("family.clear_messages.error", family_id=family_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e) or "Could not clear messages",
         )
 
 

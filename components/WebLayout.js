@@ -1022,17 +1022,20 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [exportModalSubjectId, setExportModalSubjectId] = useState(null);
   const [exportModalSubjectName, setExportModalSubjectName] = useState(null);
 
-  const openPlannerExportModal = useCallback(() => {
+  const openPlannerExportModal = useCallback((detail = null) => {
     setTooltip({ visible: false, text: '', x: 0, y: 0 });
+    const opts = detail && typeof detail === 'object' ? detail : {};
     const m = currentMonth.getMonth();
     const y = currentMonth.getFullYear();
-    const firstDay = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+    const defaultStart = `${y}-${String(m + 1).padStart(2, '0')}-01`;
     const lastDay = new Date(y, m + 1, 0);
-    const lastDayStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
-    setExportStartDate(firstDay);
-    setExportEndDate(lastDayStr);
-    setExportModalSubjectId(null);
-    setExportModalSubjectName(null);
+    const defaultEnd = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
+    const start = String(opts.startDate || '').trim() || defaultStart;
+    const end = String(opts.endDate || '').trim() || defaultEnd;
+    setExportStartDate(start);
+    setExportEndDate(end);
+    setExportModalSubjectId(opts.subjectId ? String(opts.subjectId) : null);
+    setExportModalSubjectName(opts.subjectName ? String(opts.subjectName) : null);
     setShowExportModal(true);
   }, [currentMonth]);
 
@@ -3255,22 +3258,24 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           break;
         }
         case 'export-attendance': {
+          handleTabChange('planner', 'calendar');
           setActiveRightTool(null);
           setCurrentView('year');
           setDefaultView('year');
           if (Platform.OS === 'web') {
-            const url = new URL(window.location);
+            const url = new URL(window.location.href);
+            url.pathname = '/planner';
             url.searchParams.set('view', 'year');
-            window.history.pushState({}, '', url);
+            window.history.pushState({}, '', url.toString());
             window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'year' }));
             window.setTimeout(() => {
               window.dispatchEvent(new CustomEvent('openPlannerExportAttendance'));
-            }, 150);
+            }, 250);
           }
           break;
         }
         case 'export':
-          openPlannerExportModal();
+          openPlannerExportModal(event?.detail || null);
           break;
         default:
           break;
@@ -3278,7 +3283,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     };
     window.addEventListener('plannerSmartAction', handler);
     return () => window.removeEventListener('plannerSmartAction', handler);
-  }, [navigateToIntelligence, openPlannerExportModal]);
+  }, [navigateToIntelligence, openPlannerExportModal, handleTabChange]);
 
   // Legacy Plan Year entry points → School Year Settings, subject page, or units editor.
   useEffect(() => {
@@ -3350,17 +3355,26 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => window.removeEventListener('openPlanningPreferences', handler);
   }, [handleTabChange]);
 
-  // Listen for openExportPlannerModal event (e.g. from Subject detail Attendance section)
+  // Listen for openExportPlannerModal event (Subject pages, Doodle chat, etc.)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const handler = (e) => {
-      const detail = e?.detail || {};
-      setExportModalSubjectId(detail.subjectId || null);
-      setExportModalSubjectName(detail.subjectName || null);
-      setShowExportModal(true);
+      openPlannerExportModal(e?.detail || null);
     };
     window.addEventListener('openExportPlannerModal', handler);
     return () => window.removeEventListener('openExportPlannerModal', handler);
+  }, [openPlannerExportModal]);
+
+  // Same Export Attendance modal as Planner → Year → Smart Actions (also from Doodle chat).
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const handler = () => {
+      window.dispatchEvent(new CustomEvent('plannerSmartAction', {
+        detail: { modeId: 'export-attendance' },
+      }));
+    };
+    window.addEventListener('openAttendanceExportModal', handler);
+    return () => window.removeEventListener('openAttendanceExportModal', handler);
   }, []);
 
   // Subject-scoped units editor is handled by SubjectUnitsEditorHost (openSubjectUnitsEditor).
@@ -3695,6 +3709,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }
         return;
       }
+      // Doodle lives under Messages as a helper contact (left-rail tab removed).
       if (key === 'doodle') {
         if (isDoodlePaneOpen) {
           setIsDoodlePaneOpen(false);
@@ -3705,7 +3720,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setIsCreatePaneOpen(false);
           setDoodlePaneContext(null);
           setIsDoodlePaneOpen(true);
-          setActiveTopNav('doodle');
+          setActiveTopNav('messages');
         }
         return;
       }
@@ -3859,7 +3874,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setIsCreatePaneOpen(false);
       setDoodlePaneContext(context || null);
       setIsDoodlePaneOpen(true);
-      setActiveTopNav('doodle');
+      setActiveTopNav('messages');
     };
     const handleOpen = (event) => openPane(event?.detail?.context || null);
     const handleKeyDown = (event) => {
@@ -4332,6 +4347,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 shellContextInput={doodleShellContextInput}
                 roster={doodleRoster}
                 capabilities={doodleCapabilities}
+                onBack={() => {
+                  setIsDoodlePaneOpen(false);
+                  setDoodlePaneContext(null);
+                  setIsCreatePaneOpen(false);
+                  setIsMessagesPaneOpen(true);
+                  setActiveTopNav('messages');
+                }}
                 onClosePane={() => {
                   setIsDoodlePaneOpen(false);
                   setDoodlePaneContext(null);
@@ -4340,6 +4362,25 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 onNavigate={(link) => {
                   if (!link?.href) return;
                   const href = String(link.href);
+                  if (
+                    href === '#export-planner'
+                    || href.includes('action=export-planner')
+                  ) {
+                    openPlannerExportModal({
+                      subjectId: link.subjectId || link.entityId || null,
+                      subjectName: link.subjectName || link.label || null,
+                    });
+                    return;
+                  }
+                  if (
+                    href === '#export-attendance'
+                    || href.includes('action=export-attendance')
+                  ) {
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('openAttendanceExportModal'));
+                    }
+                    return;
+                  }
                   let section = null;
                   try {
                     const parsed = new URL(href, 'https://learnadoodle.local');
@@ -4364,6 +4405,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       || section === 'planner-settings'
                       || section === 'members'
                       || section === 'courses'
+                      || section === 'chats'
                     ) {
                       normalized = section;
                     }
@@ -4399,6 +4441,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 children={children}
                 active={isMessagesPaneOpen}
                 placement="left"
+                doodleEnabled={!childDoodleBotDisabled}
+                onOpenDoodle={() => {
+                  if (childDoodleBotDisabled) return;
+                  setIsMessagesPaneOpen(false);
+                  setIsCreatePaneOpen(false);
+                  setDoodlePaneContext(null);
+                  setIsDoodlePaneOpen(true);
+                  setActiveTopNav('messages');
+                }}
                 onClosePane={() => {
                   setIsMessagesPaneOpen(false);
                   syncTopNavFromActiveTab();
@@ -4911,7 +4962,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       </TouchableOpacity>
                       {PLANNER_EVENT_CATEGORIES.map(({ key, label, color }) => {
                         const isSelected = selectedEventTypes?.includes(key);
-                        const isDayOffFilter = key === 'Day off';
                         return (
                           <TouchableOpacity
                             key={key}
@@ -4923,10 +4973,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                               paddingHorizontal: 10,
                               borderRadius: 4,
                               backgroundColor: color,
-                              ...(isDayOffFilter ? {
-                                borderWidth: 1,
-                                borderColor: 'rgba(148, 163, 184, 0.35)',
-                              } : null),
                             }}
                             onPress={() => {
                               const current = selectedEventTypes || [];

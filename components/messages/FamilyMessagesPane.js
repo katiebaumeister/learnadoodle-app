@@ -8,7 +8,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { SquarePen } from 'lucide-react';
+import { SquarePen, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { getFamilyMembers } from '../../lib/apiClient';
 import {
@@ -16,6 +16,8 @@ import {
   buildFamilyDmParticipants,
   buildCompositeParticipant,
   buildPreviewMapFromUnified,
+  clearFamilyDirectMessages,
+  collectMessageIdsForParticipants,
   formatDmRelativeTime,
   getCachedFamilyDmInbox,
   mergeGroupThreadParticipants,
@@ -25,11 +27,67 @@ import {
   setCachedFamilyDmInbox,
   sortParticipantsByActivity,
 } from '../../lib/familyDmClient';
+import {
+  DOODLE_HELPER_PARTICIPANT,
+  doodleHelperParticipantKey,
+  isDoodleHelperParticipant,
+} from '../../lib/doodleHelperParticipant';
+import { AIConversationService } from '../../lib/aiConversationService';
+import { useOptionalDoodleCommandStore } from '../../app/state/useDoodleCommandStore';
 import FamilyDmChat from './FamilyDmChat';
 import FamilyNewMessagePicker from './FamilyNewMessagePicker';
 import MessagesPaneCloseButton from './MessagesPaneCloseButton';
 import DmParticipantAvatar from './DmParticipantAvatar';
+import ConfirmDialog from '../ConfirmDialog';
+import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { ACCENT_TEXT, ACCENT_CHIP_BORDER, ACCENT_SOFT_BG } from '../create/shared/createModalStyles';
+
+const DOODLE_FALLBACK_PREVIEW = 'Your built-in helper';
+
+function isWeakDoodlePreview(text) {
+  const t = String(text || '').trim();
+  return !t || t === DOODLE_FALLBACK_PREVIEW || t === 'No messages yet';
+}
+
+function previewFromDoodleMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return null;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const content = String(messages[i]?.content || '').replace(/\s+/g, ' ').trim();
+    if (content && !isWeakDoodlePreview(content)) {
+      return {
+        preview: content.slice(0, 80),
+        lastActivityAt: messages[i]?.createdAt || messages[i]?.timestamp || null,
+      };
+    }
+  }
+  return null;
+}
+
+function resolveContextMenuPoint(nativeEvent) {
+  let x =
+    nativeEvent?.clientX
+    ?? nativeEvent?.pageX
+    ?? nativeEvent?.x
+    ?? nativeEvent?.nativeEvent?.clientX
+    ?? nativeEvent?.nativeEvent?.pageX
+    ?? nativeEvent?.nativeEvent?.x;
+  let y =
+    nativeEvent?.clientY
+    ?? nativeEvent?.pageY
+    ?? nativeEvent?.y
+    ?? nativeEvent?.nativeEvent?.clientY
+    ?? nativeEvent?.nativeEvent?.pageY
+    ?? nativeEvent?.nativeEvent?.y;
+  if ((x == null || y == null) && nativeEvent?.target?.getBoundingClientRect) {
+    const rect = nativeEvent.target.getBoundingClientRect();
+    x = rect.left + rect.width / 2;
+    y = rect.top + rect.height / 2;
+  }
+  return {
+    x: Number.isFinite(x) ? x : 0,
+    y: Number.isFinite(y) ? y : 0,
+  };
+}
 
 export default function FamilyMessagesPane({
   familyId = null,
@@ -40,6 +98,8 @@ export default function FamilyMessagesPane({
   active = false,
   placement = 'left',
   onClosePane = null,
+  onOpenDoodle = null,
+  doodleEnabled = true,
 }) {
   const showPaneClose = placement === 'left' && typeof onClosePane === 'function';
   const cachedInbox = familyId ? getCachedFamilyDmInbox(familyId) : null;
@@ -53,9 +113,53 @@ export default function FamilyMessagesPane({
   const [familyMembersList, setFamilyMembersList] = useState(
     () => cachedInbox?.familyMembers || [],
   );
+  const doodleStore = useOptionalDoodleCommandStore();
+  const initialDoodleFromStore = previewFromDoodleMessages(doodleStore?.messages);
+  const initialDoodlePreview = String(
+    initialDoodleFromStore?.preview
+    || cachedInbox?.doodlePreview
+    || '',
+  ).trim();
+  const [doodlePreview, setDoodlePreview] = useState(() => initialDoodlePreview);
+  const [doodleLastActivityAt, setDoodleLastActivityAt] = useState(
+    () => initialDoodleFromStore?.lastActivityAt || cachedInbox?.doodleLastActivityAt || null,
+  );
+  // Only show the empty-state helper label after we know there is no real preview.
+  const [doodlePreviewSettled, setDoodlePreviewSettled] = useState(
+    () => !isWeakDoodlePreview(initialDoodlePreview),
+  );
+  const doodlePreviewRef = useRef(doodlePreview);
+  const [dmMessages, setDmMessages] = useState([]);
+  const [doodleConversationIds, setDoodleConversationIds] = useState([]);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [clearTarget, setClearTarget] = useState(null);
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState(null);
   const inboxReadyRef = useRef(Boolean(cachedInbox));
   const loadInFlightRef = useRef(false);
   const pendingInboxRefreshRef = useRef(false);
+  const showDoodleHelper = Boolean(doodleEnabled && typeof onOpenDoodle === 'function');
+  const canClearChats = viewerRole === 'parent';
+
+  useEffect(() => {
+    doodlePreviewRef.current = doodlePreview;
+  }, [doodlePreview]);
+
+  // Keep inbox preview in sync with the live Doodle pane (no helper ↔ message flicker).
+  useEffect(() => {
+    if (!showDoodleHelper) return;
+    const fromStore = previewFromDoodleMessages(doodleStore?.messages);
+    if (!fromStore) return;
+    setDoodlePreview(fromStore.preview);
+    if (fromStore.lastActivityAt) setDoodleLastActivityAt(fromStore.lastActivityAt);
+    setDoodlePreviewSettled(true);
+    if (familyId) {
+      setCachedFamilyDmInbox(familyId, {
+        doodlePreview: fromStore.preview,
+        doodleLastActivityAt: fromStore.lastActivityAt || null,
+      });
+    }
+  }, [doodleStore?.messages, familyId, showDoodleHelper]);
 
   const familyChildrenKey = useMemo(
     () => (familyChildren || [])
@@ -70,6 +174,7 @@ export default function FamilyMessagesPane({
     if (!familyId || !currentUserId) {
       setParticipants([]);
       setPreviewMap(new Map());
+      setDmMessages([]);
       inboxReadyRef.current = false;
       return;
     }
@@ -84,7 +189,10 @@ export default function FamilyMessagesPane({
       // Run the family-members API call concurrently with the message/thread
       // queries — none of the DB queries depend on the members payload, so there
       // is no reason to wait for it first (this was an extra sequential round trip).
-      const [familyResult, dmResult, assignmentsResult, threadsResult] = await Promise.all([
+      const doodleListPromise = showDoodleHelper
+        ? AIConversationService.listDoodleConversationsForClear(familyId, 20).catch(() => null)
+        : Promise.resolve(null);
+      const [familyResult, dmResult, assignmentsResult, threadsResult, doodleListed] = await Promise.all([
         getFamilyMembers(),
         queryFamilyDirectMessages(supabase, { familyId, limit: 300, ascending: false }),
         supabase
@@ -94,6 +202,7 @@ export default function FamilyMessagesPane({
           .order('updated_at', { ascending: false })
           .limit(300),
         queryFamilyDmThreads(supabase, { familyId, limit: 50 }),
+        doodleListPromise,
       ]);
 
       const familyData = familyResult?.data;
@@ -119,6 +228,7 @@ export default function FamilyMessagesPane({
       });
 
       const messages = !dmResult.error && Array.isArray(dmResult.data) ? dmResult.data : [];
+      setDmMessages(messages);
       if (dmResult.error) {
         console.warn('[FamilyMessagesPane] previews unavailable:', dmResult.error.message);
       }
@@ -156,14 +266,42 @@ export default function FamilyMessagesPane({
 
       setParticipants(sorted);
       setPreviewMap(previews);
+
+      let nextDoodlePreview = doodlePreviewRef.current;
+      let nextDoodleActivity = doodleLastActivityAt;
+      if (showDoodleHelper) {
+        if (Array.isArray(doodleListed)) {
+          setDoodleConversationIds(doodleListed.map((row) => row.id));
+          const latest = doodleListed[0] || null;
+          const incoming = String(latest?.preview || '').trim();
+          if (incoming && !isWeakDoodlePreview(incoming)) {
+            nextDoodlePreview = incoming;
+            nextDoodleActivity = latest?.updatedAt || null;
+            setDoodlePreview(incoming);
+            setDoodleLastActivityAt(nextDoodleActivity);
+          } else if (isWeakDoodlePreview(doodlePreviewRef.current)) {
+            // Never had a real preview — settle on the helper label once (no loading flash).
+            nextDoodlePreview = DOODLE_FALLBACK_PREVIEW;
+            nextDoodleActivity = null;
+            setDoodlePreview(DOODLE_FALLBACK_PREVIEW);
+            setDoodleLastActivityAt(null);
+          }
+          // else: keep existing strong preview (store/cache) even if this refresh is empty/weak
+          setDoodlePreviewSettled(true);
+        }
+        // doodleListed === null → fetch failed; keep whatever we already show
+      }
+
       setCachedFamilyDmInbox(familyId, {
         participants: sorted,
         previewMap: previews,
         familyMembers: members,
+        doodlePreview: nextDoodlePreview,
+        doodleLastActivityAt: nextDoodleActivity,
       });
       inboxReadyRef.current = true;
       setChatParticipant((prev) => {
-        if (!prev) return null;
+        if (!prev || isDoodleHelperParticipant(prev)) return prev;
         const key = participantKey(prev);
         const next = sorted.find((p) => participantKey(p) === key) || null;
         if (!next) return null;
@@ -191,7 +329,7 @@ export default function FamilyMessagesPane({
         loadInbox({ silent: true });
       }
     }
-  }, [currentUserId, familyChildrenKey, familyId, viewerChildId, viewerRole]);
+  }, [currentUserId, familyChildrenKey, familyId, showDoodleHelper, viewerChildId, viewerRole]);
 
   // Re-hydrate if familyId arrives/changes after mount (e.g. session warm-up).
   useEffect(() => {
@@ -201,6 +339,12 @@ export default function FamilyMessagesPane({
     setParticipants(cached.participants || []);
     setPreviewMap(new Map(cached.previewEntries || []));
     setFamilyMembersList(cached.familyMembers || []);
+    const cachedDoodle = String(cached.doodlePreview || '').trim();
+    if (!isWeakDoodlePreview(cachedDoodle)) {
+      setDoodlePreview(cachedDoodle);
+      setDoodleLastActivityAt(cached.doodleLastActivityAt || null);
+      setDoodlePreviewSettled(true);
+    }
     inboxReadyRef.current = true;
     setLoading(false);
   }, [familyId]);
@@ -214,13 +358,22 @@ export default function FamilyMessagesPane({
   useEffect(() => {
     if (!active || Platform.OS !== 'web' || typeof window === 'undefined') return;
     const refresh = () => { loadInbox({ silent: true }); };
+    const onDoodleCleared = () => {
+      setDoodlePreview(DOODLE_FALLBACK_PREVIEW);
+      setDoodleLastActivityAt(null);
+      setDoodleConversationIds([]);
+      setDoodlePreviewSettled(true);
+      loadInbox({ silent: true });
+    };
     window.addEventListener('childAssignmentsNeedRefresh', refresh);
     window.addEventListener('parentAssignmentsNeedRefresh', refresh);
     window.addEventListener('familyDirectMessagesUpdated', refresh);
+    window.addEventListener('doodleConversationsCleared', onDoodleCleared);
     return () => {
       window.removeEventListener('childAssignmentsNeedRefresh', refresh);
       window.removeEventListener('parentAssignmentsNeedRefresh', refresh);
       window.removeEventListener('familyDirectMessagesUpdated', refresh);
+      window.removeEventListener('doodleConversationsCleared', onDoodleCleared);
     };
   }, [active, loadInbox]);
 
@@ -233,23 +386,33 @@ export default function FamilyMessagesPane({
   }, [active, familyId, loadInbox]);
 
   const handleSelectParticipant = useCallback((participant) => {
+    if (isDoodleHelperParticipant(participant)) {
+      onOpenDoodle?.();
+      return;
+    }
     setChatParticipant(participant);
     setPaneView('chat');
-  }, []);
+  }, [onOpenDoodle]);
 
   const handleOpenNewMessage = useCallback(() => {
     setPaneView('picker');
   }, []);
 
   const handlePickerNext = useCallback(({ participants: selected, deliveryMode }) => {
+    if (Array.isArray(selected) && selected.some(isDoodleHelperParticipant) && selected.length === 1) {
+      onOpenDoodle?.();
+      return;
+    }
+    const withoutDoodle = (Array.isArray(selected) ? selected : [])
+      .filter((p) => !isDoodleHelperParticipant(p));
     const composite = buildCompositeParticipant(
-      selected,
+      withoutDoodle,
       deliveryMode === 'separate' ? 'separate' : 'group',
     );
     if (!composite) return;
     setChatParticipant(composite);
     setPaneView('chat');
-  }, []);
+  }, [onOpenDoodle]);
 
   const handleBackFromPicker = useCallback(() => {
     setPaneView('inbox');
@@ -261,8 +424,80 @@ export default function FamilyMessagesPane({
     loadInbox({ silent: true });
   }, [loadInbox]);
 
-  const listRows = useMemo(
-    () => participants.map((participant) => {
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null);
+  }, []);
+
+  const openThreadContextMenu = useCallback((participant, nativeEvent) => {
+    if (Platform.OS !== 'web' || !canClearChats || !participant) return;
+    nativeEvent?.preventDefault?.();
+    nativeEvent?.stopPropagation?.();
+    setContextMenu({
+      participant,
+      anchorPoint: resolveContextMenuPoint(nativeEvent),
+    });
+  }, [canClearChats]);
+
+  const handleClearChatConfirm = useCallback(async () => {
+    if (!clearTarget || !familyId || !canClearChats) return;
+    setClearing(true);
+    setClearError(null);
+    try {
+      if (isDoodleHelperParticipant(clearTarget)) {
+        const { error } = await AIConversationService.clearDoodleConversations(familyId, {
+          clearAll: true,
+          conversationIds: doodleConversationIds,
+        });
+        if (error) throw error;
+        setDoodlePreview(DOODLE_FALLBACK_PREVIEW);
+        setDoodleLastActivityAt(null);
+        setDoodleConversationIds([]);
+        setDoodlePreviewSettled(true);
+        if (familyId) {
+          setCachedFamilyDmInbox(familyId, {
+            doodlePreview: DOODLE_FALLBACK_PREVIEW,
+            doodleLastActivityAt: null,
+          });
+        }
+      } else {
+        const ids = collectMessageIdsForParticipants(
+          dmMessages,
+          [clearTarget],
+          currentUserId,
+        );
+        if (ids.length === 0) {
+          setClearTarget(null);
+          setClearing(false);
+          await loadInbox({ silent: true });
+          return;
+        }
+        const { error } = await clearFamilyDirectMessages({
+          familyId,
+          clearAll: false,
+          messageIds: ids,
+        });
+        if (error) throw error;
+      }
+      setClearTarget(null);
+      await loadInbox({ silent: true });
+    } catch (err) {
+      setClearError(err?.message || 'Could not clear chat.');
+      setClearTarget(null);
+    } finally {
+      setClearing(false);
+    }
+  }, [
+    canClearChats,
+    clearTarget,
+    currentUserId,
+    dmMessages,
+    doodleConversationIds,
+    familyId,
+    loadInbox,
+  ]);
+
+  const listRows = useMemo(() => {
+    const rows = participants.map((participant) => {
       const key = participantKey(participant);
       const meta = previewMap.get(key) || {};
       return {
@@ -271,9 +506,21 @@ export default function FamilyMessagesPane({
         preview: meta.preview || '',
         lastActivityAt: meta.lastActivityAt,
       };
-    }),
-    [participants, previewMap]
-  );
+    });
+    if (!showDoodleHelper) return rows;
+    const stablePreview = !isWeakDoodlePreview(doodlePreview)
+      ? doodlePreview
+      : (doodlePreviewSettled ? DOODLE_FALLBACK_PREVIEW : '');
+    return [
+      {
+        participant: DOODLE_HELPER_PARTICIPANT,
+        key: doodleHelperParticipantKey(),
+        preview: stablePreview,
+        lastActivityAt: doodleLastActivityAt,
+      },
+      ...rows,
+    ];
+  }, [doodleLastActivityAt, doodlePreview, doodlePreviewSettled, participants, previewMap, showDoodleHelper]);
 
   if (paneView === 'picker') {
     return (
@@ -284,6 +531,8 @@ export default function FamilyMessagesPane({
       ]}>
         <FamilyNewMessagePicker
           participants={participants}
+          showDoodleHelper={showDoodleHelper}
+          onSelectDoodle={() => onOpenDoodle?.()}
           onBack={handleBackFromPicker}
           onNext={handlePickerNext}
         />
@@ -365,7 +614,17 @@ export default function FamilyMessagesPane({
               style={styles.threadRow}
               onPress={() => handleSelectParticipant(participant)}
               activeOpacity={0.8}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              {...(Platform.OS === 'web' && {
+                cursor: 'pointer',
+                ...(canClearChats ? {
+                  onContextMenu: (e) => openThreadContextMenu(participant, e),
+                  onMouseDown: (e) => {
+                    const button = e?.button ?? e?.nativeEvent?.button;
+                    if (button !== 2) return;
+                    openThreadContextMenu(participant, e?.nativeEvent || e);
+                  },
+                } : {}),
+              })}
             >
               <DmParticipantAvatar
                 participant={participant}
@@ -388,6 +647,59 @@ export default function FamilyMessagesPane({
           ))}
         </ScrollView>
       )}
+
+      {canClearChats && contextMenu?.participant ? (
+        <Dropdown
+          visible
+          triggerRef={null}
+          anchorPoint={contextMenu.anchorPoint}
+          onClose={closeContextMenu}
+          placement="bottom-start"
+          width={180}
+          variant="context"
+        >
+          <DropdownItem
+            icon={Trash2}
+            label="Clear chat"
+            danger
+            onPress={() => {
+              const target = contextMenu.participant;
+              closeContextMenu();
+              setClearError(null);
+              setClearTarget(target);
+            }}
+          />
+        </Dropdown>
+      ) : null}
+
+      <ConfirmDialog
+        visible={Boolean(clearTarget)}
+        title="Clear this chat?"
+        message={
+          clearTarget
+            ? `This permanently removes your conversation with ${clearTarget.name || 'this contact'}. This cannot be undone.`
+            : ''
+        }
+        confirmLabel={clearing ? 'Clearing…' : 'Clear chat'}
+        cancelLabel="Cancel"
+        destructive
+        onCancel={() => {
+          if (!clearing) setClearTarget(null);
+        }}
+        onConfirm={() => {
+          if (!clearing) handleClearChatConfirm();
+        }}
+      />
+
+      <ConfirmDialog
+        visible={Boolean(clearError)}
+        title="Could not clear chat"
+        message={clearError || ''}
+        confirmLabel="OK"
+        hideCancel
+        onCancel={() => setClearError(null)}
+        onConfirm={() => setClearError(null)}
+      />
     </View>
   );
 }

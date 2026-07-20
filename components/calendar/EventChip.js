@@ -10,6 +10,8 @@ import {
   getPlannerEventCategory,
   getPlannerCategoryColorKey,
   getPlannerCategoryMeta,
+  isPlannerFamilyDayOffEvent,
+  isPlannerPublicHolidayEvent,
 } from '../../lib/planner/plannerEventCategories';
 import { getPlannerEventChipTitle } from '../../lib/planner/plannerLearningDayChip';
 
@@ -24,18 +26,14 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   const holidayTypeRaw = hasSnakeHolidayType ? ev?.holiday_type : (ev?.holidayType ?? '');
   // US public holidays are not editable events, but remain clickable to open School Year Settings.
   const holidayType = String(holidayTypeRaw || '').toUpperCase();
-  const isPublicHoliday = holidayType === 'GLOBAL_HOLIDAY';
-  const normalizedEventType = String(ev?.event_type || ev?.type || '').trim().toLowerCase();
-  const isLegacyHolidayWithoutSubtype = !holidayType && normalizedEventType === 'holiday';
-  const isPlannerDayOffOrBreak =
-    holidayType === 'CUSTOM_HOLIDAY' ||
-    holidayType === 'CUSTOM_BREAK' ||
-    ['day off', 'break'].includes(normalizedEventType) ||
-    isLegacyHolidayWithoutSubtype;
-  const isBlankHolidayChip = isPublicHoliday || isPlannerDayOffOrBreak;
-  const shouldHideCompletionControl = isBlankHolidayChip;
-  const hideChildDots = isBlankHolidayChip || ev?.hide_child_dots === true;
-  const effectiveHideTime = hideTime || isBlankHolidayChip;
+  const isPublicHoliday = isPlannerPublicHolidayEvent(ev) || holidayType === 'GLOBAL_HOLIDAY';
+  const isPlannerDayOffOrBreak = isPlannerFamilyDayOffEvent(ev);
+  // Only US public holidays stay blank; family day offs get the Day off tint.
+  const isBlankHolidayChip = isPublicHoliday;
+  const isNonInstructionalChip = isPublicHoliday || isPlannerDayOffOrBreak;
+  const shouldHideCompletionControl = isNonInstructionalChip;
+  const hideChildDots = isNonInstructionalChip || ev?.hide_child_dots === true;
+  const effectiveHideTime = hideTime || isNonInstructionalChip;
   const effectiveOnPress = onPress;
   const effectiveDisableTouchable = disableTouchable;
   
@@ -61,7 +59,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     [ev?.id, ev?.child_id, ev?.child_ids, children]
   );
 
-  // Get background color based on planner category (day-offs and US holidays stay blank)
+  // Get background color based on planner category (US public holidays stay blank)
   const getBackgroundColor = () => {
     if (isBlankHolidayChip) return 'transparent';
     return categoryMeta.color;
@@ -74,6 +72,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
 
   const getTitleColor = () => {
     if (isPlaceholder) return '#6B7280';
+    if (isPlannerDayOffOrBreak) return categoryMeta.chipText;
     return '#111827';
   };
 
@@ -630,7 +629,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
             >
               {chipTitle}
             </Text>
-            {displayTime && !hideTime && !isBlankHolidayChip && (
+            {displayTime && !hideTime && !isNonInstructionalChip && (
               <Text style={{
                 opacity: 1,
                 fontWeight: '400',
@@ -675,7 +674,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {chipTitle}
                 </Text>
-                {displayTime && !hideTime && !isBlankHolidayChip && (
+                {displayTime && !hideTime && !isNonInstructionalChip && (
                   <Text style={{ 
                     opacity: 1,
                     fontWeight: '400', // Lighter than title
@@ -745,7 +744,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {chipTitle}
                 </Text>
-                {displayTime && !hideTime && !isBlankHolidayChip && (
+                {displayTime && !hideTime && !isNonInstructionalChip && (
                   <Text style={{ 
                     opacity: 1,
                     fontWeight: '400', // Lighter than title

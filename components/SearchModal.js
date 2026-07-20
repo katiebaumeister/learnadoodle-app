@@ -188,6 +188,22 @@ export default function SearchModal({
     writeDoodleChatSession(user.id, familyId, doodleConversationIdRef.current || doodleConversationId, messages)
   }, [messages, doodleConversationId, familyId, user?.id, sessionHydrationComplete])
 
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined
+    const handler = () => {
+      try {
+        sessionStorage.removeItem(DOODLE_CHAT_SESSION_KEY)
+      } catch {
+        // ignore
+      }
+      setMessages([])
+      setDoodleConversationId(null)
+      doodleConversationIdRef.current = null
+    }
+    window.addEventListener('doodleConversationsCleared', handler)
+    return () => window.removeEventListener('doodleConversationsCleared', handler)
+  }, [])
+
   const initializeModal = async () => {
     if (!user?.id) return
     try {

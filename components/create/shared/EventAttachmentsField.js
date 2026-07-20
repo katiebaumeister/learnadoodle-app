@@ -1,8 +1,20 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
-import { ChevronDown, Plus } from 'lucide-react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
+  ActivityIndicator,
+  StyleSheet,
+} from 'react-native';
+import { ChevronDown, Eye, Plus } from 'lucide-react';
 import { getMaterials } from '../../../lib/services/materialsClient';
 import Dropdown from '../../ui/Dropdown';
+import MaterialDocViewerModal, {
+  inferMaterialViewerKind,
+  resolveMaterialDocViewerUrl,
+} from '../../materials/MaterialDocViewerModal';
 import { createModalStyles as styles, MUTED, PLACEHOLDER, ACCENT_TEXT, FG } from './createModalStyles';
 
 export default function EventAttachmentsField({
@@ -16,10 +28,19 @@ export default function EventAttachmentsField({
   selectedMaterialIds = [],
   onAddExistingMaterial = null,
   materialFilter = null,
+  /** When a single material is selected, click its name to open the in-app viewer. */
+  allowOpenSelected = true,
 }) {
   const [materials, setMaterials] = useState([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [openingSelected, setOpeningSelected] = useState(false);
+  const [viewer, setViewer] = useState({
+    visible: false,
+    url: '',
+    title: '',
+    viewerKind: 'pdf',
+  });
   const triggerRef = useRef(null);
 
   useEffect(() => {
@@ -58,23 +79,93 @@ export default function EventAttachmentsField({
       ? placeholder
       : (selected?.title || selected?.name || placeholder);
 
+  const canOpenSelected = Boolean(
+    allowOpenSelected
+    && !allowMultiple
+    && selected?.id
+    && !loading
+  );
+
+  const closeViewer = useCallback(() => {
+    setViewer({ visible: false, url: '', title: '', viewerKind: 'pdf' });
+  }, []);
+
+  const openSelectedMaterial = useCallback(async (event) => {
+    if (Platform.OS === 'web' && event?.stopPropagation) {
+      event.stopPropagation();
+    }
+    if (!selected?.id || openingSelected) return;
+    setOpeningSelected(true);
+    try {
+      const resolved = await resolveMaterialDocViewerUrl(selected.id);
+      if (resolved.error || !resolved.url) {
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          console.warn('[EventAttachmentsField]', resolved.error || 'Unable to open attachment.');
+        }
+        return;
+      }
+      setViewer({
+        visible: true,
+        url: resolved.url,
+        title: resolved.title || selected.title || selected.name || 'Attachment',
+        viewerKind: resolved.viewerKind || inferMaterialViewerKind(selected),
+      });
+    } finally {
+      setOpeningSelected(false);
+    }
+  }, [openingSelected, selected]);
+
   return (
     <View style={styles.formGroup}>
       {label != null && label !== '' ? (
         <Text style={styles.fieldLabel}>{label}</Text>
       ) : null}
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-        <TouchableOpacity
-          ref={triggerRef}
-          style={[styles.select, { flex: 1 }]}
-          onPress={() => setOpen((v) => !v)}
-          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-        >
-          <Text style={[styles.selectText, (!selected || allowMultiple) && !loading && styles.selectPlaceholder, loading && { color: PLACEHOLDER }]}>
-            {selectLabel}
-          </Text>
-          <ChevronDown size={16} color={MUTED} />
-        </TouchableOpacity>
+        {canOpenSelected ? (
+          <View ref={triggerRef} style={[styles.select, localStyles.selectedSelectRow, { flex: 1 }]}>
+            <TouchableOpacity
+              style={localStyles.openSelectedHit}
+              onPress={openSelectedMaterial}
+              disabled={openingSelected}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${selectLabel}`}
+              {...(Platform.OS === 'web' && { cursor: openingSelected ? 'default' : 'pointer' })}
+            >
+              {openingSelected ? (
+                <ActivityIndicator size="small" color={ACCENT_TEXT} />
+              ) : (
+                <Eye size={16} color={ACCENT_TEXT} />
+              )}
+              <Text
+                style={[styles.selectText, localStyles.openSelectedText]}
+                numberOfLines={1}
+              >
+                {selectLabel}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={localStyles.chevronHit}
+              onPress={() => setOpen((v) => !v)}
+              accessibilityRole="button"
+              accessibilityLabel="Change attachment"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <ChevronDown size={16} color={MUTED} />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity
+            ref={triggerRef}
+            style={[styles.select, { flex: 1 }]}
+            onPress={() => setOpen((v) => !v)}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={[styles.selectText, (!selected || allowMultiple) && !loading && styles.selectPlaceholder, loading && { color: PLACEHOLDER }]}>
+              {selectLabel}
+            </Text>
+            <ChevronDown size={16} color={MUTED} />
+          </TouchableOpacity>
+        )}
         {onAddNew ? (
           <TouchableOpacity
             onPress={onAddNew}
@@ -150,6 +241,14 @@ export default function EventAttachmentsField({
           })}
         </ScrollView>
       </Dropdown>
+
+      <MaterialDocViewerModal
+        visible={viewer.visible}
+        onClose={closeViewer}
+        url={viewer.url}
+        title={viewer.title}
+        viewerKind={viewer.viewerKind}
+      />
     </View>
   );
 }
@@ -160,3 +259,30 @@ export function materialIdsFromSelection(selectedMaterialId) {
   }
   return selectedMaterialId ? [String(selectedMaterialId)] : [];
 }
+
+const localStyles = StyleSheet.create({
+  selectedSelectRow: {
+    paddingRight: 4,
+    gap: 4,
+  },
+  openSelectedHit: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 0,
+    paddingVertical: 2,
+  },
+  openSelectedText: {
+    flex: 1,
+    minWidth: 0,
+    color: FG,
+  },
+  chevronHit: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+  },
+});

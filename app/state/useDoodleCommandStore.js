@@ -2,6 +2,7 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useReducer,
   useRef,
@@ -93,6 +94,17 @@ function reducer(state, action) {
         pendingClarification: null,
         error: null,
       };
+    case 'CLEAR_HISTORY':
+      return {
+        ...state,
+        conversationId: null,
+        messages: [],
+        pendingResponse: null,
+        pendingClarification: null,
+        error: null,
+        status: DOODLE_PANE_STATUS.IDLE,
+        hydrated: true,
+      };
     default:
       return state;
   }
@@ -156,6 +168,21 @@ export function DoodleCommandProvider({ children }) {
       // ignore
     }
     return null;
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handler = (event) => {
+      const ids = (event?.detail?.conversationIds || []).map(String);
+      const currentId = stateRef.current.conversationId
+        ? String(stateRef.current.conversationId)
+        : null;
+      if (!currentId || ids.includes(currentId) || ids.length === 0) {
+        dispatch({ type: 'CLEAR_HISTORY' });
+      }
+    };
+    window.addEventListener('doodleConversationsCleared', handler);
+    return () => window.removeEventListener('doodleConversationsCleared', handler);
   }, []);
 
   const hydrateConversation = useCallback(async (familyId) => {
@@ -233,6 +260,7 @@ export function DoodleCommandProvider({ children }) {
         context: current.context,
         roster,
         conversationId: stateRef.current.conversationId,
+        recentMessages: stateRef.current.messages || [],
         pendingClarification: current.pendingClarification,
         clarificationOption: clarificationOption || null,
         attachments: attachmentList,
