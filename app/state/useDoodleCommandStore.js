@@ -69,7 +69,12 @@ function reducer(state, action) {
       return {
         ...state,
         pendingResponse: action.pendingResponse,
-        pendingClarification: action.pendingClarification ?? state.pendingClarification,
+        // Use undefined (not null) as “leave unchanged”. null must clear clarification
+        // after an action preview, otherwise follow-ups like “also lesson 1” are
+        // treated as itemId and become invalid UUIDs.
+        pendingClarification: Object.prototype.hasOwnProperty.call(action, 'pendingClarification')
+          ? action.pendingClarification
+          : state.pendingClarification,
         status: action.status || state.status,
       };
     case 'CLEAR_PENDING':
@@ -85,6 +90,7 @@ function reducer(state, action) {
         status: DOODLE_PANE_STATUS.ERROR,
         error: action.error,
         pendingResponse: null,
+        pendingClarification: null,
       };
     case 'RESET_TRANSIENT':
       return {
@@ -263,6 +269,12 @@ export function DoodleCommandProvider({ children }) {
         recentMessages: stateRef.current.messages || [],
         pendingClarification: current.pendingClarification,
         clarificationOption: clarificationOption || null,
+        pendingAction: (
+          current.status === DOODLE_PANE_STATUS.AWAITING_CONFIRMATION
+          && current.pendingResponse?.command
+        )
+          ? current.pendingResponse
+          : null,
         attachments: attachmentList,
       });
 

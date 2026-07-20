@@ -933,51 +933,13 @@ function ClassworkPanelHeader({
   );
 }
 
-function SubjectEmptyClassworkState({ onAddUnit, onAddLesson, onAddAssignment }) {
+function SubjectEmptyClassworkState() {
   return (
     <View style={styles.emptyWrap}>
       <Text style={styles.emptyHeading}>This subject is empty</Text>
       <Text style={styles.emptySubtext}>
         Add a unit, lesson, or assignment to start building classwork.
       </Text>
-      <View style={styles.emptyActionsRow}>
-        {onAddUnit ? (
-          <TouchableOpacity
-            style={styles.emptyActionBtn}
-            onPress={onAddUnit}
-            accessibilityLabel="Add unit"
-            activeOpacity={0.85}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Plus size={16} color="#334155" strokeWidth={2.25} />
-            <Text style={styles.actionPillBtnText}>Add unit</Text>
-          </TouchableOpacity>
-        ) : null}
-        {onAddLesson ? (
-          <TouchableOpacity
-            style={styles.emptyActionBtn}
-            onPress={onAddLesson}
-            accessibilityLabel="Add lesson"
-            activeOpacity={0.85}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Plus size={16} color="#334155" strokeWidth={2.25} />
-            <Text style={styles.actionPillBtnText}>Add lesson</Text>
-          </TouchableOpacity>
-        ) : null}
-        {onAddAssignment ? (
-          <TouchableOpacity
-            style={styles.emptyActionBtn}
-            onPress={onAddAssignment}
-            accessibilityLabel="Add assignment"
-            activeOpacity={0.85}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Plus size={16} color="#334155" strokeWidth={2.25} />
-            <Text style={styles.actionPillBtnText}>Add assignment</Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
     </View>
   );
 }
@@ -1560,20 +1522,6 @@ export default function SubjectClassworkSection({
     toast,
   ]);
 
-  const handleAddLessonFromEmpty = useCallback(() => {
-    const currentUnits = pendingUnitsRef.current ?? units;
-    const firstUnit = (currentUnits || []).find((u) => u?.id != null);
-    if (!firstUnit) {
-      handleAddUnit();
-      return;
-    }
-    handleAddLesson({
-      unitId: firstUnit.id,
-      title: firstUnit.title,
-      lessons: firstUnit.lessons || [],
-    });
-  }, [units, handleAddUnit, handleAddLesson]);
-
   const handleEditLesson = useCallback(async () => {
     if (!onManageUnits) return;
     if (structureSaveTimerRef.current) {
@@ -2091,7 +2039,7 @@ export default function SubjectClassworkSection({
         <ScrollView
           ref={panelScrollRef}
           style={styles.panelScroll}
-          contentContainerStyle={styles.wrap}
+          contentContainerStyle={[styles.wrap, styles.wrapEmptyExpanded]}
           showsVerticalScrollIndicator
           keyboardShouldPersistTaps="handled"
         >
@@ -2103,13 +2051,8 @@ export default function SubjectClassworkSection({
               draggingLearningDayId={draggingLearningDayId}
               onDragStartLearningDay={handleLearningDayDragStart}
             />
-          ) : null}
-          {isParentViewer ? (
-            <SubjectEmptyClassworkState
-              onAddUnit={handleAddUnit}
-              onAddLesson={handleAddLessonFromEmpty}
-              onAddAssignment={onCreateAssignment}
-            />
+          ) : isParentViewer ? (
+            <SubjectEmptyClassworkState />
           ) : (
             <EmptyClassworkState isParentViewer={isParentViewer} />
           )}
@@ -2272,12 +2215,8 @@ export default function SubjectClassworkSection({
         </ClassworkUnitCard>
       ) : null}
 
-      {!hasUnitsContent && isParentViewer ? (
-        <SubjectEmptyClassworkState
-          onAddUnit={handleAddUnit}
-          onAddLesson={handleAddLessonFromEmpty}
-          onAddAssignment={onCreateAssignment}
-        />
+      {!hasUnitsContent && !hasScheduledEmptyDays && isParentViewer ? (
+        <SubjectEmptyClassworkState />
       ) : model.units.map((unit) => {
         const peerItems = buildUnitPeerItems(unit, model.eventById);
         if (peerItems.length === 0) return null;
@@ -2590,6 +2529,10 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
     gap: 26,
   },
+  wrapEmptyExpanded: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
   sectionBlock: {
     gap: 12,
     overflow: 'visible',
@@ -2847,48 +2790,32 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   emptyWrap: {
-    flex: 1,
-    alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 48,
-    gap: 10,
-    minHeight: 280,
+    alignItems: 'center',
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    minHeight: 240,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   emptyHeading: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: CLASSWORK_FG,
-    letterSpacing: -0.2,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 4,
     textAlign: 'center',
     ...CLASSWORK_LEAGUE_FONT,
   },
   emptySubtext: {
     fontSize: 14,
+    fontWeight: '400',
     lineHeight: 20,
-    color: CLASSWORK_MUTED,
-    maxWidth: 360,
+    color: '#6B7280',
+    maxWidth: 320,
     textAlign: 'center',
-    marginBottom: 8,
     ...CLASSWORK_BODY_FONT,
-  },
-  emptyActionsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  emptyActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
   },
   emptyScheduleWrap: {
     alignItems: 'center',

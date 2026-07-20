@@ -3637,8 +3637,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       )
       .map((childId) => String(childId || '').trim())
       .filter(Boolean);
-    if (subject?.child_id) {
-      ids.push(String(subject.child_id));
+    if (subject?.child_id != null && String(subject.child_id).trim()) {
+      String(subject.child_id)
+        .split(/[;,]/)
+        .map((id) => id.trim())
+        .filter(Boolean)
+        .forEach((id) => ids.push(id));
     }
     return [...new Set(ids)];
   }, []);
@@ -4166,10 +4170,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     resolvedShellUserRole,
     doodleEnabledFeatures,
   ]);
-  const doodleRoster = useMemo(() => ({
-    children: children || [],
-    subjects: subjects || fullSubjects || [],
-  }), [children, subjects, fullSubjects]);
+  const doodleRoster = useMemo(() => {
+    // Prefer fullSubjects so child_id / schedule fields are available for Doodle defaults.
+    const subjectRows = (Array.isArray(fullSubjects) && fullSubjects.length > 0)
+      ? fullSubjects
+      : (subjects || []);
+    return {
+      children: children || [],
+      subjects: subjectRows,
+    };
+  }, [children, subjects, fullSubjects]);
   const doodleCapabilities = useMemo(() => {
     const perms = familyUserControls.effectivePermissions || {};
     const canMarkAttendance = resolvedShellUserRole === 'parent'

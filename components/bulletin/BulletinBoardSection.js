@@ -59,7 +59,10 @@ import BulletinLearnadoodleBody from './BulletinLearnadoodleBody';
 import BulletinStreamCard from './BulletinStreamCard';
 import BulletinStreamDetailModal from './BulletinStreamDetailModal';
 import { mergeBulletinStreamItems, STREAM_CARD_TYPE } from '../../lib/bulletinStreamModel';
-import { SUBJECT_GETTING_STARTED_SYSTEM_KIND } from '../../lib/subjectGettingStartedBulletin';
+import {
+  SUBJECT_GETTING_STARTED_SYSTEM_KIND,
+  seedSubjectGettingStartedBulletinPost,
+} from '../../lib/subjectGettingStartedBulletin';
 import {
   formatAttachmentLabel,
   normalizeBulletinAttachmentMaterial,
@@ -932,6 +935,36 @@ export default function BulletinBoardSection({
     window.addEventListener('refreshBulletinBoard', handler);
     return () => window.removeEventListener('refreshBulletinBoard', handler);
   }, [familyId, filterSubjectId, loadPosts]);
+
+  // Backfill Learnadoodle welcome post for subjects created before / outside Add Subject modal.
+  useEffect(() => {
+    if (!familyId || !filterSubjectId || postsLoading) return undefined;
+    const alreadyHasWelcome = posts.some(
+      (post) => String(post.subjectId || '') === String(filterSubjectId)
+        && post.systemKind === SUBJECT_GETTING_STARTED_SYSTEM_KIND,
+    );
+    if (alreadyHasWelcome) return undefined;
+
+    let cancelled = false;
+    const subjectName = subjectById.get(String(filterSubjectId)) || 'your subject';
+    (async () => {
+      try {
+        const result = await seedSubjectGettingStartedBulletinPost({
+          familyId,
+          subjectId: filterSubjectId,
+          subjectName,
+        });
+        if (cancelled || result?.skipped || result?.error || !result?.data) return;
+        loadPostsRef.current?.();
+      } catch (err) {
+        console.warn('[BulletinBoardSection] subject welcome seed failed:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [familyId, filterSubjectId, posts, postsLoading, subjectById]);
 
   useEffect(() => {
     if (filterSubjectId) {

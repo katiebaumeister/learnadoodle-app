@@ -653,12 +653,21 @@ export default function SubjectDetailPage({
 
   useEffect(() => {
     if (preloadedSubjectData) {
-      setSubjectData(preloadedSubjectData);
+      setSubjectData((prev) => {
+        // Don't let a stale preload wipe fresher events already on screen.
+        const prevCount = Array.isArray(prev?.events) ? prev.events.length : 0;
+        const nextCount = Array.isArray(preloadedSubjectData?.events)
+          ? preloadedSubjectData.events.length
+          : 0;
+        if (prev && prevCount > nextCount) return prev;
+        return preloadedSubjectData;
+      });
       setLoading(false);
       setError(null);
     }
   }, [preloadedSubjectData]);
 
+  const loadSubjectDetailSeqRef = useRef(0);
   const loadSubjectDetail = useCallback(async (opts = {}) => {
     const silent = opts.silent === true;
     if (!subjectId || !familyId) return;
@@ -668,8 +677,10 @@ export default function SubjectDetailPage({
       setLoading(true);
     }
     setError(null);
+    const seq = ++loadSubjectDetailSeqRef.current;
     try {
       const data = await getSubjectDetail(subjectId, familyId, null, sessionRef.current);
+      if (seq !== loadSubjectDetailSeqRef.current) return;
       if (data == null) {
         if (typeof onBackRef.current === 'function') onBackRef.current();
         return;
@@ -706,10 +717,11 @@ export default function SubjectDetailPage({
         onSubjectDataUpdateRef.current(data);
       }
     } catch (err) {
+      if (seq !== loadSubjectDetailSeqRef.current) return;
       console.error('[SubjectDetailPage] Error loading subject detail:', err);
       setError(err.message || 'Failed to load subject details');
     } finally {
-      if (!silent) {
+      if (!silent && seq === loadSubjectDetailSeqRef.current) {
         setLoading(false);
         loadingRef.current = false;
       }
@@ -743,10 +755,32 @@ export default function SubjectDetailPage({
       loadSubjectDetail({ silent: true });
     };
     const handleSubjectDetailRefresh = (e) => {
-      if (e.detail?.subjectId === subjectId) {
+      if (String(e.detail?.subjectId || '') === String(subjectId || '')) {
         loadSubjectDetail({ silent: true });
         loadLearningGoalsStructure();
       }
+    };
+    const handleEventPatched = (e) => {
+      const patch = e?.detail?.patch;
+      if (!patch?.id) return;
+      const patchSubjectId = patch.subject_id ?? patch.subjectId ?? null;
+      if (patchSubjectId != null && String(patchSubjectId) !== String(subjectId || '')) return;
+      setSubjectData((prev) => {
+        if (!prev) return prev;
+        const prevEvents = Array.isArray(prev.events) ? prev.events : [];
+        const id = String(patch.id);
+        const idx = prevEvents.findIndex((ev) => String(ev?.id) === id);
+        let nextEvents;
+        if (idx >= 0) {
+          nextEvents = prevEvents.slice();
+          nextEvents[idx] = { ...nextEvents[idx], ...patch };
+        } else {
+          nextEvents = [...prevEvents, patch];
+        }
+        const next = { ...prev, events: nextEvents };
+        if (onSubjectDataUpdateRef.current) onSubjectDataUpdateRef.current(next);
+        return next;
+      });
     };
     const handleSubjectRecordUpserted = (e) => {
       const incoming = e?.detail?.subject;
@@ -773,6 +807,7 @@ export default function SubjectDetailPage({
     window.addEventListener('refreshSubjects', handleRefresh);
     window.addEventListener('refreshPlanDefaults', handleRefresh);
     window.addEventListener('refreshSubjectDetail', handleSubjectDetailRefresh);
+    window.addEventListener('eventPatched', handleEventPatched);
     window.addEventListener('subjectRecordUpserted', handleSubjectRecordUpserted);
     window.addEventListener('childAssignmentsNeedRefresh', handleRefresh);
     window.addEventListener('subjectDetailMaterialsStale', handleMaterialsStale);
@@ -780,6 +815,7 @@ export default function SubjectDetailPage({
       window.removeEventListener('refreshSubjects', handleRefresh);
       window.removeEventListener('refreshPlanDefaults', handleRefresh);
       window.removeEventListener('refreshSubjectDetail', handleSubjectDetailRefresh);
+      window.removeEventListener('eventPatched', handleEventPatched);
       window.removeEventListener('subjectRecordUpserted', handleSubjectRecordUpserted);
       window.removeEventListener('childAssignmentsNeedRefresh', handleRefresh);
       window.removeEventListener('subjectDetailMaterialsStale', handleMaterialsStale);
