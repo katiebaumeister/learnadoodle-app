@@ -346,7 +346,9 @@ export default function AuthScreen() {
                 >
                   <View style={styles.googleButtonContent}>
                     <Image source={googleLogo} style={styles.googleButtonIcon} resizeMode="contain" />
-                    <Text style={styles.googleButtonText}>Sign in with Google</Text>
+                    <Text style={styles.googleButtonText}>
+                      {isSignUp ? 'Sign up with Google' : 'Sign in with Google'}
+                    </Text>
                   </View>
                 </TouchableOpacity>
               </>
