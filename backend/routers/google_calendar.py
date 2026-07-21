@@ -136,7 +136,15 @@ async def oauth_callback(state: str, code: Optional[str] = None, error: Optional
         token_resp = requests.post(TOKEN_URL, data=data, timeout=20)
         if token_resp.status_code != 200:
             log_event("google.oauth.token_failed", status=token_resp.status_code, body=token_resp.text)
-            raise HTTPException(status_code=500, detail="Failed to exchange code for tokens")
+            google_error = None
+            try:
+                google_error = (token_resp.json() or {}).get("error_description") or (token_resp.json() or {}).get("error")
+            except Exception:
+                google_error = None
+            detail = "Failed to exchange code for tokens"
+            if google_error:
+                detail = f"{detail}: {google_error}"
+            raise HTTPException(status_code=500, detail=detail)
 
         token_data = token_resp.json()
         access_token = token_data.get("access_token")

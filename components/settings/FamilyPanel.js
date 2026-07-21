@@ -132,7 +132,7 @@ function subscriptionSidebarProductLabel(planKey) {
 import { getPlanningModeLabel } from '../../lib/planningMode';
 import { dispatchPlanningModeChanged } from '../../lib/useFamilyPlanningMode';
 
-const SETTINGS_SIDEBAR_ACCOUNT_KEYS = ['profile', 'appearance', 'notifications'];
+const SETTINGS_SIDEBAR_ACCOUNT_KEYS = ['profile', 'appearance', 'notifications', 'connections'];
 const SETTINGS_SIDEBAR_HOUSEHOLD_KEYS = ['planner-settings', 'members', 'courses', 'chats'];
 const SETTINGS_SIDEBAR_SUPPORT_KEYS = ['feedback'];
 const SETTINGS_SIDEBAR_LEGAL_KEYS = ['about', 'terms', 'privacy'];
@@ -141,6 +141,7 @@ const SETTINGS_SIDEBAR_ITEMS = [
   { key: 'profile', label: 'Profile' },
   { key: 'appearance', label: 'Preferences' },
   { key: 'notifications', label: 'Notifications' },
+  { key: 'connections', label: 'Connected accounts' },
   { key: 'planner-settings', label: SCHOOL_YEAR_SETTINGS_UI.navLabel },
   { key: 'members', label: 'Family' },
   { key: 'courses', label: 'Subjects' },
