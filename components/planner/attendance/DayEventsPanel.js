@@ -2,22 +2,57 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Check, ChevronRight, Plus } from 'lucide-react';
 import { TOKENS } from './constants';
+import {
+  formatEventScheduleTimeLabel,
+  isAllDayEvent,
+  isTimelessUntimedEvent,
+} from '../plannerListTableUtils';
 
-function timeStr(e) {
-  const t = e.start_ts || e.start || e.start_local;
-  if (!t) return '';
-  const d = new Date(t);
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+function formatMinutesLabel(mins) {
+  const m = Math.round(Number(mins) || 0);
+  if (!Number.isFinite(m) || m <= 0) return '';
+  if (m < 60) return `${m} min`;
+  const hours = Math.floor(m / 60);
+  const rem = m % 60;
+  if (rem === 0) return hours === 1 ? '1 hr' : `${hours} hr`;
+  return `${hours} hr ${rem} min`;
 }
 
-function duration(e, getEventMinutes) {
+function resolveTimedMinutes(e, getEventMinutes) {
+  if (isAllDayEvent(e) || isTimelessUntimedEvent(e)) return 0;
+  let mins = 0;
   if (getEventMinutes && typeof getEventMinutes === 'function') {
-    const m = getEventMinutes(e);
-    return m ? `${m} min` : '';
+    mins = getEventMinutes(e);
+  } else {
+    mins = Math.round(Number(
+      e.duration_minutes ?? (e.end_ts && e.start_ts
+        ? (new Date(e.end_ts) - new Date(e.start_ts)) / 60000
+        : 0),
+    ) || 0);
+    // Same full-day placeholder guard as AttendanceView.getEventMinutes.
+    if (mins >= 23 * 60 && mins <= 24 * 60) {
+      const start = e.start_ts || e.start || e.start_local;
+      if (start) {
+        const d = new Date(start);
+        if (!Number.isNaN(d.getTime()) && d.getHours() === 0 && d.getMinutes() === 0) {
+          return 0;
+        }
+      }
+    }
   }
-  const mins = e.duration_minutes ?? (e.end_ts && e.start_ts
-    ? Math.round((new Date(e.end_ts) - new Date(e.start_ts)) / 60000) : 0);
-  return `${mins} min`;
+  return Number.isFinite(mins) && mins > 0 ? mins : 0;
+}
+
+function eventWhenLabel(e, getEventMinutes) {
+  if (isAllDayEvent(e)) return 'All day';
+  if (isTimelessUntimedEvent(e)) return 'No time';
+  const schedule = formatEventScheduleTimeLabel(e);
+  if (/^all day$/i.test(String(schedule || '').trim())) return 'All day';
+  if (/^no time( added)?$/i.test(String(schedule || '').trim())) return 'No time';
+  const mins = resolveTimedMinutes(e, getEventMinutes);
+  const dur = formatMinutesLabel(mins);
+  if (schedule && dur) return `${schedule} • ${dur}`;
+  return schedule || dur || '';
 }
 
 export default function DayEventsPanel({
@@ -38,7 +73,11 @@ export default function DayEventsPanel({
     const tb = (b.start_ts || b.start || b.start_local) ? new Date(b.start_ts || b.start || b.start_local).getTime() : 0;
     return ta - tb;
   });
-  const totalMins = events.reduce((sum, e) => sum + (getEventMinutes ? getEventMinutes(e) : 0), 0);
+  const totalMins = events.reduce((sum, e) => {
+    if (isTimelessUntimedEvent(e) || isAllDayEvent(e)) return sum;
+    const mins = getEventMinutes ? getEventMinutes(e) : 0;
+    return sum + (Number.isFinite(mins) ? mins : 0);
+  }, 0);
   const allEventsPresent =
     sortedEvents.length > 0
     && sortedEvents.every((e) => attendanceByEventId[e.id] === 'present');
@@ -75,7 +114,7 @@ export default function DayEventsPanel({
                 {childName || 'Child'}
                 {' • '}
                 {sortedEvents.length} {sortedEvents.length === 1 ? 'event' : 'events'}
-                {totalMins ? ` • ${totalMins} min` : ''}
+                {totalMins ? ` • ${formatMinutesLabel(totalMins)}` : ''}
               </Text>
               {onMarkAllAttended && sortedEvents.length > 0 && !allEventsPresent && (
                 <TouchableOpacity
@@ -128,13 +167,13 @@ export default function DayEventsPanel({
                       {compactEventRows ? (
                         <Text style={styles.eventLine} numberOfLines={1}>
                           {(e.title || 'Event')}
-                          {` · ${timeStr(e) ? `${timeStr(e)} • ${duration(e, getEventMinutes)}` : duration(e, getEventMinutes)}`}
+                          {eventWhenLabel(e, getEventMinutes) ? ` · ${eventWhenLabel(e, getEventMinutes)}` : ''}
                         </Text>
                       ) : (
                         <>
                           <Text style={styles.eventTitle} numberOfLines={1}>{e.title || 'Event'}</Text>
                           <Text style={styles.eventMeta} numberOfLines={1}>
-                            {timeStr(e) ? `${timeStr(e)} • ${duration(e, getEventMinutes)}` : duration(e, getEventMinutes)}
+                            {eventWhenLabel(e, getEventMinutes)}
                             {e.subject_id ? ' • Subject' : ''}
                           </Text>
                         </>

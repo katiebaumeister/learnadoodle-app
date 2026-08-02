@@ -2486,10 +2486,12 @@ export default function SubjectsPlanBuilder({
       };
       window.addEventListener('planAppliedToCalendar', handleOverviewInvalidation);
       window.addEventListener('refreshPlanHealth', handleOverviewInvalidation);
+      window.addEventListener('refreshPlanDefaults', handleOverviewInvalidation);
       return () => {
         cancelled = true;
         window.removeEventListener('planAppliedToCalendar', handleOverviewInvalidation);
         window.removeEventListener('refreshPlanHealth', handleOverviewInvalidation);
+        window.removeEventListener('refreshPlanDefaults', handleOverviewInvalidation);
       };
     }
     return () => { cancelled = true; };

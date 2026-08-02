@@ -310,7 +310,8 @@ function resolveDefaultAssigneeIds({ defaultChildIds, defaultChildId, familyMemb
   const allChildIds = (Array.isArray(familyMembers) ? familyMembers : [])
     .map((m) => m?.id)
     .filter(Boolean);
-  return allChildIds;
+  // Only auto-select when there is exactly one child; otherwise leave unselected.
+  return allChildIds.length === 1 ? allChildIds : [];
 }
 
 export default function TaskCreateModal({
@@ -3533,6 +3534,9 @@ export default function TaskCreateModal({
           unit: unit.trim() || null,
           curriculum_unit_title: unit.trim() || null,
           lesson: lesson.trim() || null,
+          // Blank optional time => is_flexible untimed. All-day only when toggle is on.
+          all_day: !!allDay,
+          is_flexible: !allDay && !normalizedStartTime,
         };
         if (showsLearningGradingSwitches(eventType)) {
           updatePayload.work_spec = parseWorkSpec(workSpec, eventType);

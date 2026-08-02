@@ -8606,19 +8606,19 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   headerStatusDotAttended: {
-    backgroundColor: '#6BB3E8',
+    backgroundColor: '#7ECF9A',
   },
   headerStatusDotUnattended: {
     backgroundColor: '#F2A0A0',
   },
   headerStatusDotUpcoming: {
-    backgroundColor: '#C7DDF6',
+    backgroundColor: '#BFDBFE',
   },
   headerStatusChipText: {
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.4,
-    color: '#85C4F2',
+    color: '#7ECF9A',
   },
   headerTitleLarge: {
     fontSize: 34,

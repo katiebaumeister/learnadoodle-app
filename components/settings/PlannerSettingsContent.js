@@ -127,6 +127,19 @@ const buildPlannerInitialDataSignature = (initialData) => {
     constraintMode: settings.default_constraint_mode || '',
     targetDays: settings.default_target_days ?? null,
     targetHours: settings.default_target_hours ?? null,
+    targetScope: settings.target_scope || '',
+    yearStart: settings.default_year_start_date || '',
+    yearEnd: settings.default_year_end_date || '',
+    fallStart: settings.default_fall_term_start_date || '',
+    fallEnd: settings.default_fall_term_end_date || '',
+    springStart: settings.default_spring_term_start_date || '',
+    springEnd: settings.default_spring_term_end_date || '',
+    summerStart: settings.default_summer_term_start_date || settings.default_summer_start_date || '',
+    summerEnd: settings.default_summer_term_end_date || settings.default_summer_end_date || '',
+    allowedWeekdays: Array.isArray(settings.allowed_weekdays) ? settings.allowed_weekdays : [],
+    dayStart: settings.default_day_start_time || '',
+    dayEnd: settings.default_day_end_time || '',
+    followPublicHolidays: settings.follow_public_holidays !== false,
     excludedHolidayDates: Array.isArray(initialData.excluded_holiday_dates) ? initialData.excluded_holiday_dates : [],
     exclusions: exclusions.map((row) => ({
       id: row?.id ?? null,
@@ -142,6 +155,13 @@ const buildPlannerInitialDataSignature = (initialData) => {
       hours: subject?.default_target_hours ?? null,
     })),
   });
+};
+
+const invalidatePlannerSettingsLocalCaches = (snapshotCacheKey) => {
+  if (snapshotCacheKey) {
+    plannerSettingsSnapshotCache.delete(snapshotCacheKey);
+    clearPlannerSettingsSessionSnapshot(snapshotCacheKey);
+  }
 };
 
 const parsePositiveIntOrNull = (value) => {
@@ -893,11 +913,14 @@ export default function PlannerSettingsContent({
     const initialDataYearLabel = normalizeSchoolYearLabel(
       s.school_year_label || s.default_school_year
     );
+    // Include content signature so Settings rehydrates when Planner/Learning save
+    // updates preloadedPlannerData (year-only keys left the page stale).
     const initialDataApplyKey = [
       isSchoolYearLocked ? 'locked' : 'unlocked',
       normalizedLockedSchoolYearLabel || '',
       selectedYearLabel || '',
       initialDataYearLabel || '',
+      initialDataSignature,
     ].join('::');
     if (appliedInitialDataKeyRef.current === initialDataApplyKey) return;
     appliedInitialDataKeyRef.current = initialDataApplyKey;
@@ -1066,17 +1089,6 @@ export default function PlannerSettingsContent({
       );
       if (planErr) throw planErr;
       if (requestId !== loadDefaultsRequestRef.current) return;
-      const preloadedYearLabel = normalizeSchoolYearLabel(
-        initialDataRef.current?.settings?.school_year_label
-        || initialDataRef.current?.settings?.default_school_year
-      );
-      if (
-        initialDataRef.current
-        && preloadedYearLabel
-        && requestedSchoolYearLabel === preloadedYearLabel
-      ) {
-        return;
-      }
       let resolvedYearMode = '';
       let hasAcademicYearRecord = false;
       let resolvedYearId = null;
@@ -1223,6 +1235,7 @@ export default function PlannerSettingsContent({
   }, [familyId, resetDefaultsWhenNoSubjects]);
 
   const subjectTargetsExternalReloadTimerRef = useRef(null);
+  const lastPersistAtRef = useRef(0);
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return;
     // While embedded in the School Year Settings modal, this component owns the
@@ -1237,11 +1250,14 @@ export default function PlannerSettingsContent({
       }
       subjectTargetsExternalReloadTimerRef.current = setTimeout(() => {
         subjectTargetsExternalReloadTimerRef.current = null;
-        if (initialData) {
+        // Skip full reload right after this page's own save (state already matches DB).
+        if (Date.now() - lastPersistAtRef.current < 900) {
           reloadSubjectTargetsFromDb();
-        } else {
-          loadDefaults();
+          return;
         }
+        appliedInitialDataKeyRef.current = '';
+        invalidatePlannerSettingsLocalCaches(snapshotCacheKey);
+        loadDefaults();
       }, 150);
     };
     window.addEventListener('refreshPlanDefaults', scheduleReload);
@@ -1253,7 +1269,7 @@ export default function PlannerSettingsContent({
         clearTimeout(subjectTargetsExternalReloadTimerRef.current);
       }
     };
-  }, [familyId, reloadSubjectTargetsFromDb, loadDefaults, initialData, embeddedInModal]);
+  }, [familyId, reloadSubjectTargetsFromDb, loadDefaults, embeddedInModal, snapshotCacheKey]);
 
   useEffect(() => {
     if (initialData) return; // Use preloaded data from FamilyPanel, skip fetch
@@ -1399,6 +1415,8 @@ export default function PlannerSettingsContent({
         }
         showSaved();
         if (embeddedInModal) setHasPendingModalSave(false);
+        lastPersistAtRef.current = Date.now();
+        invalidatePlannerSettingsLocalCaches(snapshotCacheKey);
         onSave?.();
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
@@ -1417,7 +1435,7 @@ export default function PlannerSettingsContent({
         setSaving(false);
       }
     },
-    [familyId, onSave, toast, readOnly, selectedSchoolYearLabel, visibleSubjects, embeddedInModal]
+    [familyId, onSave, toast, readOnly, selectedSchoolYearLabel, visibleSubjects, embeddedInModal, snapshotCacheKey]
   );
 
   const queuePersist = useCallback((delayMs = 300) => {
@@ -1819,10 +1837,13 @@ export default function PlannerSettingsContent({
           if (mode === 'hours') setTargetHours(normalizedHours != null ? String(normalizedHours) : '');
         }
         showSaved();
+        lastPersistAtRef.current = Date.now();
+        invalidatePlannerSettingsLocalCaches(snapshotCacheKey);
         onSave?.();
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
           window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
           window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
         }
       } catch (err) {
@@ -1831,7 +1852,7 @@ export default function PlannerSettingsContent({
         setSaving(false);
       }
     }, 400);
-  }, [toast, readOnly, familyId, selectedSchoolYearLabel, onSave, embeddedInModal]);
+  }, [toast, readOnly, familyId, selectedSchoolYearLabel, onSave, embeddedInModal, snapshotCacheKey]);
 
   const handleDiscardAndClose = useCallback(() => {
     plannerSettingsSnapshotCache.delete(snapshotCacheKey);

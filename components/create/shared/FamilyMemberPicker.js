@@ -63,7 +63,9 @@ export default function FamilyMemberPicker({
 export function resolveDefaultAssigneeIds({ defaultChildIds, defaultChildId, familyMembers }) {
   if (Array.isArray(defaultChildIds) && defaultChildIds.length > 0) return defaultChildIds;
   if (defaultChildId) return [defaultChildId];
-  return (Array.isArray(familyMembers) ? familyMembers : [])
+  const allChildIds = (Array.isArray(familyMembers) ? familyMembers : [])
     .map((m) => m?.id)
     .filter(Boolean);
+  // Only auto-select when there is exactly one child; otherwise leave unselected.
+  return allChildIds.length === 1 ? allChildIds : [];
 }

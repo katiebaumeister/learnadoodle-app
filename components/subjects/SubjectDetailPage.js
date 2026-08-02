@@ -64,6 +64,7 @@ import {
 import { YearHeatmapLegend } from '../planner/attendance/YearHeatmapGrid';
 import DayEventsPanel from '../planner/attendance/DayEventsPanel';
 import AttendanceExportModal from '../planner/attendance/AttendanceExportModal';
+import { ATTENDANCE_COLORS } from '../planner/attendance/constants';
 import { supabase } from '../../lib/supabase';
 import BulletinBoardSection from '../bulletin/BulletinBoardSection';
 import {
@@ -2478,7 +2479,7 @@ export default function SubjectDetailPage({
               <Text style={styles.attendanceCountLabel}>Count</Text>
               <View style={styles.attendanceChips}>
                 <View style={styles.attendanceChip}>
-                  <CheckCircle size={14} color="#6BB3E8" />
+                  <CheckCircle size={14} color={ATTENDANCE_COLORS.present} />
                   <Text style={styles.attendanceChipText}>
                     {attendance30Days.present} Attended
                   </Text>
@@ -2490,7 +2491,7 @@ export default function SubjectDetailPage({
                   </Text>
                 </View>
                 <View style={styles.attendanceChip}>
-                  <CheckCircle size={14} color="#C7DDF6" />
+                  <CheckCircle size={14} color={ATTENDANCE_COLORS.unmarked} />
                   <Text style={styles.attendanceChipText}>
                     {attendance30Days.upcoming || 0} Upcoming
                   </Text>
@@ -6446,9 +6447,9 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 999,
   },
-  attendanceKeyDotAttended: { backgroundColor: '#6BB3E8' },
-  attendanceKeyDotUnattended: { backgroundColor: '#F2A0A0' },
-  attendanceKeyDotUpcoming: { backgroundColor: '#C7DDF6' },
+  attendanceKeyDotAttended: { backgroundColor: ATTENDANCE_COLORS.present },
+  attendanceKeyDotUnattended: { backgroundColor: ATTENDANCE_COLORS.absent },
+  attendanceKeyDotUpcoming: { backgroundColor: ATTENDANCE_COLORS.unmarked },
   attendanceKeyDotNoEvents: { backgroundColor: '#E5E7EB' },
   attendanceKeyText: {
     fontSize: 12,
@@ -6777,16 +6778,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#CBD5E1',
   },
   attendanceItemStatusDotAttended: {
-    backgroundColor: '#6BB3E8',
+    backgroundColor: ATTENDANCE_COLORS.present,
   },
   attendanceItemStatusDotUnattended: {
-    backgroundColor: '#F2A0A0',
+    backgroundColor: ATTENDANCE_COLORS.absent,
   },
   attendanceItemStatusDotUpcoming: {
-    backgroundColor: '#C7DDF6',
+    backgroundColor: ATTENDANCE_COLORS.unmarked,
   },
   attendanceItemStatusAttended: {
-    color: '#2f7fb8',
+    color: '#2f8f5b',
     fontWeight: '600',
   },
   attendanceItemStatusUnattended: {
@@ -6794,7 +6795,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   attendanceItemStatusUpcoming: {
-    color: '#86b5e6',
+    color: '#5b90c5',
     fontWeight: '600',
   },
   attendanceShowMoreBtn: {

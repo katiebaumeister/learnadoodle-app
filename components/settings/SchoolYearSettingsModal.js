@@ -57,11 +57,13 @@ export default function SchoolYearSettingsModal({
     initialDataByYearRef.current = initialDataByYear;
   }, [initialDataByYear]);
 
-  const preloadData = useCallback(async (yearInput) => {
+  const preloadData = useCallback(async (yearInput, { force = false } = {}) => {
     const year = String(yearInput || '').trim();
     if (!familyId || !year) return null;
-    const existing = initialDataByYearRef.current[year];
-    if (existing && typeof existing === 'object') return existing;
+    if (!force) {
+      const existing = initialDataByYearRef.current[year];
+      if (existing && typeof existing === 'object') return existing;
+    }
     try {
       const { settings, exclusions, excluded_holiday_dates } = await getPlanDefaultsFromSettings(familyId, year);
       const { data: subjectsData } = await supabase
@@ -91,6 +93,31 @@ export default function SchoolYearSettingsModal({
     }
   }, [familyId]);
 
+  const visibleRef = useRef(visible);
+  useEffect(() => {
+    visibleRef.current = visible;
+  }, [visible]);
+
+  // External saves (Settings page / other modal instance) must not leave this modal stale.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return undefined;
+    const onExternalSchoolYearChange = () => {
+      // Ignore the refresh this modal itself just emitted on save.
+      if (savedSinceOpenRef.current) return;
+      setInitialDataByYear({});
+      initialDataByYearRef.current = {};
+      const openYear = String(schoolYearLabelRef.current || '').trim();
+      if (visibleRef.current && openYear) {
+        setContentReady(false);
+        preloadData(openYear, { force: true }).finally(() => {
+          if (visibleRef.current) setContentReady(true);
+        });
+      }
+    };
+    window.addEventListener('refreshPlanDefaults', onExternalSchoolYearChange);
+    return () => window.removeEventListener('refreshPlanDefaults', onExternalSchoolYearChange);
+  }, [familyId, preloadData]);
+
   useLayoutEffect(() => {
     if (!visible || !familyId) {
       setContentReady(false);
@@ -108,7 +135,8 @@ export default function SchoolYearSettingsModal({
     let cancelled = false;
     setContentReady(false);
     (async () => {
-      await preloadData(targetYear);
+      // Always refetch on open so Planner/Learning modal matches latest Settings saves.
+      await preloadData(targetYear, { force: true });
       if (!cancelled) setContentReady(true);
     })();
     return () => {

@@ -136,6 +136,54 @@ import { AVATAR_KEYS } from '../assets/imageAssetMap';
  * Retired: parent explorer tour and Doodle chatbot setup checklist.
  * Post-onboarding guidance is a seeded Learnadoodle bulletin welcome post (see homeWelcomeBulletin.js).
  */
+
+/** Resolve shell tab/nav from a URL pathname for deep links (/planner, /learning, /library). */
+function resolveShellRouteFromPathname(pathnameRaw) {
+  const pathname = String(pathnameRaw || '/').replace(/\/+$/, '') || '/';
+  if (pathname.match(/^\/subjects\/[^/]+$/)) {
+    const subjectId = pathname.split('/')[2];
+    return { activeTab: `subject-${subjectId}`, activeTopNav: 'subjects', activeSubtab: null, messagesPaneOpen: false };
+  }
+  if (pathname === '/learning' || pathname === '/subject-catalog') {
+    return { activeTab: 'learning', activeTopNav: 'learning', activeSubtab: 'subjects', messagesPaneOpen: false };
+  }
+  if (pathname === '/subjects' || pathname === '/intelligence') {
+    return { activeTab: 'subjects', activeTopNav: 'subjects', activeSubtab: 'subjects', messagesPaneOpen: false };
+  }
+  if (pathname === '/planner/preferences') {
+    return { activeTab: 'settings', activeTopNav: 'planning-preferences', activeSubtab: 'planner-settings', messagesPaneOpen: false };
+  }
+  if (pathname === '/planner') {
+    return { activeTab: 'planner', activeTopNav: 'planner', activeSubtab: 'calendar', messagesPaneOpen: false };
+  }
+  if (pathname === '/messages') {
+    return { activeTab: 'home', activeTopNav: 'messages', activeSubtab: null, messagesPaneOpen: true };
+  }
+  if (pathname === '/materials' || pathname === '/library') {
+    return { activeTab: 'materials', activeTopNav: 'materials', activeSubtab: null, messagesPaneOpen: false };
+  }
+  if (pathname === '/records') {
+    return { activeTab: 'records', activeTopNav: 'records', activeSubtab: 'attendance', messagesPaneOpen: false };
+  }
+  if (pathname === '/family' || pathname === '/profile') {
+    return { activeTab: 'family', activeTopNav: 'family', activeSubtab: null, messagesPaneOpen: false };
+  }
+  if (pathname === '/students') {
+    return { activeTab: 'tutor-students', activeTopNav: 'tutor-students', activeSubtab: null, messagesPaneOpen: false };
+  }
+  if (pathname === '/review') {
+    return { activeTab: 'review', activeTopNav: 'review', activeSubtab: null, messagesPaneOpen: false };
+  }
+  return { activeTab: 'home', activeTopNav: 'home', activeSubtab: null, messagesPaneOpen: false };
+}
+
+function getInitialShellRoute() {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    return resolveShellRouteFromPathname(window.location.pathname);
+  }
+  return { activeTab: 'home', activeTopNav: 'home', activeSubtab: null, messagesPaneOpen: false };
+}
+
 const EXPLORER_PARENT_STEPS = [
   {
     targetId: 'explorer-tour-sidebar-planner',
@@ -252,12 +300,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const sessionIsParent = session?.role_flags?.isParent === true;
   const sessionIsChild = session?.role_flags?.isChild === true;
   const sessionIsTutor = session?.role_flags?.isTutor === true;
-  const [activeTab, setActiveTab] = useState('home');
+  const [activeTab, setActiveTab] = useState(() => getInitialShellRoute().activeTab);
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
-  const [activeSubtab, setActiveSubtab] = useState(null);
-  const [activeTopNav, setActiveTopNav] = useState('home');
-  const [isMessagesPaneOpen, setIsMessagesPaneOpen] = useState(false);
+  const [activeSubtab, setActiveSubtab] = useState(() => getInitialShellRoute().activeSubtab);
+  const [activeTopNav, setActiveTopNav] = useState(() => getInitialShellRoute().activeTopNav);
+  const [isMessagesPaneOpen, setIsMessagesPaneOpen] = useState(() => getInitialShellRoute().messagesPaneOpen);
   const [isCreatePaneOpen, setIsCreatePaneOpen] = useState(false);
   const [isDoodlePaneOpen, setIsDoodlePaneOpen] = useState(false);
   const [doodlePaneContext, setDoodlePaneContext] = useState(null);
@@ -656,9 +704,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     session?.role_flags?.isChild !== true || isSelfManagedStudent;
   const sessionRestricted = !!(session?.role_flags?.isChild || session?.role_flags?.isTutor);
   const denyFamilyEventEdit = sessionRestricted && !familyUserControls.allowed('events');
+  // Parent-managed child mode: Messages is family DMs only — no system Doodle assistant.
+  // Self-managed students keep Doodle (they plan for themselves).
   const childDoodleBotDisabled =
-    session?.role_flags?.isChild === true &&
-    familyUserControls.effectivePermissions?.canUseDoodleBot === false;
+    session?.role_flags?.isChild === true && !isSelfManagedStudent;
 
   const openUnitsAndLessonsModal = useCallback((detail = {}) => {
     if (sessionRestricted && !familyUserControls.allowed('plans')) {
@@ -778,7 +827,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Only parent home uses ParentHomeScreen's initial-data ready callback.
   // Using resolvedShellUserRole avoids false "parent-like" matches during
   // partial role_flags hydration on child/tutor sessions.
-  const homeNeedsInitialData = activeTab === 'home' && resolvedShellUserRole === 'parent';
+  // Deep links (/planner, /learning, …) must not wait on ParentHomeScreen hydration.
+  const homeNeedsInitialData =
+    activeTab === 'home'
+    && resolvedShellUserRole === 'parent'
+    && !isMessagesPaneOpen;
   // Fullscreen loader: block on session + shell assets, and onboarding only when actually blocked.
   const showLoader = !!(
     user &&
@@ -1194,6 +1247,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     { key: 'tasks', label: 'List' },
   ];
 
+  /** Map runtime view ids onto the Week/Month/Year/List chip keys. */
+  const resolvePlannerSwitcherView = (view) => {
+    const normalized = sanitizeLegacyPlanYearView(view);
+    if (normalized === 'week') return 'board';
+    if (PLANNER_VIEW_SWITCHER_OPTIONS.some((opt) => opt.key === normalized)) return normalized;
+    if (normalized === 'attendance-drilldown') return 'month';
+    return normalized;
+  };
+
   // Get default view from localStorage. Returns null (→ Week) until we know
   // which user is logged in, so the first login can never inherit a stale view.
   const getDefaultView = () => {
@@ -1408,13 +1470,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Update view chip slider position when currentView changes (Month / Week / Year)
   useEffect(() => {
     const chipKeys = ['board', 'month', 'year', 'tasks'];
-    if (!chipKeys.includes(currentView)) {
+    const switcherView = resolvePlannerSwitcherView(currentView);
+    if (!chipKeys.includes(switcherView)) {
       setViewChipSlider({ left: 0, width: 0 });
       return;
     }
-    const layout = viewChipLayouts.current[currentView];
-    if (layout) {
+    const layout = viewChipLayouts.current[switcherView];
+    if (layout?.width) {
       setViewChipSlider({ left: layout.x, width: layout.width });
+    } else {
+      // No measurement yet — clear so the per-chip fallback active pill shows.
+      setViewChipSlider({ left: 0, width: 0 });
     }
   }, [currentView]);
 
@@ -1820,7 +1886,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Handle view change
   const handleViewChange = (view) => {
     console.log('[WebLayout] handleViewChange called with view:', view);
-    setCurrentView(view);
+    setCurrentView(sanitizeLegacyPlanYearView(view));
     // Note: setShowViewDropdown is now called in onPress to close immediately
     
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -2442,124 +2508,60 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     };
   }, [onboardingBlocked, authUserId, hasSession, applyOnboardingCompleted]);
 
-  // Handle URL-based routing for subject detail pages
+  // Handle URL-based routing for subject detail pages / deep links.
+  // Do NOT wipe deep links on reload — that left /planner|/learning|/library stuck
+  // under the home loader until users edited the URL back to /.
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
 
-    const isPageReload = () => {
-      try {
-        const navEntry = window.performance?.getEntriesByType?.('navigation')?.[0];
-        if (navEntry && navEntry.type === 'reload') return true;
-        // Fallback for older navigation timing API.
-        if (window.performance?.navigation?.type === 1) return true;
-      } catch (_) {}
-      return false;
-    };
-
     const checkUrlRoute = () => {
-      if (isPageReload()) {
-        window.history.replaceState({}, '', '/');
-        setIsMessagesPaneOpen(false);
-        setIsCreatePaneOpen(false);
-        setActiveTab('home');
-        setActiveTopNav((prev) => (prev === 'family' ? prev : 'home'));
-        return;
-      }
       const pathnameRaw = window.location.pathname || '/';
       const pathname = pathnameRaw.replace(/\/$/, '') || '/';
-      const subjectDetailMatch = pathname.match(/^\/subjects\/([^/]+)$/);
-      
-      if (subjectDetailMatch) {
-        const subjectId = subjectDetailMatch[1];
-        const expectedTab = `subject-${subjectId}`;
-        setActiveTab(expectedTab);
-        setActiveTopNav('subjects');
-      } else if (pathname === '/learning' || pathname === '/subject-catalog') {
+      const route = resolveShellRouteFromPathname(pathname);
+
+      // Normalize legacy path aliases without destroying the deep link.
+      if (pathname === '/subject-catalog') {
+        window.history.replaceState({}, '', '/learning');
+      } else if (pathname === '/intelligence') {
         window.history.replaceState({}, '', '/subjects');
-        setActiveTab('subjects');
-        setActiveTopNav('subjects');
-      } else if (pathname === '/subjects' || pathname === '/intelligence') {
-        // Keep legacy /intelligence compatible but normalize to /subjects.
-        if (pathname === '/intelligence') {
-          window.history.replaceState({}, '', '/subjects');
-        }
-        setActiveTab('subjects');
-        setActiveTopNav('subjects');
-      } else if (pathname === '/planner/preferences') {
+      } else if (pathname === '/materials') {
+        window.history.replaceState({}, '', '/library');
+      } else if (pathname === '/profile') {
+        window.history.replaceState({}, '', '/family');
+      }
+
+      if (pathname === '/planner' || pathname === '/planner/preferences') {
+        // Family panel uses pushState for About/Terms/Privacy; URL may still be /planner.
         if (isFamilyShellTab(activeTabRef.current)) {
           return;
         }
-        setActiveTab('settings');
-        setActiveSubtab('planner-settings');
-        setActiveTopNav('planning-preferences');
-      } else if (pathname === '/planner') {
-        // Family panel uses pushState for About/Terms/Privacy; URL may still be /planner after switching to Family without a replace.
-        if (isFamilyShellTab(activeTabRef.current)) {
-          return;
-        }
-        if (activeTab !== 'planner') {
-          setActiveTab('planner');
-          setActiveTopNav('planner');
-        }
+      }
+      if ((pathname === '/materials' || pathname === '/library' || pathname === '/messages')
+        && isFamilyShellTab(activeTabRef.current)) {
+        return;
+      }
+      if ((pathname === '/' || pathname === '/home') && isFamilyShellTab(activeTabRef.current)) {
+        return;
+      }
+
+      setActiveTab(route.activeTab);
+      setActiveTopNav(route.activeTopNav);
+      if (route.activeSubtab != null) setActiveSubtab(route.activeSubtab);
+      setIsMessagesPaneOpen(!!route.messagesPaneOpen);
+
+      if (pathname === '/planner') {
         const urlParams = new URLSearchParams(window.location.search);
         const view = urlParams.get('view');
-        if (view) {
-          setCurrentView(view);
-        }
-      } else if (pathname === '/messages') {
-        if (!isFamilyShellTab(activeTabRef.current)) {
-          setIsMessagesPaneOpen(true);
-          setActiveTopNav('messages');
-        }
-      } else if (pathname === '/materials' || pathname === '/library') {
-        if (pathname === '/materials') {
-          window.history.replaceState({}, '', '/library');
-        }
-        if (isFamilyShellTab(activeTabRef.current)) {
-          return;
-        }
-        if (activeTab !== 'materials') {
-          setActiveTab('materials');
-          setActiveTopNav('materials');
-        }
-      } else if (pathname === '/records') {
-        if (activeTab !== 'records') {
-          setActiveTab('records');
-          setActiveTopNav('records');
-        }
-      } else if (pathname === '/family' || pathname === '/profile') {
-        if (pathname === '/profile') {
-          window.history.replaceState({}, '', '/family');
-        }
-        if (activeTab !== 'family' && activeTab !== 'profile') {
-          setActiveTab('family');
-          setActiveTopNav('family');
-        }
-      } else if (pathname === '/students') {
-        if (activeTab !== 'tutor-students') {
-          setActiveTab('tutor-students');
-          setActiveTopNav('tutor-students');
-        }
-      } else if (pathname === '/' || pathname === '/home') {
-        // Family stays on `/` but uses pushState for About/Terms/Privacy. Forcing Home on popstate
-        // must not run for any family shell tab (settings, profile, child-*, etc.).
-        if (!isFamilyShellTab(activeTabRef.current)) {
-          setActiveTab('home');
-          setActiveTopNav((prev) => (prev === 'family' ? prev : 'home'));
-        }
+        if (view) setCurrentView(sanitizeLegacyPlanYearView(view));
       }
     };
 
-    // Only check on mount and popstate, not on every activeTab change
     checkUrlRoute();
-    
-    // Listen for popstate (back/forward navigation)
     window.addEventListener('popstate', checkUrlRoute);
-    
     return () => {
       window.removeEventListener('popstate', checkUrlRoute);
     };
-  }, []); // Empty deps - only run on mount and popstate
+  }, []); // mount + popstate only
 
   useEffect(() => {
     // Handle child tabs from sidebar (child-{id})
@@ -2926,8 +2928,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         (async () => {
           try {
             let eventRow = initialEvent;
-            if (!eventRow?.event_type) {
-              eventRow = await fetchEventForAssignmentEdit(eventId);
+            // Planner month/week rows omit fields like location. Prefer a full
+            // events row so edit/summary don't blank stored values on save.
+            const needsFullEvent = !eventRow?.event_type
+              || (eventRow && Object.prototype.hasOwnProperty.call(eventRow, 'location') === false)
+              || eventRow?.location === undefined;
+            if (needsFullEvent && eventId) {
+              try {
+                const fetched = await fetchEventForAssignmentEdit(eventId);
+                if (fetched) eventRow = fetched;
+              } catch (_) {
+                if (!eventRow?.event_type) eventRow = null;
+              }
             }
             if (!eventRow) {
               if (
@@ -4002,6 +4014,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     };
   }, [childDoodleBotDisabled]);
 
+  // If session is/switches to child mode, dismiss any open Doodle surfaces.
+  useEffect(() => {
+    if (!childDoodleBotDisabled) return;
+    setIsDoodlePaneOpen(false);
+    setDoodlePaneContext(null);
+    setShowDoodleSearchModal(false);
+    setDoodleSearchInitialPrompt(null);
+    setDoodleSearchAutoSubmit(false);
+  }, [childDoodleBotDisabled]);
+
   const mergeExplorerTourInProfile = useCallback((patch) => {
     setProfile((p) => {
       if (!p) return p;
@@ -4309,9 +4331,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const rightToolbarClaimsPlannerSegmentFocus =
     (activeRightTool != null && !['tasks', 'backlog'].includes(activeRightTool)) ||
     currentView === 'attendance';
+  /** Chip key for the Week/Month/Year/List switcher (aliases like week→board). */
+  const plannerSwitcherView = resolvePlannerSwitcherView(currentView);
   /** Purple segmented chip only when that row is the active context. */
   const showTopPlannerSegmentHighlight =
-    ['month', 'board', 'tasks', 'year', 'attendance-drilldown'].includes(currentView) && !rightToolbarClaimsPlannerSegmentFocus;
+    ['month', 'board', 'tasks', 'year', 'attendance-drilldown'].includes(plannerSwitcherView)
+    && !rightToolbarClaimsPlannerSegmentFocus;
 
   // Generate breadcrumbs with account name first
   const generateBreadcrumbs = useMemo(() => {
@@ -4455,7 +4480,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           leftPane={{
             visible: isMessagesPaneOpen || isCreatePaneOpen || isDoodlePaneOpen,
             width: isDoodlePaneOpen ? 400 : 360,
-            content: isDoodlePaneOpen ? (
+            content: isDoodlePaneOpen && !childDoodleBotDisabled ? (
               <DoodleCommandPane
                 contextArea={doodlePaneContext || doodleCommandContext}
                 childName={doodleContextChildName}
@@ -4795,7 +4820,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       />
                     )}
                     {PLANNER_VIEW_SWITCHER_OPTIONS.map((view) => {
-                      const isActive = showTopPlannerSegmentHighlight && currentView === view.key;
+                      const isActive = showTopPlannerSegmentHighlight && plannerSwitcherView === view.key;
                       return (
                         <TouchableOpacity
                           key={view.key}
@@ -4805,7 +4830,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                             // otherwise the active-tab pill never positions on first visit.
                             if (!width) return;
                             viewChipLayouts.current[view.key] = { x, width };
-                            if (currentView === view.key) {
+                            if (plannerSwitcherView === view.key) {
                               setViewChipSlider({ left: x, width });
                             }
                           }}

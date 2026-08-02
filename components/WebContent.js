@@ -3554,7 +3554,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
         }
-        if (authUserId && !event?.detail?.skipHomeRefresh) {
+        if (authUserId) {
           try {
             const { data: profileData } = await supabase.from('profiles').select('family_id').eq('id', authUserId).maybeSingle();
             if (profileData?.family_id) invalidateHomeDataCache(profileData.family_id);
@@ -3665,8 +3665,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
       }
       
-      // Invalidate home data cache when calendar refreshes (unless we're skipping home refresh)
-      if (authUserId && !skipHomeRefresh) {
+      // Always invalidate home cache on planner changes so Home cannot serve stale days.
+      // skipHomeRefresh only skips the optional background get_home_data refetch below
+      // (ParentHomeScreen still listens and refetches itself).
+      if (authUserId) {
         try {
           const { data: profileData } = await supabase
             .from('profiles')
@@ -3676,6 +3678,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           
           if (profileData?.family_id) {
             invalidateHomeDataCache(profileData.family_id);
+            if (skipHomeRefresh) {
+              // Cache cleared; skip duplicate background home RPC while drag/targeted refresh runs.
+            } else {
             // Always refresh home data in background (even if not on home tab)
             // This ensures data is fresh when user switches to home tab
             if (homeData) {
@@ -3726,6 +3731,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                   saveHomeDataToCache(profileData.family_id, selectedDateStr, { ...data, stories });
                 }
               }).catch((err) => console.error('[WebContent] Error refreshing home data:', err));
+            }
             }
           }
         } catch (err) {
@@ -10665,7 +10671,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }}
         onAddEvent={() => {
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }));
+            window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: homeSelectedDate || new Date() } }));
           }
         }}
         onAddGrade={() => {
@@ -10691,6 +10697,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         preloadedSubjectsOverview={subjectsOverviewCache}
         preloadedSubjects={propSubjects}
         preloadedPlanHealth={propPreloadedPlanHealth}
+        plannerEventsByDate={calendarEvents}
       />
     );
 

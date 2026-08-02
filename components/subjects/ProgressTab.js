@@ -32,6 +32,7 @@ import {
 import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
 import { supabase } from '../../lib/supabase';
 import { createAttendanceLog, deleteAttendanceLog, updateAttendanceLog } from '../../lib/services/recordsClient';
+import { ATTENDANCE_COLORS } from '../planner/attendance/constants';
 
 const WEB_HEADING_FONT = Platform.OS === 'web'
   ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
@@ -3093,9 +3094,9 @@ const styles = StyleSheet.create({
   attendanceKeyRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   attendanceKeyPill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: '#F3F4F6' },
   attendanceKeyDot: { width: 8, height: 8, borderRadius: 999 },
-  attendanceKeyDotAttended: { backgroundColor: '#6BB3E8' },
-  attendanceKeyDotUnattended: { backgroundColor: '#F2A0A0' },
-  attendanceKeyDotUpcoming: { backgroundColor: '#C7DDF6' },
+  attendanceKeyDotAttended: { backgroundColor: ATTENDANCE_COLORS.present },
+  attendanceKeyDotUnattended: { backgroundColor: ATTENDANCE_COLORS.absent },
+  attendanceKeyDotUpcoming: { backgroundColor: ATTENDANCE_COLORS.unmarked },
   attendanceKeyDotNoEvents: { backgroundColor: '#E5E7EB' },
   attendanceKeyText: { fontSize: 12, color: '#6B7280', ...WEB_BODY_FONT },
   emptyStateText: { fontSize: 14, color: '#6B7280', lineHeight: 20, ...WEB_BODY_FONT },

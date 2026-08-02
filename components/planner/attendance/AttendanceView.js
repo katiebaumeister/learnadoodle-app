@@ -39,6 +39,7 @@ import DayEventsPanel from './DayEventsPanel';
 import AttendanceExportModal from './AttendanceExportModal';
 import { useToast } from '../../Toast';
 import { TOKENS } from './constants';
+import { isAllDayEvent, isTimelessUntimedEvent } from '../plannerListTableUtils';
 import { resolveCalendarYearRange, buildMonthsInRange } from '../plannerYearRange';
 
 const REQUIRED_DAYS_DEFAULT = 180;
@@ -912,11 +913,42 @@ export default function AttendanceView({
   }, [yearPlannerDayChildId]);
 
   const getEventMinutes = useCallback((e) => {
-    if (e.duration_minutes != null) return e.duration_minutes;
-    const start = e.start_ts || e.start || e.start_local;
-    const end = e.end_ts || e.end;
-    if (start && end) return Math.round((new Date(end) - new Date(start)) / 60000);
-    return 0;
+    // Untimed/all-day rows use a full-day placeholder span (~1440 min). That is
+    // placement only — do not treat it as a real 24h duration.
+    if (isTimelessUntimedEvent(e) || isAllDayEvent(e)) {
+      const explicit = e.minutes != null ? Number(e.minutes) : null;
+      if (Number.isFinite(explicit) && explicit > 0 && explicit < 12 * 60) {
+        return Math.round(explicit);
+      }
+      return 0;
+    }
+
+    let n = null;
+    if (e.duration_minutes != null) {
+      n = Math.round(Number(e.duration_minutes));
+    } else if (e.minutes != null) {
+      n = Math.round(Number(e.minutes));
+    } else {
+      const start = e.start_ts || e.start || e.start_local;
+      const end = e.end_ts || e.end;
+      if (start && end) {
+        n = Math.round((new Date(end) - new Date(start)) / 60000);
+      }
+    }
+    if (!Number.isFinite(n) || n <= 0) return 0;
+
+    // Defensive: midnight + ~full-day float from EXTRACT(EPOCH)/60 should not
+    // count as 24h of instructional time when helpers miss the untimed flag.
+    if (n >= 23 * 60 && n <= 24 * 60) {
+      const start = e.start_ts || e.start || e.start_local;
+      if (start) {
+        const d = new Date(start);
+        if (!Number.isNaN(d.getTime()) && d.getHours() === 0 && d.getMinutes() === 0) {
+          return 0;
+        }
+      }
+    }
+    return n;
   }, []);
 
   /** Child IDs explicitly assigned to this event (shared events have multiple). Only these children get attendance. */

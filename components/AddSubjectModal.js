@@ -39,8 +39,16 @@ import {
   applySubjectScheduleToCalendar,
   getSubjectTermDateRange,
   isScheduleFormConfigured,
+  normalizeHm,
+  resolveFamilyAcademicYearForRange,
+  toLocalYmd,
   ymdToLocalDate,
 } from '../lib/subjectConfigureSchedule';
+import { getAcademicYear } from '../lib/services/academicYearClient';
+import { mergeSubjectProgressCache } from '../lib/subjectProgressPlanCache';
+
+const DEFAULT_SCHEDULE_TIME = '09:00';
+const DEFAULT_SCHEDULE_DURATION = '60';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
@@ -580,6 +588,28 @@ export default function AddSubjectModal({
       return;
     }
 
+    // Match EditSubjectSettingsModal: UI shows 09:00 / 60 even when state is still blank.
+    const normalizedWeekdays = (weekdays || [])
+      .map((day) => parseInt(day, 10))
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
+    const normalizedStartTime = normalizeHm(startTime || DEFAULT_SCHEDULE_TIME, DEFAULT_SCHEDULE_TIME);
+    const normalizedDuration = Number(durationMinutes) || Number(DEFAULT_SCHEDULE_DURATION);
+    const scheduleReady = isScheduleFormConfigured({
+      weekdays: normalizedWeekdays,
+      startTime: normalizedStartTime,
+      durationMinutes: normalizedDuration,
+      startDate,
+      endDate,
+    });
+    if (normalizedWeekdays.length > 0 && !scheduleReady) {
+      if (!startDate || !endDate) {
+        setError('Pick start and end dates for the schedule.');
+      } else {
+        setError('Complete the schedule fields (days, time, duration, and dates) before saving.');
+      }
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
 
@@ -626,6 +656,7 @@ export default function AddSubjectModal({
 
       const savedSubjectId = newSubjects?.[0]?.id || existingSubjectId || null;
       let scheduleWarning = null;
+      let scheduleResult = null;
 
       if (savedSubjectId) {
         try {
@@ -635,20 +666,56 @@ export default function AddSubjectModal({
           scheduleWarning = gradingErr?.message || 'Grading settings could not be saved.';
         }
 
-        if (isScheduleFormConfigured({ weekdays, startTime, durationMinutes, startDate, endDate })) {
+        if (scheduleReady) {
           try {
-            await applySubjectScheduleToCalendar({
+            const startYmd = toLocalYmd(startDate);
+            const endYmd = toLocalYmd(endDate);
+            let academicYearId = null;
+            let planData = null;
+            const familyYear = await resolveFamilyAcademicYearForRange(familyId, startYmd, endYmd);
+            academicYearId = familyYear.academicYearId || null;
+            planData = familyYear.planData || null;
+            if (academicYearId && !planData?.plan) {
+              const { data: yearData } = await getAcademicYear(academicYearId);
+              planData = yearData || planData;
+            }
+
+            scheduleResult = await applySubjectScheduleToCalendar({
               familyId,
               subject: { id: savedSubjectId, name: subjectName.trim() },
               assignedChildIds: selectedChildIds,
               allChildIds: (children || []).map((c) => c.id).filter(Boolean),
-              weekdays,
-              startTime,
-              durationMinutes: Number(durationMinutes),
+              weekdays: normalizedWeekdays,
+              startTime: normalizedStartTime,
+              durationMinutes: normalizedDuration,
               startDate,
               endDate,
+              academicYearId,
+              planData,
               applyScope: APPLY_SCOPE_FULL_YEAR,
             });
+
+            const refreshedYearId = scheduleResult?.academicYearId || academicYearId;
+            let refreshedPlan = scheduleResult?.planData || planData;
+            if (!refreshedPlan && refreshedYearId) {
+              const { data: yearData } = await getAcademicYear(refreshedYearId);
+              refreshedPlan = yearData || null;
+            }
+            if (refreshedPlan) {
+              mergeSubjectProgressCache(familyId, savedSubjectId, {
+                academicYearId: refreshedYearId ?? null,
+                planData: refreshedPlan,
+              });
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('subjectProgressPlanCacheUpdated', {
+                  detail: {
+                    familyId,
+                    subjectId: savedSubjectId,
+                    academicYearId: refreshedYearId ?? null,
+                  },
+                }));
+              }
+            }
           } catch (scheduleErr) {
             console.warn('[AddSubjectModal] Failed to apply subject schedule:', scheduleErr);
             scheduleWarning = scheduleErr?.message || 'Subject was saved, but the schedule could not be applied.';
@@ -681,12 +748,30 @@ export default function AddSubjectModal({
 
       // Success
       const isEdit = !!(subject && subject.id);
-      const successMessage = isEdit 
-        ? `Subject "${subjectName}" updated successfully!`
-        : `Subject "${subjectName}" added successfully!`;
+      const eventsCreated = scheduleResult && (
+        (scheduleResult.created ?? 0) > 0
+        || (scheduleResult.totals?.inserted ?? 0) > 0
+        || (scheduleResult.totals?.updated ?? 0) > 0
+      );
+      const scheduleSavedNoEvents = !!scheduleResult && !eventsCreated;
+      const successMessage = scheduleWarning
+        ? (isEdit
+          ? `Subject "${subjectName}" updated successfully!`
+          : `Subject "${subjectName}" added successfully!`)
+        : eventsCreated
+          ? (isEdit
+            ? `"${subjectName}" saved and calendar updated`
+            : `"${subjectName}" added and calendar updated`)
+          : scheduleSavedNoEvents
+            ? `"${subjectName}" saved (schedule saved; no calendar slots in the selected date range)`
+            : scheduleResult
+              ? `"${subjectName}" schedule saved`
+              : (isEdit
+                ? `Subject "${subjectName}" updated successfully!`
+                : `Subject "${subjectName}" added successfully!`);
       
       if (toast && toast.push) {
-        toast.push(successMessage, 'success');
+        toast.push(successMessage, scheduleSavedNoEvents && !scheduleWarning ? 'warning' : 'success');
         if (scheduleWarning) {
           toast.push(scheduleWarning, 'warning');
         }
@@ -938,7 +1023,14 @@ export default function AddSubjectModal({
                     termOptions={TERM_OPTIONS}
                     onSchoolTermChange={handleSchoolTermChange}
                     weekdays={weekdays}
-                    onWeekdaysChange={setWeekdays}
+                    onWeekdaysChange={(next) => {
+                      setWeekdays(next);
+                      // Persist the visible schedule defaults as soon as the user opts into days.
+                      if (Array.isArray(next) && next.length > 0) {
+                        if (!String(startTime || '').trim()) setStartTime(DEFAULT_SCHEDULE_TIME);
+                        if (!Number(durationMinutes)) setDurationMinutes(DEFAULT_SCHEDULE_DURATION);
+                      }
+                    }}
                     startTime={startTime}
                     onStartTimeChange={setStartTime}
                     durationMinutes={durationMinutes}

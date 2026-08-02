@@ -78,6 +78,10 @@ import {
   hydrateBulletinPostsState,
   writeBulletinPostsCache,
 } from '../../lib/bulletinBoardCache';
+import {
+  hasSeenBulletinClickHint,
+  markBulletinClickHintSeen,
+} from '../../lib/bulletinClickHint';
 import { parseChildIds } from '../../lib/services/subjectsClient';
 
 const VISIBILITY_ALL = 'all';
@@ -801,6 +805,7 @@ export default function BulletinBoardSection({
   const [deletingAssignment, setDeletingAssignment] = useState(false);
   const [editingPost, setEditingPost] = useState(null);
   const [detailEntry, setDetailEntry] = useState(null);
+  const [showClickHint, setShowClickHint] = useState(false);
   const feedScrollRef = useRef(null);
   const messageEditorRef = useRef(null);
   const usePreviewFeed = !filterSubjectId;
@@ -923,6 +928,19 @@ export default function BulletinBoardSection({
   }, [familyId]);
 
   useEffect(() => {
+    if (!usePreviewFeed || Platform.OS !== 'web') {
+      setShowClickHint(false);
+      return;
+    }
+    const userKey = currentUserId || null;
+    if (!userKey) {
+      setShowClickHint(false);
+      return;
+    }
+    setShowClickHint(!hasSeenBulletinClickHint(userKey));
+  }, [usePreviewFeed, currentUserId]);
+
+  useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
     const handler = (event) => {
       const detail = event?.detail || {};
@@ -1027,7 +1045,13 @@ export default function BulletinBoardSection({
     },
   } : null;
 
+  const dismissClickHint = useCallback(() => {
+    if (currentUserId) markBulletinClickHintSeen(currentUserId);
+    setShowClickHint(false);
+  }, [currentUserId]);
+
   const handleStreamCardPress = useCallback((entry) => {
+    if (usePreviewFeed) dismissClickHint();
     if (entry.kind === 'activity' && entry.payload) {
       if (onAssignmentActivityPress) {
         onAssignmentActivityPress(entry.payload);
@@ -1039,7 +1063,7 @@ export default function BulletinBoardSection({
     if (entry.kind === 'post' && usePreviewFeed) {
       setDetailEntry(entry);
     }
-  }, [onAssignmentActivityPress, usePreviewFeed]);
+  }, [onAssignmentActivityPress, usePreviewFeed, dismissClickHint]);
 
   const openEditAssignmentFromActivity = useCallback(async (activityItem) => {
     if (!activityItem?.assignmentId) return;
@@ -1490,22 +1514,27 @@ export default function BulletinBoardSection({
   return (
     <View style={[styles.root, styles.rootExpanded]}>
       {useModalComposer && (feedTitle || canCreatePost) ? (
-        <View style={styles.subjectStreamToolbar}>
-          {feedTitle ? (
-            <Text style={styles.feedTitle}>{feedTitle}</Text>
-          ) : (
-            <View style={styles.feedTitleSpacer} />
-          )}
-          {canCreatePost ? (
-            <TouchableOpacity
-              style={styles.postActionBtn}
-              onPress={() => setComposerOpenState(true)}
-              accessibilityLabel="Post announcement"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={18} color="#334155" strokeWidth={2.25} />
-              <Text style={styles.postActionBtnText}>Post</Text>
-            </TouchableOpacity>
+        <View style={styles.subjectStreamToolbarBlock}>
+          <View style={styles.subjectStreamToolbar}>
+            {feedTitle ? (
+              <Text style={styles.feedTitle}>{feedTitle}</Text>
+            ) : (
+              <View style={styles.feedTitleSpacer} />
+            )}
+            {canCreatePost ? (
+              <TouchableOpacity
+                style={styles.postActionBtn}
+                onPress={() => setComposerOpenState(true)}
+                accessibilityLabel="Post announcement"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Plus size={18} color="#334155" strokeWidth={2.25} />
+                <Text style={styles.postActionBtnText}>Post</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          {showClickHint && usePreviewFeed && feedTitle && mergedStreamItems.length > 0 ? (
+            <Text style={styles.feedClickHint}>Click a post to open it.</Text>
           ) : null}
         </View>
       ) : null}
@@ -2269,13 +2298,17 @@ const styles = StyleSheet.create({
   streamComposerSendDisabled: {
     opacity: 0.45,
   },
+  subjectStreamToolbarBlock: {
+    flexShrink: 0,
+    paddingBottom: 4,
+  },
   subjectStreamToolbar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 14,
     paddingTop: 10,
-    paddingBottom: 4,
+    paddingBottom: 0,
     flexShrink: 0,
     gap: 12,
   },
@@ -2288,6 +2321,18 @@ const styles = StyleSheet.create({
     minWidth: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  feedClickHint: {
+    paddingHorizontal: 14,
+    paddingTop: 4,
+    paddingBottom: 2,
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#64748B',
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   feedTitleSpacer: {

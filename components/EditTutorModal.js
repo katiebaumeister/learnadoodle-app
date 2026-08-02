@@ -8,7 +8,6 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   inviteTutor,
   updateTutorScope,
@@ -17,7 +16,6 @@ import {
   deleteGuestMember,
 } from '../lib/apiClient';
 import { useToast } from './Toast';
-import { colors } from '../theme/colors';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
 import { DEFAULT_TUTOR_PROFILE, normalizeTutorProfile } from '../lib/permissions/userPermissionProfiles';
@@ -55,7 +53,6 @@ export default function EditTutorModal({
   const [tutorPermissionProfile, setTutorPermissionProfile] = useState(DEFAULT_TUTOR_PROFILE);
   const [isSaving, setIsSaving] = useState(false);
   const [inviting, setInviting] = useState(false);
-  const [showDangerZone, setShowDangerZone] = useState(false);
   const [error, setError] = useState(null);
 
   const isNewTutor = tutor?.isNew === true || String(tutor?.id || '').startsWith('draft-');
@@ -64,6 +61,7 @@ export default function EditTutorModal({
   const isConnected = !isNewTutor && !isGuest && !isPendingInvite && Boolean(tutor?.user_id || tutor?.email);
   const profileSaved = Boolean(isConnected || isPendingInvite || isGuest || savedGuestId);
   const tutorName = isNewTutor && !savedGuestId ? 'Add tutor' : (displayName.trim() || tutor?.name || tutor?.email || 'Tutor');
+  const canRemove = Boolean(isConnected || isGuest || savedGuestId) && !isPendingInvite;
 
   const childOptions = useMemo(
     () =>
@@ -88,13 +86,11 @@ export default function EditTutorModal({
     setSavedGuestId(tutor?.isGuest ? String(tutor.id || '') : null);
     setTutorPermissionProfile(normalizeTutorProfile(tutor?.tutor_permission_profile || DEFAULT_TUTOR_PROFILE));
     setError(null);
-    setShowDangerZone(false);
   }, [visible, tutor, childOptions]);
 
   useEffect(() => {
     if (!visible) {
       setError(null);
-      setShowDangerZone(false);
       setIsSaving(false);
       setInviting(false);
     }
@@ -177,7 +173,6 @@ export default function EditTutorModal({
       await persistGuestProfile();
       toast.push(isNewTutor && !savedGuestId ? 'Tutor added.' : 'Tutor profile saved.', 'success');
       onTutorUpdated?.();
-      if (isNewTutor && !isPendingInvite) return;
       onClose?.();
     } catch (err) {
       setError(err?.message || 'Could not update tutor settings.');
@@ -255,9 +250,13 @@ export default function EditTutorModal({
               <ModalFooter
                 mode="edit"
                 primaryLabel={isSaving ? 'Saving...' : (isNewTutor && !profileSaved ? 'Add tutor' : 'Save changes')}
-                destructiveLabel={isConnected ? 'Remove access' : (isGuest || savedGuestId ? 'Remove tutor' : null)}
+                destructiveLabel={
+                  canRemove
+                    ? (isConnected ? 'Remove access' : 'Remove tutor')
+                    : null
+                }
                 onCancel={onClose}
-                onDelete={isConnected || isGuest || savedGuestId ? () => setShowDangerZone((v) => !v) : undefined}
+                onDelete={canRemove ? handleRemoveAllAccess : undefined}
                 onPrimary={handleSave}
                 accent="#9ECFFB"
                 disabled={isSaving || inviting}
@@ -317,57 +316,16 @@ export default function EditTutorModal({
                   onSendInvite={handleSendInvite}
                   inviting={inviting}
                   disabled={isSaving}
+                  autoOpenInvite={Boolean(tutor?.openInviteForm)}
                 />
               ) : null}
 
               {isConnected ? (
-                <View style={styles.accountConnectedWrap}>
-                  <Text style={styles.sectionTitle}>Account</Text>
-                  <View style={styles.accountRule} />
-                  <Text style={styles.connectedLine}>
-                    {email ? `✓ Connected · ${email}` : 'Tutor account connected'}
-                  </Text>
-                </View>
-              ) : null}
-
-              {(isConnected || isGuest || savedGuestId) && !isPendingInvite ? (
-                <View style={styles.dangerZoneAccordion}>
-                  <TouchableOpacity
-                    onPress={() => setShowDangerZone((v) => !v)}
-                    style={styles.dangerZoneHeader}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={styles.dangerZoneHeaderLeft}>
-                      <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
-                      <Text style={styles.dangerZoneTitle}>Danger zone</Text>
-                    </View>
-                    {showDangerZone ? (
-                      <ChevronUp size={20} color={colors.redBold || '#dc2626'} />
-                    ) : (
-                      <ChevronDown size={20} color={colors.redBold || '#dc2626'} />
-                    )}
-                  </TouchableOpacity>
-                  {showDangerZone ? (
-                    <View style={styles.dangerZoneContent}>
-                      <Text style={styles.dangerHint}>
-                        {savedGuestId
-                          ? 'Remove this tutor profile from your family.'
-                          : 'Remove all child access for this tutor. This does not delete their account.'}
-                      </Text>
-                      <TouchableOpacity
-                        style={styles.dangerButton}
-                        onPress={handleRemoveAllAccess}
-                        disabled={isSaving}
-                        {...(Platform.OS === 'web' && { cursor: isSaving ? 'not-allowed' : 'pointer' })}
-                      >
-                        <Text style={styles.dangerButtonText}>
-                          {isSaving ? 'Removing...' : (savedGuestId ? 'Remove tutor' : 'Remove all access')}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                </View>
+                <FamilyMemberAccountSection
+                  roleLabel="tutor"
+                  inviteStatus="connected"
+                  connectedEmail={email || null}
+                />
               ) : null}
             </ScrollView>
           </AppModalShell>
@@ -385,7 +343,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
-  modalWrap: { width: '100%', maxWidth: 860 },
+  modalWrap: { width: '100%', maxWidth: 720 },
   compactShell: {
     ...(Platform.OS === 'web'
       ? { height: 'auto', maxHeight: '90vh', minHeight: 360, borderRadius: 28, boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)' }
@@ -446,40 +404,4 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   errorText: { fontSize: 13, color: '#dc2626' },
-  accountConnectedWrap: { marginTop: 8, marginBottom: 8 },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0f172a',
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
-  },
-  accountRule: { height: 1, backgroundColor: '#e2e8f0', marginTop: 10, marginBottom: 14 },
-  connectedLine: { fontSize: 15, fontWeight: '600', color: '#166534', lineHeight: 22 },
-  dangerZoneAccordion: {
-    borderWidth: 1,
-    borderColor: 'rgba(220, 38, 38, 0.25)',
-    borderRadius: 12,
-    padding: 10,
-    marginTop: 8,
-    backgroundColor: 'rgba(254, 242, 242, 0.5)',
-  },
-  dangerZoneHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-  },
-  dangerZoneHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  dangerZoneTitle: { fontSize: 14, fontWeight: '600', color: colors.redBold || '#dc2626' },
-  dangerZoneContent: { marginTop: 12, gap: 10 },
-  dangerHint: { fontSize: 12, lineHeight: 18, color: '#6b7280' },
-  dangerButton: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.redBold || '#dc2626',
-    paddingVertical: 9,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-  },
-  dangerButtonText: { fontSize: 13, fontWeight: '600', color: '#ffffff' },
 });

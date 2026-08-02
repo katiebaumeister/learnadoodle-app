@@ -130,28 +130,34 @@ export default function BulletinStreamCard({
       </View>
     );
 
+    const previewInner = (
+      <View style={[styles.previewCard, cardStyle]}>
+        <View style={styles.previewRowOuter} {...(contextMenuHandlers || {})}>
+          <View style={styles.previewPressArea}>{previewBody}</View>
+          {headerRight ? (
+            <View style={styles.previewMenuWrap}>{headerRight}</View>
+          ) : null}
+        </View>
+      </View>
+    );
+
+    if (clickable) {
+      return (
+        <TouchableOpacity
+          style={[styles.previewWrap, styles.previewWrapClickable]}
+          onPress={() => onPress(entry)}
+          accessibilityRole="button"
+          activeOpacity={0.96}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          {previewInner}
+        </TouchableOpacity>
+      );
+    }
+
     return (
       <View style={styles.previewWrap}>
-        <View style={[styles.previewCard, cardStyle]}>
-          <View style={styles.previewRowOuter} {...(contextMenuHandlers || {})}>
-            {clickable ? (
-              <TouchableOpacity
-                onPress={() => onPress(entry)}
-                accessibilityRole="button"
-                activeOpacity={0.92}
-                style={[styles.previewPressArea, styles.previewCardClickable]}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                {previewBody}
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.previewPressArea}>{previewBody}</View>
-            )}
-            {headerRight ? (
-              <View style={styles.previewMenuWrap}>{headerRight}</View>
-            ) : null}
-          </View>
-        </View>
+        {previewInner}
       </View>
     );
   }
@@ -187,7 +193,7 @@ export default function BulletinStreamCard({
   );
 
   return (
-    <View style={styles.wrap} {...(contextMenuHandlers || {})}>
+    <View style={[styles.wrap, clickable && styles.wrapClickable]} {...(contextMenuHandlers || {})}>
       <View style={[styles.card, clickable && styles.cardClickable, cardStyle]}>
         {headerRight ? (
           <View style={styles.cardHeaderMenu}>{headerRight}</View>
@@ -228,6 +234,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(148, 163, 184, 0.14)',
   },
+  previewWrapClickable: {
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'background-color 0.12s ease',
+      ':hover': {
+        backgroundColor: 'rgba(241, 245, 249, 0.92)',
+      },
+    }),
+  },
   previewCard: {
     paddingVertical: 14,
     paddingHorizontal: 8,
@@ -240,19 +255,14 @@ const styles = StyleSheet.create({
   previewPressArea: {
     flex: 1,
     minWidth: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
   },
   previewMenuWrap: {
     flexShrink: 0,
     marginTop: 2,
     alignSelf: 'flex-start',
-  },
-  previewCardClickable: {
-    ...(Platform.OS === 'web' && {
-      transition: 'background-color 0.12s ease',
-      ':hover': {
-        backgroundColor: 'rgba(248, 250, 252, 0.9)',
-      },
-    }),
   },
   previewRow: {
     flexDirection: 'row',
@@ -317,6 +327,11 @@ const styles = StyleSheet.create({
   wrap: {
     marginBottom: 0,
   },
+  wrapClickable: {
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
   card: {
     position: 'relative',
     borderRadius: 16,
@@ -328,7 +343,7 @@ const styles = StyleSheet.create({
     paddingBottom: 11,
     ...(Platform.OS === 'web' && {
       boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
-      transition: 'border-color 0.12s ease, box-shadow 0.12s ease',
+      transition: 'border-color 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease',
     }),
   },
   cardHeaderMenu: {
@@ -342,8 +357,10 @@ const styles = StyleSheet.create({
   },
   cardClickable: {
     ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
       ':hover': {
         borderColor: '#CBD5E1',
+        backgroundColor: 'rgba(241, 245, 249, 0.92)',
       },
     }),
   },

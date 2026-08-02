@@ -72,6 +72,8 @@ export default function LearningDayModal({
   const [showAddMaterial, setShowAddMaterial] = useState(false);
   const [formDirty, setFormDirty] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [validationBanner, setValidationBanner] = useState('');
+  const [errors, setErrors] = useState({});
 
   const activeEvent = sessionEvent || event;
   const subjectId = resolveEventSubjectId(activeEvent);
@@ -136,6 +138,8 @@ export default function LearningDayModal({
     setShowAddMaterial(false);
     setShowDeleteConfirm(false);
     setFormDirty(false);
+    setValidationBanner('');
+    setErrors({});
   }, []);
 
   useEffect(() => {
@@ -150,22 +154,164 @@ export default function LearningDayModal({
     });
   }, [activeEvent, curriculumLessonId, onSaved]);
 
+  const clearFieldError = useCallback((key) => {
+    setErrors((prev) => {
+      if (!prev?.[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setValidationBanner('');
+  }, []);
+
+  const validate = useCallback(() => {
+    const next = {};
+    if (!(sessionDate instanceof Date) || Number.isNaN(sessionDate.getTime())) {
+      next.date = 'Start date is required.';
+    }
+    const normalizedTime = normalizeTimeValue(maskedStartTime);
+    if (!normalizedTime || !parseTimeString(normalizedTime)) {
+      next.time = 'Enter a valid start time (e.g., 9:00 AM).';
+    }
+    const durationNum = parseInt(String(durationInput || '').trim(), 10);
+    if (!Number.isFinite(durationNum) || durationNum <= 0) {
+      next.duration = 'Enter a duration in minutes.';
+    } else if (durationNum < 15) {
+      next.duration = 'Duration must be at least 15 minutes.';
+    }
+    if (!eventId || !familyId) {
+      next.form = 'This learning day could not be loaded. Close and try again.';
+    }
+    if (isSkipped) {
+      next.form = 'This session is skipped and cannot be edited.';
+    }
+    setErrors(next);
+    const ok = Object.keys(next).length === 0;
+    if (!ok) {
+      setValidationBanner(
+        next.form || 'Please complete required fields before saving.',
+      );
+    } else {
+      setValidationBanner('');
+    }
+    return ok;
+  }, [
+    sessionDate,
+    maskedStartTime,
+    durationInput,
+    eventId,
+    familyId,
+    isSkipped,
+  ]);
+
+  const buildPendingChanges = useCallback(() => {
+    const originalDate = getEventStartDate(activeEvent);
+    const originalYmd = originalDate ? toYmd(originalDate) : null;
+    const nextYmd = toYmd(sessionDate);
+    const originalHm = eventStartTimeHm(activeEvent);
+    const nextHm = maskedTimeToHm(maskedStartTime, startTime || '09:00');
+    const originalDuration = Number(resolveLearningDayDurationMinutes(activeEvent) || 60);
+    const nextDuration = Number.parseInt(String(durationInput || '').trim(), 10);
+    const timeChanged = nextYmd !== originalYmd
+      || nextHm !== originalHm
+      || (Number.isFinite(nextDuration) && nextDuration !== originalDuration);
+
+    const originalLessonId = activeEvent?.curriculum_lesson_id != null
+      ? String(activeEvent.curriculum_lesson_id)
+      : null;
+    const nextLessonId = curriculumLessonId ? String(curriculumLessonId) : null;
+    const nextUnit = String(unitTitle || '').trim();
+    const nextLesson = String(lessonLabel || '').trim();
+    const prevUnit = String(activeEvent?.unit || activeEvent?.curriculum_unit_title || '').trim();
+    const prevLesson = getPlannerLearningDayLessonTitle(activeEvent)
+      || String(activeEvent?.lesson || '').trim();
+    const lessonChanged = nextLessonId !== originalLessonId
+      || (nextLessonId && (nextUnit !== prevUnit || nextLesson !== prevLesson));
+
+    const originalNotes = String(activeEvent?.description || '').trim();
+    const nextNotes = String(notes || '').trim();
+    const originalMaterialId = resolveMaterialId(activeEvent);
+    const nextMaterialId = materialId ? String(materialId) : null;
+    const notesOrMaterialChanged = nextNotes !== originalNotes || nextMaterialId !== originalMaterialId;
+    const flexibleChanged = !!activeEvent?.is_flexible;
+
+    return {
+      nextYmd,
+      nextHm,
+      nextDuration,
+      timeChanged,
+      originalLessonId,
+      nextLessonId,
+      nextUnit,
+      nextLesson,
+      lessonChanged,
+      nextNotes,
+      nextMaterialId,
+      notesOrMaterialChanged,
+      flexibleChanged,
+      hasChanges: timeChanged || lessonChanged || notesOrMaterialChanged || flexibleChanged || formDirty,
+    };
+  }, [
+    activeEvent,
+    sessionDate,
+    maskedStartTime,
+    startTime,
+    durationInput,
+    curriculumLessonId,
+    unitTitle,
+    lessonLabel,
+    notes,
+    materialId,
+    formDirty,
+  ]);
+
+  const finishSaveSuccess = useCallback((patch = {}) => {
+    setFormDirty(false);
+    setValidationBanner('');
+    toast.push('Learning day updated', 'success');
+    try {
+      notifySaved(patch);
+    } catch (err) {
+      console.warn('[LearningDayModal] onSaved failed:', err);
+    }
+    // Always close from the modal so a parent handler error cannot leave it open.
+    onClose?.();
+  }, [toast, notifySaved, onClose]);
+
+  const handleBlockedSave = useCallback(() => {
+    if (!validate()) return;
+  }, [validate]);
+
   const handleSave = async () => {
-    if (!eventId || !familyId || isSkipped || !formDirty) return;
+    if (!validate()) return;
+    const pending = buildPendingChanges();
+    // No outstanding diffs (or already persisted): toast + close like other modals.
+    if (!pending.timeChanged && !pending.lessonChanged
+      && !pending.notesOrMaterialChanged && !pending.flexibleChanged) {
+      finishSaveSuccess({});
+      return;
+    }
     setSaving(true);
+    setValidationBanner('');
     try {
       let patch = {};
-      const originalDate = getEventStartDate(activeEvent);
-      const originalYmd = originalDate ? toYmd(originalDate) : null;
-      const nextYmd = toYmd(sessionDate);
-      const originalHm = eventStartTimeHm(activeEvent);
-      const originalDuration = String(resolveLearningDayDurationMinutes(activeEvent) || 60);
-      const nextHm = maskedTimeToHm(maskedStartTime, startTime || '09:00');
+      const {
+        nextYmd,
+        nextHm,
+        nextDuration,
+        timeChanged,
+        nextLessonId,
+        originalLessonId,
+        nextUnit,
+        nextLesson,
+        nextNotes,
+        nextMaterialId,
+        notesOrMaterialChanged,
+        flexibleChanged,
+      } = pending;
+
       setStartTime(nextHm);
       setMaskedStartTime(hmToMaskedTime(nextHm));
-      const timeChanged = nextYmd !== originalYmd
-        || nextHm !== originalHm
-        || durationInput !== originalDuration;
 
       if (timeChanged) {
         const result = await applyLearningDayTimeOverride({
@@ -173,7 +319,7 @@ export default function LearningDayModal({
           familyId,
           event: activeEvent,
           startTimeHm: nextHm,
-          durationMinutes: durationInput,
+          durationMinutes: Number.isFinite(nextDuration) ? nextDuration : durationInput,
           sessionDateYmd: nextYmd,
         });
         patch = {
@@ -184,10 +330,6 @@ export default function LearningDayModal({
         };
       }
 
-      const originalLessonId = activeEvent?.curriculum_lesson_id != null
-        ? String(activeEvent.curriculum_lesson_id)
-        : null;
-      const nextLessonId = curriculumLessonId ? String(curriculumLessonId) : null;
       if (nextLessonId !== originalLessonId) {
         if (nextLessonId) {
           await linkLessonToEvent({
@@ -225,9 +367,7 @@ export default function LearningDayModal({
             curriculum_metadata: {},
           };
         }
-      } else if (nextLessonId && (unitTitle || lessonLabel)) {
-        const nextUnit = String(unitTitle || '').trim();
-        const nextLesson = String(lessonLabel || '').trim();
+      } else if (nextLessonId && (nextUnit || nextLesson)) {
         const prevUnit = String(activeEvent?.unit || activeEvent?.curriculum_unit_title || '').trim();
         const prevLesson = getPlannerLearningDayLessonTitle(activeEvent)
           || String(activeEvent?.lesson || '').trim();
@@ -248,16 +388,12 @@ export default function LearningDayModal({
         }
       }
 
-      if (activeEvent?.is_flexible) {
+      if (flexibleChanged) {
         await updateEvent(eventId, { is_flexible: false }, familyId);
         patch = { ...patch, is_flexible: false };
       }
 
-      const originalNotes = String(activeEvent?.description || '').trim();
-      const nextNotes = String(notes || '').trim();
-      const originalMaterialId = resolveMaterialId(activeEvent);
-      const nextMaterialId = materialId ? String(materialId) : null;
-      if (nextNotes !== originalNotes || nextMaterialId !== originalMaterialId) {
+      if (notesOrMaterialChanged) {
         const materialIds = materialIdsFromSelection(nextMaterialId);
         const { error } = await updateEvent(
           eventId,
@@ -278,11 +414,11 @@ export default function LearningDayModal({
       }
 
       setSessionEvent((prev) => ({ ...(prev || activeEvent), ...patch }));
-      setFormDirty(false);
-      toast.push('Learning day updated', 'success');
-      notifySaved(patch);
+      finishSaveSuccess(patch);
     } catch (err) {
-      toast.push(err?.message || 'Failed to save learning day', 'error');
+      const message = err?.message || 'Failed to save learning day';
+      setValidationBanner(message);
+      toast.push(message, 'error');
     } finally {
       setSaving(false);
     }
@@ -330,7 +466,8 @@ export default function LearningDayModal({
           title="Learning day"
           onClose={onClose}
           saving={saving || deleting}
-          saveDisabled={!formDirty || isSkipped}
+          saveDisabled={isSkipped}
+          validationBanner={validationBanner}
           footer={(
             <ModalFooter
               mode="edit"
@@ -344,8 +481,9 @@ export default function LearningDayModal({
               onPrimary={handleSave}
               accent="#9ECFFB"
               disabled={saving || deleting}
-              visuallyDisabled={!formDirty || isSkipped}
+              visuallyDisabled={isSkipped}
               loading={saving || deleting}
+              onBlockedPrimary={handleBlockedSave}
               secondaryActions={secondaryActions}
             />
           )}
@@ -379,12 +517,14 @@ export default function LearningDayModal({
                   onStartDateChange={(nextDate) => {
                     setSessionDate(nextDate);
                     setFormDirty(true);
+                    clearFieldError('date');
                   }}
                   showEndDate={false}
                   startTime={maskedStartTime}
                   onStartTimeChange={(masked) => {
                     setMaskedStartTime(masked);
                     setFormDirty(true);
+                    clearFieldError('time');
                     const parsed = parseTimeString(normalizeTimeValue(masked));
                     if (parsed) {
                       setStartTime(
@@ -397,6 +537,8 @@ export default function LearningDayModal({
                   showTimes
                   onOpenStartDatePicker={() => setDatePickerOpen(true)}
                   matchEventModalDateWidth
+                  startDateError={errors.date || null}
+                  timeError={errors.time || null}
                   timeColumnStyle={styles.scheduleColumnLearningDayTime}
                   trailingColumnStyle={styles.scheduleColumnLearningDayDuration}
                   trailingContent={(
@@ -407,13 +549,20 @@ export default function LearningDayModal({
                         onChangeText={(value) => {
                           setDurationInput(value.replace(/[^\d]/g, '').slice(0, 3));
                           setFormDirty(true);
+                          clearFieldError('duration');
                         }}
                         editable={!disabled}
-                        style={styles.fieldInput}
+                        style={[
+                          styles.fieldInput,
+                          errors.duration ? { borderColor: '#ef4444' } : null,
+                        ]}
                         keyboardType="number-pad"
                         placeholder="60"
                         placeholderTextColor={PLACEHOLDER}
                       />
+                      {errors.duration ? (
+                        <Text style={styles.errorTextSmall}>{errors.duration}</Text>
+                      ) : null}
                     </>
                   )}
                 />
@@ -432,11 +581,13 @@ export default function LearningDayModal({
                     setUnitId(nextUnitId || null);
                     setUnitTitle(nextUnitTitle || '');
                     setFormDirty(true);
+                    setValidationBanner('');
                   }}
                   onLessonChange={({ curriculumLessonId: nextLessonId, lessonLabel: nextLessonLabel }) => {
                     setCurriculumLessonId(nextLessonId || null);
                     setLessonLabel(nextLessonLabel || '');
                     setFormDirty(true);
+                    setValidationBanner('');
                   }}
                 />
 
@@ -445,6 +596,7 @@ export default function LearningDayModal({
                   onChangeText={(value) => {
                     setNotes(value);
                     setFormDirty(true);
+                    setValidationBanner('');
                   }}
                   label="Session notes"
                   placeholder="Special notes for this learning day"
@@ -457,6 +609,7 @@ export default function LearningDayModal({
                     onMaterialChange={(nextMaterialId) => {
                       setMaterialId(nextMaterialId);
                       setFormDirty(true);
+                      setValidationBanner('');
                     }}
                     onAddNew={() => setShowAddMaterial(true)}
                     placeholder="Select attachment…"
@@ -496,6 +649,7 @@ export default function LearningDayModal({
         onSelectDate={(nextDate) => {
           setSessionDate(nextDate);
           setFormDirty(true);
+          clearFieldError('date');
           setDatePickerOpen(false);
         }}
       />

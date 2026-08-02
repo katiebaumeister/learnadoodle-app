@@ -101,6 +101,8 @@ export default function EventModal({
       String(ev.child_id || ''),
       Array.isArray(ev.child_ids) ? ev.child_ids.map(String).sort().join(',') : '',
       String(ev.material_id || ''),
+      String(ev.location || ''),
+      String(ev.description || ''),
       recurrenceSig,
     ].join('|');
   }, []);

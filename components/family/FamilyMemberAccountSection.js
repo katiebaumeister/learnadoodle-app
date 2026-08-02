@@ -8,6 +8,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import { designTokens } from '../../theme/designTokens';
 
 /**
  * Account / invite block for guest parents and tutors (mirrors EditChildModal account section).
@@ -20,13 +21,18 @@ export default function FamilyMemberAccountSection({
   onSendInvite,
   inviting = false,
   disabled = false,
+  autoOpenInvite = false,
 }) {
   const [email, setEmail] = useState(pendingEmail || '');
-  const [showInviteForm, setShowInviteForm] = useState(false);
+  const [showInviteForm, setShowInviteForm] = useState(Boolean(autoOpenInvite));
 
   useEffect(() => {
     if (pendingEmail) setEmail(pendingEmail);
   }, [pendingEmail, inviteStatus]);
+
+  useEffect(() => {
+    if (autoOpenInvite) setShowInviteForm(true);
+  }, [autoOpenInvite]);
 
   const label = roleLabel === 'tutor' ? 'tutor' : 'parent';
   const inviteCta = roleLabel === 'tutor' ? 'Invite tutor' : 'Invite parent';
@@ -37,12 +43,14 @@ export default function FamilyMemberAccountSection({
     await onSendInvite?.(trimmed);
   };
 
-  if (inviteStatus === 'connected' && connectedEmail) {
+  if (inviteStatus === 'connected') {
     return (
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Account</Text>
         <View style={styles.rule} />
-        <Text style={styles.connectedLine}>✓ Connected · {connectedEmail}</Text>
+        <Text style={styles.connectedLine}>
+          {connectedEmail ? `✓ Connected · ${connectedEmail}` : '✓ Connected'}
+        </Text>
       </View>
     );
   }
@@ -112,7 +120,7 @@ export default function FamilyMemberAccountSection({
               {...(Platform.OS === 'web' && { cursor: inviting ? 'not-allowed' : 'pointer' })}
             >
               {inviting ? (
-                <ActivityIndicator size="small" color="#ffffff" />
+                <ActivityIndicator size="small" color={designTokens.colors.primary} />
               ) : (
                 <Text style={styles.inviteButtonText}>Send invite</Text>
               )}
@@ -136,7 +144,13 @@ export default function FamilyMemberAccountSection({
 const styles = StyleSheet.create({
   section: {
     marginTop: 8,
-    marginBottom: 8,
+    marginBottom: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   sectionTitle: {
     fontSize: 13,
@@ -169,7 +183,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   emptyText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
     color: '#0f172a',
     marginBottom: 6,
@@ -177,7 +191,7 @@ const styles = StyleSheet.create({
   purposeLine: {
     fontSize: 13,
     color: '#64748b',
-    lineHeight: 19,
+    lineHeight: 20,
     marginBottom: 14,
   },
   fieldInput: {
@@ -217,15 +231,21 @@ const styles = StyleSheet.create({
   },
   inviteButton: {
     alignSelf: 'flex-start',
-    backgroundColor: '#9ECFFB',
-    paddingVertical: 10,
+    paddingVertical: 8,
     paddingHorizontal: 16,
-    borderRadius: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: designTokens.colors.primary,
+    backgroundColor: designTokens.softAccents.core,
     marginTop: 4,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   inviteButtonText: {
     fontSize: 14,
-    fontWeight: '700',
-    color: '#ffffff',
+    fontWeight: '600',
+    color: designTokens.colors.primary,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

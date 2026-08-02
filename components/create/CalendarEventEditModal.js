@@ -16,6 +16,7 @@ import { createModalStyles as styles, PLACEHOLDER, CREATE_EVENT_MODAL_MAX_WIDTH 
 import { updateCalendarEvent, updateCalendarEventSeries, buildEventRecurrenceRule } from '../../lib/create/saveEventHelpers';
 import { validateOptionalEventTimes, computeEventTimes } from '../../lib/create/eventTimeUtils';
 import { hydrateCalendarEventForm } from '../../lib/create/calendarEventFormUtils';
+import { fetchCalendarEventForEdit } from '../../lib/create/calendarEventEditHelpers';
 import { findEventConflict, isOverlapError, formatTimeForInput } from '../../lib/create/eventConflictHelpers';
 import EventConflictBanner from './shared/EventConflictBanner';
 

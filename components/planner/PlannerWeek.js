@@ -5,6 +5,7 @@ import { Calendar, Sparkles, List, Lock, Unlock, Printer } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { colors, shadows } from '../../theme/colors';
 import DraggableEvent from './DraggableEvent';
+import EventChip from '../calendar/EventChip';
 // Re-enabling step by step
 import EventModal from '../events/EventModal';
 import RescheduleReportModal from './RescheduleReportModal';
@@ -20,6 +21,7 @@ import SaveTemplateModal from '../templates/SaveTemplateModal';
 import { logDragDrop, logDeleteEvent } from '../../app/services/plannerInstrumentation';
 import NoteEditorModal from '../records/NoteEditorModal';
 import { isPartOfRecurringSeries } from '../../lib/utils/recurringEventUtils';
+import { isAllDayEvent, isTimelessUntimedEvent } from './plannerListTableUtils';
 
 // Helper functions
 function startOfWeek(d) {
@@ -91,6 +93,18 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
     });
   }, [events]);
 
+  // Untimed / explicit all-day use midnight–EOD placeholders for storage — keep them
+  // out of the timed grid so they don't render as a 12 AM full-height block.
+  const { untimedEvents, timedEvents } = useMemo(() => {
+    const untimed = [];
+    const timed = [];
+    sortedEvents.forEach((ev) => {
+      if (isTimelessUntimedEvent(ev) || isAllDayEvent(ev)) untimed.push(ev);
+      else timed.push(ev);
+    });
+    return { untimedEvents: untimed, timedEvents: timed };
+  }, [sortedEvents]);
+
   // Use View for both platforms (React Native Web handles data attributes)
   return (
     <View 
@@ -146,8 +160,56 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
               </View>
             )}
 
-          {/* Events - Now Draggable with native HTML5 */}
-          {sortedEvents
+          {/* Untimed / all-day: compact chips (not placed at midnight on the grid) */}
+          {untimedEvents.length > 0 ? (
+            <View style={styles.untimedEventsStrip}>
+              {untimedEvents.map((ev) => {
+                const isDragging = draggedEventId === ev.id;
+                const isHoliday = (ev.event_type || ev.type || '').toLowerCase() === 'holiday';
+                const canDrag = !isBlackout && ev.status !== 'done' && !isHoliday;
+                return (
+                  <View
+                    key={`untimed-${ev.id}`}
+                    {...(typeof window !== 'undefined' && {
+                      onMouseDown: (e) => {
+                        const mouseButton = typeof e.button === 'number' ? e.button : e.nativeEvent?.button;
+                        if (typeof mouseButton === 'number' && mouseButton !== 0) return;
+                        if (canDrag && onMouseDragStart) {
+                          e.stopPropagation();
+                          onMouseDragStart(e, ev.id);
+                        }
+                      },
+                      onClick: (e) => {
+                        if (!isDragging) {
+                          e.stopPropagation();
+                          if (onEventClick) onEventClick(ev);
+                        }
+                      },
+                      onContextMenu: (e) => {
+                        if (onEventRightClick) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onEventRightClick(ev, e.nativeEvent || e);
+                        }
+                      },
+                    })}
+                    style={{ zIndex: isDragging ? 1000 : 10, opacity: isDragging ? 0.5 : 1 }}
+                  >
+                    <EventChip
+                      ev={ev}
+                      children={children}
+                      weekBoardChip
+                      fullWidth
+                      disableTouchable
+                    />
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
+
+          {/* Timed events - Now Draggable with native HTML5 */}
+          {timedEvents
             .filter(ev => {
               // Filter events to only show those within or overlapping the visible time range
               const eventDate = new Date(ev.start_ts);
@@ -3051,6 +3113,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f9ff',
     borderColor: colors.blueBold,
     borderWidth: 2,
+  },
+  untimedEventsStrip: {
+    position: 'absolute',
+    top: 2,
+    left: 2,
+    right: 2,
+    zIndex: 20,
+    gap: 2,
   },
   dayColumn: {
     flex: 1,

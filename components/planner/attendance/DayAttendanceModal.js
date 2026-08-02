@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { View, Text, Modal, TouchableOpacity, ScrollView, StyleSheet, Platform } from 'react-native';
 import { CheckCircle2, Circle, X } from 'lucide-react';
+import {
+  formatEventScheduleTimeLabel,
+  isAllDayEvent,
+  isTimelessUntimedEvent,
+} from '../plannerListTableUtils';
 
 export default function DayAttendanceModal({
   visible,
@@ -37,17 +42,38 @@ export default function DayAttendanceModal({
 
   if (!visible) return null;
 
-  const duration = (e) => {
-    const mins = e.duration_minutes ?? (e.end_ts && e.start_ts
-      ? Math.round((new Date(e.end_ts) - new Date(e.start_ts)) / 60000) : 0);
-    return `${mins} min`;
-  };
+  const eventWhenLabel = (e) => {
+    if (isAllDayEvent(e)) return 'All day';
+    if (isTimelessUntimedEvent(e)) return 'No time';
+    const schedule = formatEventScheduleTimeLabel(e);
+    if (/^all day$/i.test(String(schedule || '').trim())) return 'All day';
+    if (/^no time( added)?$/i.test(String(schedule || '').trim())) return 'No time';
 
-  const timeStr = (e) => {
-    const t = e.start_ts || e.start || e.start_local;
-    if (!t) return '';
-    const d = new Date(t);
-    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    let mins = Math.round(Number(
+      e.duration_minutes ?? (e.end_ts && e.start_ts
+        ? (new Date(e.end_ts) - new Date(e.start_ts)) / 60000
+        : 0),
+    ) || 0);
+    if (mins >= 23 * 60 && mins <= 24 * 60) {
+      const start = e.start_ts || e.start || e.start_local;
+      if (start) {
+        const d = new Date(start);
+        if (!Number.isNaN(d.getTime()) && d.getHours() === 0 && d.getMinutes() === 0) {
+          return 'No time';
+        }
+      }
+    }
+    let dur = '';
+    if (mins > 0 && mins < 60) dur = `${mins} min`;
+    else if (mins >= 60) {
+      const hours = Math.floor(mins / 60);
+      const rem = mins % 60;
+      dur = rem === 0
+        ? (hours === 1 ? '1 hr' : `${hours} hr`)
+        : `${hours} hr ${rem} min`;
+    }
+    if (schedule && dur) return `${schedule} • ${dur}`;
+    return schedule || dur || '';
   };
 
   const sortedEvents = [...events].sort((a, b) => {
@@ -98,7 +124,7 @@ export default function DayAttendanceModal({
                     <View style={styles.eventInfo}>
                       <Text style={styles.eventTitle}>{e.title || 'Event'}</Text>
                       <Text style={styles.eventMeta}>
-                        {timeStr(e) ? `${timeStr(e)} · ${duration(e)}` : duration(e)}
+                        {eventWhenLabel(e)}
                       </Text>
                     </View>
                   </TouchableOpacity>

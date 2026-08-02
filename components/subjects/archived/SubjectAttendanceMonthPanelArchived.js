@@ -74,9 +74,9 @@ const styles = StyleSheet.create({
   attendanceKeyRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   attendanceKeyPill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: '#F3F4F6' },
   attendanceKeyDot: { width: 8, height: 8, borderRadius: 999 },
-  attendanceKeyDotAttended: { backgroundColor: '#6BB3E8' },
+  attendanceKeyDotAttended: { backgroundColor: '#7ECF9A' },
   attendanceKeyDotUnattended: { backgroundColor: '#F2A0A0' },
-  attendanceKeyDotUpcoming: { backgroundColor: '#C7DDF6' },
+  attendanceKeyDotUpcoming: { backgroundColor: '#BFDBFE' },
   attendanceKeyDotNoEvents: { backgroundColor: '#E5E7EB' },
   attendanceKeyText: { fontSize: 12, color: '#6B7280', ...WEB_BODY_FONT },
 });

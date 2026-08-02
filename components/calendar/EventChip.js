@@ -78,7 +78,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     return categoryMeta.chipText;
   };
 
-  const getTitleWeight = () => '500';
+  const getTitleWeight = () => '600';
 
   const getTextColor = () => categoryMeta.chipText;
 

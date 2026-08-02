@@ -22,6 +22,11 @@ import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
 import { seedHomeWelcomeBulletinPost } from '../../lib/homeWelcomeBulletin';
+import { toLocalYmd } from '../../lib/subjectConfigureSchedule';
+import {
+  fetchPlannerAlignedDayEvents,
+  scheduleEventsForYmdFromPlannerMap,
+} from '../../lib/planner/dayScheduleEvents';
 
 function getTimeBasedGreeting() {
   const hour = new Date().getHours();
@@ -185,6 +190,8 @@ export default function ParentHomeScreen({
   hideRailOnboardingCards = false,
   preloadedSubjectsOverview = null,
   preloadedSubjects = null,
+  /** Live planner month cache (dateKey -> events[]) for instant Home/Planner parity. */
+  plannerEventsByDate = null,
 }) {
   const session = useSession();
   const [homeData, setHomeData] = useState(null);
@@ -284,14 +291,30 @@ export default function ParentHomeScreen({
     }
   };
 
+  const clearHomeDataCache = (fid, date = null) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !fid) return;
+    try {
+      if (date) {
+        localStorage.removeItem(getHomeDataCacheKey(fid, date));
+        return;
+      }
+      const prefix = `home_data_${fid}_`;
+      Object.keys(localStorage).forEach((key) => {
+        if (key.startsWith(prefix)) localStorage.removeItem(key);
+      });
+    } catch (err) {
+      console.error('[ParentHomeScreen] Error clearing cache:', err);
+    }
+  };
+
   const loadDashboardExtras = useCallback(async (fid) => {
     if (!fid) return;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const todayStr = today.toISOString().split('T')[0];
+    const todayStr = toLocalYmd(today);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+    const tomorrowStr = toLocalYmd(tomorrow);
 
     const assignmentSelect = `
       *,
@@ -378,7 +401,7 @@ export default function ParentHomeScreen({
         ? selectedDate
         : new Date();
       validDate.setHours(0, 0, 0, 0);
-      const dateStr = validDate.toISOString().split('T')[0];
+      const dateStr = toLocalYmd(validDate);
       
       const cachedData = loadHomeDataFromCache(familyId, dateStr);
       if (cachedData) {
@@ -431,14 +454,18 @@ export default function ParentHomeScreen({
         ? selectedDate
         : new Date();
       validDate.setHours(0, 0, 0, 0);
-      const dateStr = validDate.toISOString().split('T')[0];
+      const dateStr = toLocalYmd(validDate);
 
-      // Load home data - match the signature used in WebContent
-      const { data, error } = await supabase.rpc('get_home_data', {
-        _family_id: familyId,
-        _date: dateStr,
-        _horizon_days: 14,
-      });
+      // Load home shell data + Planner-aligned day schedule in parallel.
+      const [homeResult, scheduleResult] = await Promise.all([
+        supabase.rpc('get_home_data', {
+          _family_id: familyId,
+          _date: dateStr,
+          _horizon_days: 14,
+        }),
+        fetchPlannerAlignedDayEvents(familyId, validDate),
+      ]);
+      const { data, error } = homeResult;
 
       if (error) {
         if (!isAbortLikeError(error)) {
@@ -476,7 +503,11 @@ export default function ParentHomeScreen({
         children: [],
         subjects: [],
       };
-      const learningRows = Array.isArray(homeDataResult.learning) ? homeDataResult.learning : [];
+      // Prefer get_month_view (Planner) day slice so Home never drifts from Planner.
+      const plannerLearning = Array.isArray(scheduleResult?.events) ? scheduleResult.events : [];
+      const learningRows = plannerLearning.length > 0 || !scheduleResult?.error
+        ? plannerLearning
+        : (Array.isArray(homeDataResult.learning) ? homeDataResult.learning : []);
       const learningEventIds = Array.from(
         new Set(
           learningRows.flatMap((event) => {
@@ -559,8 +590,9 @@ export default function ParentHomeScreen({
         idsMatch(row?.data?.event_id, deletedId)
       );
     };
-    const onRefreshCalendar = (e) => {
-      if (e?.detail?.skipHomeRefresh) return;
+    const onRefreshCalendar = () => {
+      // Always invalidate + refetch so Planner edits never leave Home stale.
+      clearHomeDataCache(familyId);
       loadDataRef.current(true);
       loadDashboardExtras(familyId);
     };
@@ -608,6 +640,7 @@ export default function ParentHomeScreen({
         )
       );
       if (!deletedId && !deletedAcademicYearId && cleanSeriesLinkIds.length === 0) return;
+      clearHomeDataCache(familyId);
 
       setHomeData((prev) => {
         if (!prev || !Array.isArray(prev.learning) || prev.learning.length === 0) return prev;
@@ -674,6 +707,23 @@ export default function ParentHomeScreen({
   };
   const children = effectiveHomeData.children || [];
 
+  // Prefer live Planner cache for the selected day when WebContent has it warm.
+  const selectedDateKey = toLocalYmd(
+    selectedDate instanceof Date && !Number.isNaN(selectedDate.getTime())
+      ? selectedDate
+      : new Date()
+  );
+  const plannerAlignedLearning = useMemo(() => {
+    if (plannerEventsByDate && typeof plannerEventsByDate === 'object') {
+      const fromPlanner = scheduleEventsForYmdFromPlannerMap(plannerEventsByDate, selectedDateKey);
+      if (fromPlanner.length > 0 || (plannerEventsByDate[selectedDateKey] != null)) {
+        return fromPlanner;
+      }
+    }
+    return effectiveHomeData.learning || [];
+  }, [plannerEventsByDate, selectedDateKey, effectiveHomeData.learning]);
+  const filteredLearning = plannerAlignedLearning;
+
   if (error && !homeData) {
     return (
       <View style={styles.loadingContainer}>
@@ -685,8 +735,6 @@ export default function ParentHomeScreen({
     );
   }
 
-  // Compute weather forecast with contextual signals
-  const filteredLearning = effectiveHomeData.learning || [];
   const blockCount = filteredLearning.length;
   const backlogCount = (effectiveHomeData.tasks || []).filter(t => !t.start_ts || t.status === 'backlog').length;
   const overdueCount = (effectiveHomeData.tasks || []).filter(t => t.due_time === 'Overdue').length;

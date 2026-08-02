@@ -1885,16 +1885,19 @@ async def create_guest_member(
         insert_row["tutor_permission_profile"] = tutor_profile
 
     try:
-        res = supabase.table("family_guest_members").insert(insert_row).select("*").single().execute()
+        # supabase-py SyncQueryRequestBuilder has no .select() after insert();
+        # Prefer: return=representation still returns the inserted row in .data.
+        res = supabase.table("family_guest_members").insert(insert_row).execute()
     except Exception as e:
         log_event("family.create_guest_member.error", user_id=user["id"], error=str(e))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create family member profile")
 
-    if not res.data:
+    row = res.data[0] if isinstance(res.data, list) and res.data else (res.data if isinstance(res.data, dict) else None)
+    if not row:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create family member profile")
 
-    log_event("family.create_guest_member.success", user_id=user["id"], family_id=family_id, guest_id=res.data.get("id"))
-    return _guest_member_out(res.data)
+    log_event("family.create_guest_member.success", user_id=user["id"], family_id=family_id, guest_id=row.get("id"))
+    return _guest_member_out(row)
 
 
 @router.patch("/guest_members/{guest_id}", response_model=GuestMemberOut)
@@ -1953,23 +1956,23 @@ async def update_guest_member(
         update_payload["tutor_permission_profile"] = _normalize_tutor_permission_profile(body.tutor_permission_profile)
 
     try:
+        # supabase-py SyncFilterRequestBuilder has no .select() after update().
         res = (
             supabase.table("family_guest_members")
             .update(update_payload)
             .eq("id", guest_id)
             .eq("family_id", family_id)
-            .select("*")
-            .single()
             .execute()
         )
     except Exception as e:
         log_event("family.update_guest_member.error", user_id=user["id"], error=str(e))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update family member profile")
 
-    if not res.data:
+    row = res.data[0] if isinstance(res.data, list) and res.data else (res.data if isinstance(res.data, dict) else None)
+    if not row:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update family member profile")
 
-    return _guest_member_out(res.data)
+    return _guest_member_out(row)
 
 
 @router.delete("/guest_members/{guest_id}")

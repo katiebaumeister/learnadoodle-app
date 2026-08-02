@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
 import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Heart, FileText, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw, MoreVertical } from 'lucide-react';
-import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount, requestPersonalDataExport, setOnboardingPlanningMode } from '../../lib/apiClient';
+import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, getAPIBase, deleteAccount, requestPersonalDataExport, setOnboardingPlanningMode, deleteGuestMember, permanentDeleteChild } from '../../lib/apiClient';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
@@ -20,7 +20,7 @@ import {
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
-import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
+import { resolveBundledAvatarSource, normalizeAvatarAssetKey, DEFAULT_AVATAR_KEY } from '../../assets/imageAssetMap';
 import StableImage from '../ui/StableImage';
 import EditChildModal from '../EditChildModal';
 import EditParentModal from '../EditParentModal';
@@ -218,13 +218,14 @@ function MemberRowActionsMenu({ menuKey, openMenuKey, setOpenMenuKey, items = []
         triggerRef={triggerRef}
         onClose={() => setOpenMenuKey(null)}
         placement="bottom-end"
-        width={184}
+        width={196}
       >
         {items.map((item, index) => (
           <DropdownItem
             key={item.label}
             icon={item.icon}
             label={item.label}
+            danger={Boolean(item.danger)}
             onPress={() => {
               setOpenMenuKey(null);
               item.onPress?.();
@@ -235,6 +236,24 @@ function MemberRowActionsMenu({ menuKey, openMenuKey, setOpenMenuKey, items = []
       </Dropdown>
     </>
   );
+}
+
+async function confirmMemberDelete(label) {
+  const msg = `Remove ${label} from your family? You can add them again anytime.`;
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+    return Promise.resolve(window.confirm(msg));
+  }
+  return new Promise((resolve) => {
+    Alert.alert(
+      'Remove member?',
+      msg,
+      [
+        { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Remove', style: 'destructive', onPress: () => resolve(true) },
+      ],
+      { cancelable: true }
+    );
+  });
 }
 
 export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null, hideInternalSidebar = false, embeddedInFamily = false, embeddedInModal = false, onViewAsChild = null, onExitChildView = null }) {
@@ -253,13 +272,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [error, setError] = useState(null);
   const [editingChild, setEditingChild] = useState(null);
   const [showEditChildModal, setShowEditChildModal] = useState(false);
+  const [pendingDeleteChild, setPendingDeleteChild] = useState(null);
+  const [deletingChild, setDeletingChild] = useState(false);
   const [editingTutor, setEditingTutor] = useState(null);
   const [showEditTutorModal, setShowEditTutorModal] = useState(false);
   const [editingParent, setEditingParent] = useState(null);
   const [showEditParentModal, setShowEditParentModal] = useState(false);
   const [familyId, setFamilyId] = useState(propFamilyId);
   const [hoveredTutorId, setHoveredTutorId] = useState(null);
-  const [familyNameRowHovered, setFamilyNameRowHovered] = useState(false);
   const [openMemberMenuKey, setOpenMemberMenuKey] = useState(null);
   
   // Profile state
@@ -563,11 +583,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [parentInviteResultUrl, setParentInviteResultUrl] = useState(null);
   const [invitingParent, setInvitingParent] = useState(false);
 
-  // Family name inline edit (Parents section)
-  const [isEditingFamilyName, setIsEditingFamilyName] = useState(false);
-  const [editingFamilyNameValue, setEditingFamilyNameValue] = useState('');
-  const [savingFamilyName, setSavingFamilyName] = useState(false);
-  
   // Tutor invite state (legacy inline form — prefer EditTutorModal)
   
   const [updatingTutorId, setUpdatingTutorId] = useState(null);
@@ -2018,17 +2033,148 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     setError(null);
   }, [canAddAnotherParent, toast]);
 
-  const openEditGuestParent = useCallback((guest) => {
+  const selfParentDisplayName = useMemo(() => {
+    const fromFamily = family?.family_name != null ? String(family.family_name).trim() : '';
+    if (!isGenericFamilyDisplayName(fromFamily)) return fromFamily;
+    const fromProfile = String(profile?.first_name || profile?.name || '').trim();
+    if (fromProfile) return fromProfile;
+    return getFamilyRowDisplayName(family?.family_name, { isParentViewer: showFamilyRowYouCue });
+  }, [family?.family_name, profile?.first_name, profile?.name, showFamilyRowYouCue]);
+
+  const selfParentAvatarKey = useMemo(
+    () => normalizeAvatarAssetKey(profile?.avatar_url) || DEFAULT_AVATAR_KEY,
+    [profile?.avatar_url]
+  );
+
+  const openSelfParentModal = useCallback(() => {
+    const fromFamily = family?.family_name != null ? String(family.family_name).trim() : '';
+    const fromProfile = String(profile?.first_name || profile?.name || '').trim();
+    const displayName = !isGenericFamilyDisplayName(fromFamily)
+      ? fromFamily
+      : (fromProfile || getFamilyRowEditValue(family?.family_name));
+    setEditingParent({
+      id: user?.id || profile?.id || 'self',
+      isSelf: true,
+      display_name: displayName,
+      avatar_url: normalizeAvatarAssetKey(profile?.avatar_url) || DEFAULT_AVATAR_KEY,
+      email: profile?.email || user?.email || null,
+      invite_status: 'connected',
+    });
+    setShowEditParentModal(true);
+    setError(null);
+  }, [family?.family_name, profile?.avatar_url, profile?.email, profile?.first_name, profile?.id, profile?.name, user?.email, user?.id]);
+
+  const openEditGuestParent = useCallback((guest, { openInvite = false } = {}) => {
     setEditingParent({
       id: String(guest.id),
       isGuest: true,
       display_name: guest.display_name || guest.name || '',
       avatar_url: guest.avatar_url || 'prof1',
       invite_status: 'none',
+      openInviteForm: openInvite,
     });
     setShowEditParentModal(true);
     setError(null);
   }, []);
+
+  const refreshFamilyMembers = useCallback(async () => {
+    try {
+      const { data, error: err } = await getFamilyMembers({ force: true });
+      if (!err && data) {
+        setFamily(data);
+        onFamilyUpdate?.(data);
+      } else {
+        onFamilyUpdate?.();
+      }
+    } catch (_) {
+      onFamilyUpdate?.();
+    }
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('refreshFamily'));
+    }
+  }, [onFamilyUpdate]);
+
+  const handleDeleteGuestParent = useCallback(async (guest) => {
+    const name = guest?.display_name || guest?.name || 'this parent';
+    const ok = await confirmMemberDelete(name);
+    if (!ok || !guest?.id) return;
+    try {
+      const { error: delErr } = await deleteGuestMember(String(guest.id));
+      if (delErr) throw delErr;
+      toast.push('Parent removed.', 'success');
+      await refreshFamilyMembers();
+    } catch (err) {
+      toast.push(err?.message || 'Could not remove parent.', 'error');
+    }
+  }, [refreshFamilyMembers, toast]);
+
+  const handleDeleteGuestTutor = useCallback(async (guest) => {
+    const name = guest?.display_name || guest?.name || 'this tutor';
+    const ok = await confirmMemberDelete(name);
+    if (!ok || !guest?.id) return;
+    try {
+      const { error: delErr } = await deleteGuestMember(String(guest.id));
+      if (delErr) throw delErr;
+      toast.push('Tutor removed.', 'success');
+      await refreshFamilyMembers();
+    } catch (err) {
+      toast.push(err?.message || 'Could not remove tutor.', 'error');
+    }
+  }, [refreshFamilyMembers, toast]);
+
+  const handleRemoveConnectedTutor = useCallback(async (tutor) => {
+    const name = tutor?.name || tutor?.email || 'this tutor';
+    const ok = await confirmMemberDelete(name);
+    if (!ok || !tutor?.id) return;
+    try {
+      const { error: patchError } = await updateTutorScope(String(tutor.id), { child_ids: [] });
+      if (patchError) throw patchError;
+      toast.push('Tutor access removed.', 'success');
+      await refreshFamilyMembers();
+    } catch (err) {
+      toast.push(err?.message || 'Could not remove tutor access.', 'error');
+    }
+  }, [refreshFamilyMembers, toast]);
+
+  const handleConfirmDeleteChild = useCallback(async () => {
+    if (!pendingDeleteChild?.id || deletingChild) return;
+    const confirmedName = String(
+      pendingDeleteChild.first_name || pendingDeleteChild.name || ''
+    ).trim();
+    if (!confirmedName) {
+      toast.push('Could not delete child — missing name.', 'error');
+      return;
+    }
+    setDeletingChild(true);
+    try {
+      const { data, error: delErr } = await permanentDeleteChild({
+        childId: pendingDeleteChild.id,
+        confirmName: confirmedName,
+      });
+      if (delErr) throw delErr;
+      if (!data?.ok) {
+        const reason = data?.reason || 'unknown';
+        throw new Error(
+          reason === 'name_mismatch'
+            ? 'Name does not match'
+            : reason === 'forbidden'
+              ? 'You do not have permission'
+              : 'Failed to delete child'
+        );
+      }
+      toast.push('Child has been permanently deleted', 'success');
+      setPendingDeleteChild(null);
+      setChildrenFetchKey((k) => k + 1);
+      await refreshFamilyMembers();
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshChildren'));
+      }
+    } catch (err) {
+      toast.push(err?.message || 'Could not delete child.', 'error');
+    } finally {
+      setDeletingChild(false);
+    }
+  }, [pendingDeleteChild, deletingChild, refreshFamilyMembers, toast]);
 
   const openEditPendingParentModal = useCallback((invite) => {
     setEditingParent({
@@ -2071,7 +2217,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     setError(null);
   }, []);
 
-  const openEditGuestTutor = useCallback((guest) => {
+  const openEditGuestTutor = useCallback((guest, { openInvite = false } = {}) => {
     setEditingTutor({
       id: String(guest.id),
       isGuest: true,
@@ -2081,6 +2227,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       child_scope: Array.isArray(guest.child_scope) ? guest.child_scope : [],
       tutor_permission_profile: guest.tutor_permission_profile || null,
       invite_status: 'none',
+      openInviteForm: openInvite,
     });
     setShowEditTutorModal(true);
     setError(null);
@@ -3615,105 +3762,56 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             {!embeddedInModal ? <View style={styles.subsectionDivider} /> : null}
             
             {!isSelfManagedStudent ? (
-              <View
-                style={styles.memberRow}
-                {...(Platform.OS === 'web' && !isEditingFamilyName && {
-                  onMouseEnter: () => setFamilyNameRowHovered(true),
-                  onMouseLeave: () => setFamilyNameRowHovered(false),
-                })}
-              >
-                {isEditingFamilyName ? (
-                  <>
-                    <TextInput
-                      style={styles.familyNameEditInput}
-                      value={editingFamilyNameValue}
-                      onChangeText={setEditingFamilyNameValue}
-                      placeholder="Family name"
-                      placeholderTextColor="#9ca3af"
-                      autoFocus
-                      editable={!savingFamilyName}
+              <View style={styles.memberRow}>
+                <View style={styles.memberRowChildMain}>
+                  <View style={styles.memberRowChildAvatarWrap}>
+                    <Image
+                      source={resolveBundledAvatarSource(selfParentAvatarKey)}
+                      style={styles.memberRowChildAvatar}
+                      resizeMode="contain"
                     />
-                    <View style={styles.memberRowActions}>
-                      <TouchableOpacity
-                        style={styles.memberRowActionButton}
-                        onPress={() => {
-                          setIsEditingFamilyName(false);
-                          setEditingFamilyNameValue('');
-                        }}
-                        disabled={savingFamilyName}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <X size={18} color="#374151" />
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.memberRowActionButton, savingFamilyName && { opacity: 0.6 }]}
-                        onPress={async () => {
-                          const trimmed = editingFamilyNameValue.trim();
-                          if (savingFamilyName || !familyId) return;
-                          setSavingFamilyName(true);
-                          try {
-                            const { data, error: err } = await updateFamilyName(trimmed || null);
-                            if (err) throw err;
-                            setFamily((prev) => (prev ? { ...prev, family_name: trimmed || undefined } : prev));
-                            if (onFamilyUpdate) onFamilyUpdate({ ...family, family_name: trimmed || undefined });
-                            setFamilyName(trimmed || '');
-                            setIsEditingFamilyName(false);
-                            setEditingFamilyNameValue('');
-                            toast.push('Family name saved', 'success');
-                          } catch (e) {
-                            console.warn('[FamilyPanel] Error saving family name:', e);
-                            toast.push(e?.message || e?.detail || 'Could not save family name', 'error');
-                          } finally {
-                            setSavingFamilyName(false);
-                          }
-                        }}
-                        disabled={savingFamilyName}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Check size={18} color="#16a34a" />
-                      </TouchableOpacity>
+                  </View>
+                  <View style={styles.memberRowChildTextCol}>
+                    <View style={styles.memberRowChildNameRow}>
+                      <Text style={styles.memberRowName} numberOfLines={1}>
+                        {selfParentDisplayName}
+                      </Text>
+                      {showFamilyRowYouCue ? (
+                        <View style={[styles.childStatusPill, styles.childStatusPillGreen]}>
+                          <Text style={[styles.childStatusPillText, styles.childStatusPillTextGreen]}>
+                            You
+                          </Text>
+                        </View>
+                      ) : null}
                     </View>
-                  </>
-                ) : (
-                  <>
-                    <Text style={styles.memberRowName}>
-                      {getFamilyRowDisplayName(family?.family_name, { isParentViewer: showFamilyRowYouCue })}
-                    </Text>
-                    {!isChildRestrictedView && (
-                      <MemberRowActionsMenu
-                        menuKey="parent-self"
-                        openMenuKey={openMemberMenuKey}
-                        setOpenMenuKey={setOpenMemberMenuKey}
-                        actionButtonStyle={styles.memberRowActionButton}
-                        items={[
-                          {
-                            icon: Pencil,
-                            label: 'Edit',
-                            onPress: () => {
-                              setEditingFamilyNameValue(getFamilyRowEditValue(family?.family_name));
-                              setIsEditingFamilyName(true);
-                            },
-                          },
-                          ...(canAddAnotherParent && !isSelfManagedStudent
-                            ? [{
-                              icon: Send,
-                              label: latestPendingParentInvite ? 'Resend parent invite' : 'Invite parent',
-                              onPress: () => openParentInviteModal(
-                                'invite',
-                                latestPendingParentInvite?.email || ''
-                              ),
-                            }]
-                            : []),
-                          {
-                            icon: CreditCard,
-                            label: 'Generate ID',
-                            onPress: () => openIdCardModal('parent', parents.length > 0 ? parents : [{ id: user?.id, email: user?.email }]),
-                          },
-                        ]}
-                      />
-                    )}
-                  </>
-                )}
+                  </View>
+                </View>
+                {!isChildRestrictedView ? (
+                  <MemberRowActionsMenu
+                    menuKey="parent-self"
+                    openMenuKey={openMemberMenuKey}
+                    setOpenMenuKey={setOpenMemberMenuKey}
+                    actionButtonStyle={styles.memberRowActionButton}
+                    items={[
+                      {
+                        icon: Pencil,
+                        label: 'Edit',
+                        onPress: openSelfParentModal,
+                      },
+                      {
+                        icon: CreditCard,
+                        label: 'Generate ID',
+                        onPress: () => openIdCardModal('parent', [{
+                          id: user?.id,
+                          email: user?.email || profile?.email,
+                          name: selfParentDisplayName,
+                          first_name: selfParentDisplayName,
+                          avatar_url: selfParentAvatarKey,
+                        }]),
+                      },
+                    ]}
+                  />
+                ) : null}
               </View>
             ) : null}
             {!isSelfManagedStudent && !isChildRestrictedView
@@ -3747,6 +3845,23 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       actionButtonStyle={styles.memberRowActionButton}
                       items={[
                         { icon: Pencil, label: 'Edit', onPress: () => openEditGuestParent(guest) },
+                        { icon: Send, label: 'Invite', onPress: () => openEditGuestParent(guest, { openInvite: true }) },
+                        {
+                          icon: CreditCard,
+                          label: 'Generate ID',
+                          onPress: () => openIdCardModal('parent', [{
+                            id: guest.id,
+                            name: guest.display_name || 'Parent',
+                            first_name: guest.display_name || 'Parent',
+                            avatar_url: guest.avatar_url || 'prof1',
+                          }]),
+                        },
+                        {
+                          icon: Trash2,
+                          label: 'Delete',
+                          danger: true,
+                          onPress: () => handleDeleteGuestParent(guest),
+                        },
                       ]}
                     />
                   </View>
@@ -3793,8 +3908,18 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           },
                           {
                             icon: Send,
-                            label: 'Resend invite',
+                            label: 'Invite',
                             onPress: () => openEditPendingParentModal(invite),
+                          },
+                          {
+                            icon: CreditCard,
+                            label: 'Generate ID',
+                            onPress: () => openIdCardModal('parent', [{
+                              id: invite.id || invite.email,
+                              name: invite.name || invite.email || 'Parent',
+                              first_name: invite.name || invite.email || 'Parent',
+                              avatar_url: invite.avatar_url || 'prof1',
+                            }]),
                           },
                         ]}
                       />
@@ -3974,6 +4099,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                             label: 'Generate ID',
                             onPress: () => openIdCardModal('child', [child]),
                           },
+                          {
+                            icon: Trash2,
+                            label: 'Delete',
+                            danger: true,
+                            onPress: () => setPendingDeleteChild(child),
+                          },
                         ]}
                       />
                     </View>
@@ -4039,6 +4170,22 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                         actionButtonStyle={styles.memberRowActionButton}
                         items={[
                           { icon: Pencil, label: 'Edit', onPress: () => openEditGuestTutor(guest) },
+                          { icon: Send, label: 'Invite', onPress: () => openEditGuestTutor(guest, { openInvite: true }) },
+                          {
+                            icon: CreditCard,
+                            label: 'Generate ID',
+                            onPress: () => openIdCardModal('tutor', [{
+                              id: guest.id,
+                              name: guest.display_name || 'Tutor',
+                              avatar_url: guest.avatar_url || 'prof1',
+                            }]),
+                          },
+                          {
+                            icon: Trash2,
+                            label: 'Delete',
+                            danger: true,
+                            onPress: () => handleDeleteGuestTutor(guest),
+                          },
                         ]}
                       />
                     ) : null}
@@ -4086,6 +4233,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                             icon: CreditCard,
                             label: 'Generate ID',
                             onPress: () => openIdCardModal('tutor', [tutor]),
+                          },
+                          {
+                            icon: Trash2,
+                            label: 'Delete',
+                            danger: true,
+                            onPress: () => handleRemoveConnectedTutor(tutor),
                           },
                         ]}
                       />
@@ -4136,8 +4289,17 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                               },
                               {
                                 icon: Send,
-                                label: 'Resend invite',
+                                label: 'Invite',
                                 onPress: () => openPendingTutorInviteEdit(invite),
+                              },
+                              {
+                                icon: CreditCard,
+                                label: 'Generate ID',
+                                onPress: () => openIdCardModal('tutor', [{
+                                  id: invite.id,
+                                  name: invite.name || invite.email || 'Tutor',
+                                  avatar_url: invite.avatar_url || 'prof1',
+                                }]),
                               },
                             ]}
                           />
@@ -5569,6 +5731,18 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
       {/* Modals */}
       <ConfirmDialog
+        visible={!!pendingDeleteChild}
+        title={`Delete ${pendingDeleteChild?.first_name || pendingDeleteChild?.name || 'child'} permanently?`}
+        message="This will delete all learning data and remove planner history, goals, and records. This cannot be undone."
+        confirmLabel={deletingChild ? 'Deleting…' : 'Delete'}
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={handleConfirmDeleteChild}
+        onCancel={() => {
+          if (!deletingChild) setPendingDeleteChild(null);
+        }}
+      />
+      <ConfirmDialog
         visible={showEmailVerificationModal}
         title="Check your email"
         message="We sent a verification link to the new address. Your email will only be updated after you verify it."
@@ -6043,14 +6217,46 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         }}
         parent={editingParent}
         onInviteSent={(url) => showInviteSuccessModal(url, 'parent')}
-        onParentUpdated={async () => {
+        onParentUpdated={async (saved) => {
+          const nextName = saved?.isSelf ? String(saved.display_name || '').trim() : '';
+          const nextAvatar = saved?.isSelf
+            ? (normalizeAvatarAssetKey(saved.avatar_url) || DEFAULT_AVATAR_KEY)
+            : null;
+          if (saved?.isSelf) {
+            if (nextName) {
+              setFamilyName(nextName);
+              setFamily((prev) => (prev ? { ...prev, family_name: nextName } : prev));
+            }
+            setProfile((prev) => (prev ? {
+              ...prev,
+              name: nextName || prev.name,
+              first_name: nextName || prev.first_name,
+              avatar_url: nextAvatar || prev.avatar_url,
+            } : prev));
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('refreshProfile'));
+              window.dispatchEvent(new CustomEvent('refreshFamily'));
+            }
+          }
           try {
-            const { data, error: err } = await getFamilyMembers();
+            const { data, error: err } = await getFamilyMembers({ force: true });
             if (!err && data) {
               setFamily(data);
               if (onFamilyUpdate) onFamilyUpdate(data);
+            } else if (saved?.isSelf && nextName) {
+              onFamilyUpdate?.({ ...(family || {}), family_name: nextName });
             }
-          } catch (_e) {}
+          } catch (_e) {
+            if (saved?.isSelf) onFamilyUpdate?.();
+          }
+          if (saved?.isSelf) {
+            try {
+              const { data: meData } = await getMe({ force: true });
+              if (meData) {
+                setProfile((prev) => ({ ...(prev || {}), ...meData }));
+              }
+            } catch (_e) {}
+          }
         }}
       />
 

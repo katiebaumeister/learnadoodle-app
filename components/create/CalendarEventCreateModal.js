@@ -93,11 +93,19 @@ export default function CalendarEventCreateModal({
       const hydrate = async () => {
         setLoadingEvent(true);
         try {
-          let eventRow = editEvent;
+          // Always load the full DB row. Planner month/week payloads omit fields
+          // like location; hydrating from them makes Location look blank and a
+          // subsequent save can wipe the stored value.
           const targetId = editEvent?.id || editEventId;
-          if (!eventRow && targetId) {
-            eventRow = await fetchCalendarEventForEdit(targetId);
+          let eventRow = null;
+          if (targetId) {
+            try {
+              eventRow = await fetchCalendarEventForEdit(targetId);
+            } catch (_) {
+              eventRow = null;
+            }
           }
+          if (!eventRow && editEvent) eventRow = editEvent;
           if (cancelled || !eventRow) return;
           eventRow = await ensureSeriesRecurrenceRule(eventRow);
           if (cancelled) return;

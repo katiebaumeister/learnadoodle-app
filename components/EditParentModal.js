@@ -8,15 +8,15 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   createGuestMember,
   updateGuestMember,
   deleteGuestMember,
   inviteTutor,
+  saveOnboardingParentProfile,
+  updateFamilyName,
 } from '../lib/apiClient';
 import { useToast } from './Toast';
-import { colors } from '../theme/colors';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
 import FamilyAdultProfileFields, { isFamilyAdultProfileComplete } from './family/FamilyAdultProfileFields';
@@ -37,13 +37,14 @@ export default function EditParentModal({
   const [isSaving, setIsSaving] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [error, setError] = useState(null);
-  const [showDangerZone, setShowDangerZone] = useState(false);
 
-  const isNew = parent?.isNew === true || (!parent?.id && !parent?.isPendingInvite);
-  const isPendingInvite = parent?.isPendingInvite === true || parent?.invite_status === 'pending';
-  const isGuest = Boolean(savedGuestId || parent?.isGuest);
-  const profileSaved = Boolean(savedGuestId || parent?.isGuest || isPendingInvite);
+  const isSelf = parent?.isSelf === true;
+  const isNew = !isSelf && (parent?.isNew === true || (!parent?.id && !parent?.isPendingInvite));
+  const isPendingInvite = !isSelf && (parent?.isPendingInvite === true || parent?.invite_status === 'pending');
+  const isGuest = !isSelf && Boolean(savedGuestId || parent?.isGuest);
+  const profileSaved = Boolean(isSelf || savedGuestId || parent?.isGuest || isPendingInvite);
   const modalTitle = isNew && !savedGuestId ? 'Add parent' : (displayName.trim() || 'Parent');
+  const canRemove = !isSelf && (isGuest || savedGuestId);
 
   useEffect(() => {
     if (!visible || !parent) return;
@@ -51,7 +52,6 @@ export default function EditParentModal({
     setAvatarKey(parent.avatar_url || DEFAULT_AVATAR_KEY);
     setSavedGuestId(parent.isGuest ? String(parent.id || '') : null);
     setError(null);
-    setShowDangerZone(false);
   }, [visible, parent]);
 
   useEffect(() => {
@@ -59,9 +59,30 @@ export default function EditParentModal({
       setError(null);
       setIsSaving(false);
       setInviting(false);
-      setShowDangerZone(false);
     }
   }, [visible]);
+
+  const persistSelfProfile = async () => {
+    if (!isFamilyAdultProfileComplete(displayName, avatarKey)) {
+      setError('Enter a name and choose an avatar.');
+      return null;
+    }
+    const trimmed = displayName.trim();
+    const { data: profileData, error: profileErr } = await saveOnboardingParentProfile({
+      display_name: trimmed,
+      avatar_url: avatarKey,
+    });
+    if (profileErr) throw profileErr;
+
+    const { error: familyErr } = await updateFamilyName(trimmed);
+    if (familyErr) throw familyErr;
+
+    return {
+      display_name: profileData?.display_name || trimmed,
+      avatar_url: profileData?.avatar_url || avatarKey,
+      isSelf: true,
+    };
+  };
 
   const persistProfile = async () => {
     if (!isFamilyAdultProfileComplete(displayName, avatarKey)) {
@@ -91,6 +112,14 @@ export default function EditParentModal({
     setIsSaving(true);
     setError(null);
     try {
+      if (isSelf) {
+        const saved = await persistSelfProfile();
+        toast.push('Parent profile saved.', 'success');
+        onParentUpdated?.(saved);
+        onClose?.();
+        return;
+      }
+
       await persistProfile();
       if (isPendingInvite && parent?.email) {
         const { data, error: inviteErr } = await inviteTutor({
@@ -107,10 +136,6 @@ export default function EditParentModal({
         toast.push(isNew && !savedGuestId ? 'Parent added.' : 'Parent profile saved.', 'success');
       }
       onParentUpdated?.();
-      if (isNew && !isPendingInvite) {
-        // Keep modal open so user can invite from Account section
-        return;
-      }
       onClose?.();
     } catch (err) {
       setError(err?.message || 'Could not save parent profile.');
@@ -184,9 +209,9 @@ export default function EditParentModal({
               <ModalFooter
                 mode="edit"
                 primaryLabel={isSaving ? 'Saving...' : (isNew && !profileSaved ? 'Add parent' : 'Save changes')}
-                destructiveLabel={isGuest || savedGuestId ? 'Remove parent' : null}
+                destructiveLabel={canRemove ? 'Remove parent' : null}
                 onCancel={onClose}
-                onDelete={isGuest || savedGuestId ? () => setShowDangerZone((v) => !v) : undefined}
+                onDelete={canRemove ? handleRemove : undefined}
                 onPrimary={handlePrimarySave}
                 accent="#9ECFFB"
                 disabled={isSaving || inviting}
@@ -207,9 +232,17 @@ export default function EditParentModal({
                 onDisplayNameChange={setDisplayName}
                 onAvatarChange={setAvatarKey}
                 disabled={isSaving || inviting}
+                nameLabel={isSelf ? 'What should we call you?' : 'What should we call them?'}
+                namePlaceholder={isSelf ? 'e.g. Robbie, Mom, Dad' : 'e.g. Katie, Mom, Professor Doodle'}
               />
 
-              {profileSaved ? (
+              {isSelf ? (
+                <FamilyMemberAccountSection
+                  roleLabel="parent"
+                  inviteStatus="connected"
+                  connectedEmail={parent?.email || null}
+                />
+              ) : profileSaved ? (
                 <FamilyMemberAccountSection
                   roleLabel="parent"
                   inviteStatus={isPendingInvite ? 'pending' : 'none'}
@@ -217,45 +250,8 @@ export default function EditParentModal({
                   onSendInvite={handleSendInvite}
                   inviting={inviting}
                   disabled={isSaving}
+                  autoOpenInvite={Boolean(parent?.openInviteForm)}
                 />
-              ) : null}
-
-              {(isGuest || savedGuestId) && !isPendingInvite ? (
-                <View style={styles.dangerZoneAccordion}>
-                  <TouchableOpacity
-                    onPress={() => setShowDangerZone((v) => !v)}
-                    style={styles.dangerZoneHeader}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={styles.dangerZoneHeaderLeft}>
-                      <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
-                      <Text style={styles.dangerZoneTitle}>Danger zone</Text>
-                    </View>
-                    {showDangerZone ? (
-                      <ChevronUp size={20} color={colors.redBold || '#dc2626'} />
-                    ) : (
-                      <ChevronDown size={20} color={colors.redBold || '#dc2626'} />
-                    )}
-                  </TouchableOpacity>
-                  {showDangerZone ? (
-                    <View style={styles.dangerZoneContent}>
-                      <Text style={styles.dangerHint}>
-                        Remove this parent profile from your family. You can add them again anytime.
-                      </Text>
-                      <TouchableOpacity
-                        style={styles.dangerButton}
-                        onPress={handleRemove}
-                        disabled={isSaving}
-                        {...(Platform.OS === 'web' && { cursor: isSaving ? 'not-allowed' : 'pointer' })}
-                      >
-                        <Text style={styles.dangerButtonText}>
-                          {isSaving ? 'Removing...' : 'Remove parent'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                </View>
               ) : null}
             </ScrollView>
           </AppModalShell>
@@ -275,7 +271,7 @@ const styles = StyleSheet.create({
   },
   modalWrap: {
     width: '100%',
-    maxWidth: 860,
+    maxWidth: 720,
   },
   compactShell: {
     ...(Platform.OS === 'web'
@@ -294,30 +290,4 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   errorText: { fontSize: 13, color: '#dc2626' },
-  dangerZoneAccordion: {
-    borderWidth: 1,
-    borderColor: 'rgba(220, 38, 38, 0.25)',
-    borderRadius: 12,
-    padding: 10,
-    marginTop: 8,
-    backgroundColor: 'rgba(254, 242, 242, 0.5)',
-  },
-  dangerZoneHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-  },
-  dangerZoneHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  dangerZoneTitle: { fontSize: 14, fontWeight: '600', color: colors.redBold || '#dc2626' },
-  dangerZoneContent: { marginTop: 12, gap: 10 },
-  dangerHint: { fontSize: 12, lineHeight: 18, color: '#6b7280' },
-  dangerButton: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.redBold || '#dc2626',
-    paddingVertical: 9,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-  },
-  dangerButtonText: { fontSize: 13, fontWeight: '600', color: '#ffffff' },
 });

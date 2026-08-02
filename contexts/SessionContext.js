@@ -321,7 +321,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
     try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      const dateStr = today.toISOString().split('T')[0];
+      const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
       
       // Check if already cached
       const cacheKey = `home_data_${familyId}_${dateStr}`;

@@ -127,25 +127,28 @@ function hasMidnightToEndOfDayBounds(event) {
   return startsAtMidnight && (endsAtEndOfDay || endsAtMidnight);
 }
 
-/** Saved with optional/blank start time (flexible), not an explicit all-day event. */
+/** Saved with optional/blank start time — not midnight, not explicit all-day. */
 export function isTimelessUntimedEvent(event) {
   if (!event || isPlannerHolidayOrBreakType(event)) return false;
   if (event.all_day === true || event.allDay === true) return false;
-  if (event.is_flexible !== true) return false;
   // Overlap-resolved drags keep is_flexible=true in DB but retain wall-clock times.
   if (hasExplicitWallClockStart(event)) return false;
-  if (hasMidnightToEndOfDayBounds(event)) return true;
-  return true;
+  if (event.is_flexible === true) return true;
+  // Legacy placeholder: local midnight start + full-day span, without all_day.
+  // Require midnight so multi-day timed events (>=23h) are not treated as untimed.
+  const startMs = event?.start_ts || event?.start;
+  if (!startMs) return false;
+  const start = new Date(startMs);
+  if (Number.isNaN(start.getTime())) return false;
+  const startsMidnight = start.getHours() === 0 && start.getMinutes() === 0;
+  return startsMidnight && hasMidnightToEndOfDayBounds(event);
 }
 
-/** Explicit all-day (toggle, holiday/break types, or non-flexible full-day bounds). */
+/** Explicit all-day only (toggle / holiday-break types). Never infer from midnight placeholders. */
 export function isAllDayEvent(event) {
   if (!event) return false;
   if (event.all_day === true || event.allDay === true) return true;
   if (isPlannerHolidayOrBreakType(event)) return true;
-  if (event.is_flexible === false && hasMidnightToEndOfDayBounds(event)) {
-    return true;
-  }
   return false;
 }
 
@@ -211,10 +214,20 @@ export function formatEventChipTimeLabel(event) {
     if (isMidnightSpanTimeLabel(startPart?.trim(), endPart?.trim()) && !hasExplicitWallClockStart(event)) {
       return '';
     }
-    if (startPart?.trim()) return startPart.trim();
+    if (startPart?.trim()) {
+      // Never surface placeholder midnight as a real start time.
+      if (/^12:00\s*AM$/i.test(startPart.trim()) && !hasExplicitWallClockStart(event)) {
+        return '';
+      }
+      return startPart.trim();
+    }
   }
 
-  return formatSingleStartTimeLabel(event);
+  const single = formatSingleStartTimeLabel(event);
+  if (/^12(\s|:00\s*)AM$/i.test(String(single || '').trim()) && !hasExplicitWallClockStart(event)) {
+    return '';
+  }
+  return single;
 }
 
 /** Chip/list/home schedule label for event time. */
