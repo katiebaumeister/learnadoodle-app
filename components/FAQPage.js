@@ -20,7 +20,18 @@ export default function FAQPage({ onNavigateToLogin, onNavigateToSignUp }) {
       {/* Header with Login/Sign Up buttons */}
       <View style={styles.header}>
         <View style={styles.headerContent}>
-          <Text style={styles.logo}>learnadoodle</Text>
+          <TouchableOpacity
+            onPress={() => {
+              if (typeof window !== 'undefined') {
+                window.location.href = '/';
+              }
+            }}
+            accessibilityRole="link"
+            accessibilityLabel="Learnadoodle home"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={styles.logo}>learnadoodle</Text>
+          </TouchableOpacity>
           <View style={styles.headerButtons}>
             <TouchableOpacity
               style={styles.loginButton}

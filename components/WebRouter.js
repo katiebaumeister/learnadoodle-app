@@ -5,6 +5,7 @@ import PasswordResetPage from './PasswordResetPage';
 import SetPasswordPage from './SetPasswordPage';
 import AppLoader, { ensureWebShellImagesLoaded } from './AppLoader';
 import { useAuth } from '../contexts/AuthContext';
+import { ensureLandingHeroLoaded } from '../lib/landingHeroPreload';
 
 const AuthenticatedApp = lazy(() => import('./AuthenticatedApp'));
 const InviteAcceptancePage = lazy(() => import('./InviteAcceptancePage'));
@@ -36,13 +37,14 @@ function WebRouterContent() {
   useEffect(() => {
     if (Platform.OS === 'web') {
       ensureWebShellImagesLoaded();
+      ensureLandingHeroLoaded();
     }
   }, []);
 
   useEffect(() => {
-    // Update path when URL changes
+    // Update path when URL changes (normalize trailing slash like getPath)
     const updatePath = () => {
-      setCurrentPath(window.location.pathname);
+      setCurrentPath(getPath());
     };
 
     // Listen for popstate events (back/forward buttons)

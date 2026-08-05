@@ -239,6 +239,11 @@ export const AuthProvider = ({ children }) => {
   }
 
   const signOut = async () => {
+    const goHome = () => {
+      if (typeof window !== 'undefined') {
+        window.location.href = '/'
+      }
+    }
     try {
       const { error } = await auth.signOut()
       if (error) {
@@ -247,18 +252,21 @@ export const AuthProvider = ({ children }) => {
           await auth.signOutLocal()
           setUser(null)
           setSession(null)
+          goHome()
           return { error: null }
         }
         throw error
       }
       setUser(null)
       setSession(null)
+      goHome()
       return { error: null }
     } catch (error) {
       try {
         await auth.signOutLocal()
         setUser(null)
         setSession(null)
+        goHome()
       } catch (_) {}
       return { error }
     }

@@ -30,9 +30,11 @@ import 'react-native-gesture-handler';
 import { registerRootComponent } from 'expo';
 
 import { ensureWebShellImagesLoaded } from './components/AppLoader';
+import { ensureLandingHeroLoaded } from './lib/landingHeroPreload';
 
-// Decode shell + sidebar + FAB + prof avatars + landing PNGs ASAP (parallel with app JS)
+// Decode marketing hero + shell assets ASAP (parallel with app JS parse/eval)
 if (typeof window !== 'undefined') {
+  ensureLandingHeroLoaded();
   ensureWebShellImagesLoaded();
 }
 

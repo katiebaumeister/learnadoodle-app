@@ -40,10 +40,15 @@ export default function StableImage({
         <img
           src={resolvedUri}
           alt=""
-          style={{ ...flattenedStyle, objectFit }}
+          style={{
+            ...flattenedStyle,
+            objectFit,
+            opacity: isLoaded ? (flattenedStyle.opacity ?? 1) : 0,
+          }}
           loading={webLoading}
           fetchPriority={webFetchPriority}
           decoding={webDecoding}
+          draggable={false}
           onLoad={onLoad}
           onError={onError}
         />

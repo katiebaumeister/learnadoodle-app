@@ -12,10 +12,17 @@ import {
 } from 'react-native';
 import { X, ChevronDown } from 'lucide-react';
 import StableImage from './ui/StableImage';
+import {
+  ensureLandingHeroLoaded,
+  getLandingHeroSource,
+  getLandingLogoSource,
+  isLandingHeroReady,
+  LANDING_HERO_BUNDLE,
+} from '../lib/landingHeroPreload';
 
 const LANDING_IMAGE_SOURCES = {
-  logo: require('../assets/icon.png'),
-  hero: require('../assets/landing.png'),
+  logo: getLandingLogoSource(),
+  hero: getLandingHeroSource(),
   schedule: require('../assets/schedule.png'),
   curriculum: require('../assets/curriculum.png'),
   progress: require('../assets/progress.png'),
@@ -40,6 +47,18 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
   const pageFadeAnim = useRef(new Animated.Value(1)).current;
   const headerFadeAnim = useRef(new Animated.Value(1)).current;
   const superDoodleRef = useRef(null);
+  const [heroReady, setHeroReady] = useState(() => isLandingHeroReady());
+  const [heroSource, setHeroSource] = useState(() => LANDING_IMAGE_SOURCES.hero);
+
+  useEffect(() => {
+    let cancelled = false;
+    ensureLandingHeroLoaded().then(() => {
+      if (!cancelled) setHeroReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') {
@@ -56,28 +75,21 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
       return null;
     };
 
-    // Images above the fold should download with the highest priority; the rest
-    // are still preloaded so they're cached before the user scrolls to them.
-    const HIGH_PRIORITY_KEYS = new Set(['logo', 'hero']);
+    // Below-the-fold assets only — hero/logo are handled by ensureLandingHeroLoaded
+    // (and the HTML preload tag) so we never cancel or re-fetch them on unmount.
+    const BELOW_FOLD_KEYS = ['schedule', 'curriculum', 'progress', 'support', 'teach', 'privacy', 'superdoodle'];
 
-    const addedLinks = [];
-    const warmImages = [];
-
-    Object.entries(LANDING_IMAGE_SOURCES).forEach(([key, source]) => {
+    BELOW_FOLD_KEYS.forEach((key) => {
+      const source = LANDING_IMAGE_SOURCES[key];
       const uri = resolveUri(source);
-      if (!uri) {
-        return;
-      }
+      if (!uri) return;
 
-      // Decode the bitmap off the main thread so the image paints instantly
-      // once it scrolls into view (avoids the brief blank flash).
       const warmImage = new window.Image();
       warmImage.decoding = 'async';
       warmImage.src = uri;
       if (typeof warmImage.decode === 'function') {
         warmImage.decode().catch(() => {});
       }
-      warmImages.push(warmImage);
 
       if (document.querySelector(`link[data-landing-preload="${key}"]`)) {
         return;
@@ -87,24 +99,11 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
       preloadLink.rel = 'preload';
       preloadLink.as = 'image';
       preloadLink.href = uri;
-      if (HIGH_PRIORITY_KEYS.has(key)) {
-        preloadLink.setAttribute('fetchpriority', 'high');
-      }
       preloadLink.setAttribute('data-landing-preload', key);
       document.head.appendChild(preloadLink);
-      addedLinks.push(preloadLink);
     });
 
-    return () => {
-      addedLinks.forEach((link) => {
-        if (link.parentNode) {
-          link.parentNode.removeChild(link);
-        }
-      });
-      warmImages.forEach((img) => {
-        img.src = '';
-      });
-    };
+    return undefined;
   }, []);
 
 
@@ -147,17 +146,22 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
     webLoading = 'auto',
     webFetchPriority = 'auto',
     webDecoding = 'auto',
+    isLoaded = true,
+    imageStyleExtra,
+    onError,
   }) => (
     <StableImage
       source={source}
       resizeMode={resizeMode}
       shellStyle={shellStyle}
-      imageStyle={styles.landingImageFill}
+      imageStyle={[styles.landingImageFill, imageStyleExtra]}
       placeholderStyle={[styles.landingImagePlaceholder, placeholderStyle]}
       fadeDuration={0}
+      isLoaded={isLoaded}
       webLoading={webLoading}
       webFetchPriority={webFetchPriority}
       webDecoding={webDecoding}
+      onError={onError}
     />
   );
 
@@ -277,12 +281,19 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
               <View style={styles.heroImageContainer}>
                 {renderStableLandingImage({
                   imageKey: 'hero',
-                  source: LANDING_IMAGE_SOURCES.hero,
+                  source: heroSource,
                   shellStyle: styles.heroImage,
                   resizeMode: 'contain',
                   webLoading: 'eager',
                   webFetchPriority: 'high',
                   webDecoding: 'sync',
+                  isLoaded: heroReady,
+                  imageStyleExtra: styles.heroImagePaint,
+                  placeholderStyle: styles.heroImagePlaceholder,
+                  onError: () => {
+                    setHeroSource(LANDING_HERO_BUNDLE);
+                    setHeroReady(true);
+                  },
                 })}
               </View>
             </View>
@@ -1060,15 +1071,27 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   heroImageContainer: {
-    aspectRatio: 4 / 3,
+    // Matches landing-hero.png (1800×1013) so reserved space never shifts.
+    aspectRatio: 1800 / 1013,
+    width: '100%',
+    maxWidth: 720,
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
-      minHeight: 480,
+      minHeight: 360,
     }),
   },
   heroImage: {
     width: '100%',
     height: '100%',
+  },
+  heroImagePaint: {
+    ...(Platform.OS === 'web' && {
+      transition: 'none',
+      opacity: 1,
+    }),
+  },
+  heroImagePlaceholder: {
+    backgroundColor: '#ffffff',
   },
   featureImagePlaceholder: {
     borderRadius: 16,
@@ -1548,9 +1571,8 @@ const styles = StyleSheet.create({
     }),
   },
   landingImageFill: {
-    ...(Platform.OS === 'web' && {
-      transition: 'opacity 0.18s ease',
-    }),
+    width: '100%',
+    height: '100%',
   },
   landingImagePlaceholder: {
     backgroundColor: 'rgba(15, 23, 42, 0.08)',

@@ -56,7 +56,10 @@ export default function HelpPopover({
           onPress={() => {
             onClose();
             if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.location.href = helpForumHref;
+              // Open in a new tab so the app URL stays on home/planner —
+              // navigating here replaces the SPA path with /help/faqs, and after
+              // logout/session expiry that tab looks like "the site opens on FAQ".
+              window.open(helpForumHref, '_blank', 'noopener,noreferrer');
             }
           }}
           style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}

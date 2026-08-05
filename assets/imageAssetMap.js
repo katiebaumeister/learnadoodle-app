@@ -44,7 +44,7 @@ export const SIDEBAR_ICON_ASSETS = Object.freeze({
 });
 
 export const LANDING_IMAGE_ASSETS = Object.freeze({
-  landing: require('./landing.png'),
+  landing: require('./landing-hero.png'),
   schedule: require('./schedule.png'),
   curriculum: require('./curriculum.png'),
   progress: require('./progress.png'),
