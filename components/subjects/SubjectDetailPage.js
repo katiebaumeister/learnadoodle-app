@@ -614,10 +614,6 @@ export default function SubjectDetailPage({
         if (error) throw error;
         const nextUnits = Array.isArray(data?.units) ? data.units : [];
         const nextSource = data?.saved_content_source || null;
-        const currentUnits = Array.isArray(learningGoalsUnitsRef.current) ? learningGoalsUnitsRef.current : [];
-        if (nextUnits.length === 0 && currentUnits.length > 0 && !force) {
-          return;
-        }
         setLearningGoalsUnits(nextUnits);
         setLearningGoalsSource(nextSource);
         mergeSubjectProgressCache(familyId, sid, {
@@ -4021,6 +4017,7 @@ export default function SubjectDetailPage({
               unitsActionLabel={unitsEditorLabel}
               onCreateAssignment={handleCreateAssignment}
               onAddLearningDay={handleAddLearningDay}
+              onEditSubject={isParentViewer ? () => openSubjectSettings('schedule') : undefined}
               onPlacementChanged={handleClassworkPlacementChanged}
               highlightLessonId={highlightLessonId}
               highlightAssignmentId={highlightAssignmentId}
@@ -4312,7 +4309,10 @@ export default function SubjectDetailPage({
                       if (onNavigateToPlanner) {
                         onNavigateToPlanner({ view: 'attendance' });
                       } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                        window.location.href = '/planner?view=attendance';
+                        window.history.replaceState({}, '', '/');
+                        window.dispatchEvent(new CustomEvent('navigateToPlanner', {
+                          detail: { view: 'attendance' },
+                        }));
                       }
                     }}
                     activeOpacity={0.7}

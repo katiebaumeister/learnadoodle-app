@@ -262,13 +262,7 @@ export default function ChildHomeScreen({
 
   const handleViewTodaysTodo = () => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const url = new URL(window.location.href);
-      url.pathname = '/planner';
-      url.searchParams.set('view', 'tasks');
-      url.searchParams.set('section', 'today');
-      url.searchParams.set('date', todayStr);
-      window.history.pushState({}, '', url.toString());
+      window.history.replaceState({}, '', '/');
       window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
       window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'today' } }));
       if (onNavigate) onNavigate('planner');

@@ -2,32 +2,27 @@ import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { CalendarDays, FileText, Trophy, Users, Lightbulb } from 'lucide-react';
 
+const USE_CASE_ICON_COLOR = '#64748B';
+const USE_CASE_ICON_BG = 'rgba(100, 116, 139, 0.12)';
+
 const USE_CASES = [
   {
     Icon: CalendarDays,
-    iconColor: '#2563EB',
-    iconBg: 'rgba(37, 99, 235, 0.1)',
     title: 'Share weekly plans and announcements',
     description: 'Keep everyone informed about what\'s coming up.',
   },
   {
     Icon: FileText,
-    iconColor: '#6366F1',
-    iconBg: 'rgba(99, 102, 241, 0.1)',
     title: 'Share assignment instructions and reminders',
     description: 'Make expectations clear and deadlines easy to find.',
   },
   {
     Icon: Trophy,
-    iconColor: '#D97706',
-    iconBg: 'rgba(217, 119, 6, 0.12)',
     title: 'Celebrate completed projects and milestones',
     description: 'Highlight progress and achievements together.',
   },
   {
     Icon: Users,
-    iconColor: '#0D9488',
-    iconBg: 'rgba(13, 148, 136, 0.1)',
     title: 'Keep everyone learning this subject on the same page',
     description: 'A shared space for students, parents, and tutors.',
   },
@@ -44,10 +39,10 @@ export default function SubjectWelcomeBulletinBody({ subjectName, textStyle = nu
       </Text>
       <Text style={[bodyStyle, styles.sectionHeading]}>This is where you can:</Text>
       <View style={styles.list}>
-        {USE_CASES.map(({ Icon, iconColor, iconBg, title, description }) => (
+        {USE_CASES.map(({ Icon, title, description }) => (
           <View key={title} style={styles.row}>
-            <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
-              <Icon size={16} color={iconColor} strokeWidth={2.25} />
+            <View style={[styles.iconWrap, { backgroundColor: USE_CASE_ICON_BG }]}>
+              <Icon size={16} color={USE_CASE_ICON_COLOR} strokeWidth={2.25} />
             </View>
             <View style={styles.copy}>
               <Text style={[bodyStyle, styles.itemTitle]}>{title}</Text>

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   View,
@@ -6,12 +6,31 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
+  ScrollView,
 } from 'react-native';
-import { X, ChevronRight, Plus } from 'lucide-react';
+import { X, ChevronRight, Plus, ChevronDown, CheckCircle } from 'lucide-react';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
+import Dropdown from '../ui/Dropdown';
 import { parseChildIds } from '../../lib/services/subjectsClient';
 
-function buildSubjectPickerOptions(subjects, children) {
+function getCurrentSchoolYear() {
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const startYear = month >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  return `${startYear}/${String(startYear + 1).slice(-2)}`;
+}
+
+/** Match Learning page: missing school_year is treated as 2025/26. */
+function subjectSchoolYearLabel(subject) {
+  return String(subject?.school_year || '').trim() || '2025/26';
+}
+
+function normalizeSchoolYear(value) {
+  const raw = String(value || '').trim();
+  return raw || getCurrentSchoolYear();
+}
+
+function buildSubjectPickerOptions(subjects, children, schoolYearFilter) {
   const childNameById = {};
   (children || []).forEach((child) => {
     const id = String(child?.id || '').trim();
@@ -19,10 +38,14 @@ function buildSubjectPickerOptions(subjects, children) {
     childNameById[id] = child?.first_name || child?.name || child?.full_name || 'Student';
   });
 
+  const yearFilter = schoolYearFilter ? normalizeSchoolYear(schoolYearFilter) : null;
+
   return (subjects || [])
     .map((subject) => {
       const id = String(subject?.id || '').trim();
       if (!id) return null;
+      const subjectYear = subjectSchoolYearLabel(subject);
+      if (yearFilter && subjectYear !== yearFilter) return null;
       const candidateChildIds = []
         .concat(
           Array.isArray(subject?.assignedChildren) ? subject.assignedChildren : [],
@@ -42,12 +65,24 @@ function buildSubjectPickerOptions(subjects, children) {
         id,
         subject,
         name: String(subject?.name || '').trim() || 'Subject',
+        schoolYear: subjectYear,
         childIds,
         studentLabel,
       };
     })
     .filter(Boolean)
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function buildYearOptions(subjects, preferredYear) {
+  const years = new Set();
+  const current = getCurrentSchoolYear();
+  years.add(current);
+  if (preferredYear) years.add(normalizeSchoolYear(preferredYear));
+  (subjects || []).forEach((subject) => {
+    years.add(subjectSchoolYearLabel(subject));
+  });
+  return [...years].sort((a, b) => String(b).localeCompare(String(a)));
 }
 
 export default function SubjectPickerModal({
@@ -61,15 +96,47 @@ export default function SubjectPickerModal({
   onSelect,
   onCreateNew = null,
   createNewLabel = 'Create new subject',
+  /** When true, show a school-year filter defaulted to the current year (Learning-page parity). */
+  showYearFilter = true,
+  initialSchoolYear = null,
 }) {
+  const yearTriggerRef = useRef(null);
+  const [showYearDropdown, setShowYearDropdown] = useState(false);
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState(
+    () => normalizeSchoolYear(initialSchoolYear || getCurrentSchoolYear()),
+  );
+
+  useEffect(() => {
+    if (!visible) {
+      setShowYearDropdown(false);
+      return;
+    }
+    setSelectedSchoolYear(normalizeSchoolYear(initialSchoolYear || getCurrentSchoolYear()));
+  }, [visible, initialSchoolYear]);
+
+  const yearOptions = useMemo(
+    () => buildYearOptions(subjects, selectedSchoolYear),
+    [subjects, selectedSchoolYear],
+  );
+
   const options = useMemo(
-    () => buildSubjectPickerOptions(subjects, children),
-    [subjects, children],
+    () => buildSubjectPickerOptions(
+      subjects,
+      children,
+      showYearFilter ? selectedSchoolYear : null,
+    ),
+    [subjects, children, showYearFilter, selectedSchoolYear],
   );
 
   const handleSelect = (option) => {
     onSelect?.(option?.subject || null);
   };
+
+  const emptyText = showYearFilter
+    ? (options.length === 0
+      ? `No subjects for ${selectedSchoolYear}. Switch years or create a new subject.`
+      : emptyMessage)
+    : emptyMessage;
 
   return (
     <Modal
@@ -99,8 +166,62 @@ export default function SubjectPickerModal({
             </TouchableOpacity>
           </View>
 
+          {showYearFilter ? (
+            <View style={styles.yearRow}>
+              <Text style={styles.yearLabel}>School year</Text>
+              <TouchableOpacity
+                ref={yearTriggerRef}
+                style={styles.yearTrigger}
+                onPress={() => setShowYearDropdown((open) => !open)}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Select school year"
+                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+              >
+                <Text style={styles.yearTriggerText}>{selectedSchoolYear}</Text>
+                <ChevronDown size={16} color="#6b7280" />
+              </TouchableOpacity>
+              <Dropdown
+                visible={showYearDropdown}
+                onClose={() => setShowYearDropdown(false)}
+                triggerRef={yearTriggerRef}
+                width={180}
+                maxHeight={240}
+              >
+                {yearOptions.map((year) => (
+                  <TouchableOpacity
+                    key={year}
+                    style={styles.yearOption}
+                    onPress={() => {
+                      setSelectedSchoolYear(year);
+                      setShowYearDropdown(false);
+                    }}
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                  >
+                    <Text
+                      style={[
+                        styles.yearOptionText,
+                        year === selectedSchoolYear && styles.yearOptionTextSelected,
+                      ]}
+                    >
+                      {year}
+                    </Text>
+                    {year === selectedSchoolYear ? (
+                      <CheckCircle size={16} color="#6BB3E8" />
+                    ) : null}
+                  </TouchableOpacity>
+                ))}
+              </Dropdown>
+            </View>
+          ) : null}
+
           {options.length > 0 ? (
-            <View style={styles.list}>
+            <ScrollView
+              style={styles.listScroll}
+              contentContainerStyle={styles.list}
+              showsVerticalScrollIndicator
+            >
               {options.map((option, index) => (
                 <TouchableOpacity
                   key={`subject-picker-${option.id}`}
@@ -129,10 +250,10 @@ export default function SubjectPickerModal({
                   <ChevronRight size={16} color="#6b7280" />
                 </TouchableOpacity>
               ))}
-            </View>
+            </ScrollView>
           ) : (
             <View style={styles.emptyWrap}>
-              <Text style={styles.emptyText}>{emptyMessage}</Text>
+              <Text style={styles.emptyText}>{emptyText}</Text>
             </View>
           )}
 
@@ -219,8 +340,60 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#6b7280',
   },
-  list: {
+  yearRow: {
+    marginTop: 4,
+    marginBottom: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  yearLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  yearTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 36,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F8FAFC',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  yearTriggerText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearOption: {
+    minHeight: 40,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  yearOptionText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  yearOptionTextSelected: {
+    color: '#1F2937',
+  },
+  listScroll: {
     marginTop: 14,
+    maxHeight: 320,
+  },
+  list: {
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E5E7EB',

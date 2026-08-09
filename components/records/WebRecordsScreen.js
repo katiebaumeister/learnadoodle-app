@@ -181,7 +181,16 @@ export default function WebRecordsScreen({ familyId, navigation }) {
     if (navigation && typeof navigation === 'function') {
       navigation(path);
     } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.location.href = path;
+      // Keep address bar on `/` — Expo web refresh blanks on shell deep paths.
+      window.history.replaceState({}, '', '/');
+      const href = String(path || '');
+      if (href.includes('/planner')) {
+        let view = 'month';
+        try {
+          view = new URL(href, 'https://learnadoodle.local').searchParams.get('view') || 'month';
+        } catch (_) {}
+        window.dispatchEvent(new CustomEvent('navigateToPlanner', { detail: { view } }));
+      }
     }
   };
 

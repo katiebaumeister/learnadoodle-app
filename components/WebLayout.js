@@ -126,6 +126,7 @@ import FamilyCreatePane from './create/FamilyCreatePane';
 import PlannerCreateMenu from './create/PlannerCreateMenu';
 import SubjectPickerModal from './create/SubjectPickerModal';
 import LearningDaySetupChoiceModal from './planner/LearningDaySetupChoiceModal';
+import { getSubjectsWithOverview } from '../lib/services/subjectsClient';
 import DoodleCommandPane from './doodle/DoodleCommandPane';
 import { PLANNER_EVENT_CATEGORIES } from '../lib/planner/plannerEventCategories';
 import { defaultPlannerExportColumnSelection, PLANNER_EXPORT_OPTIONAL_COLUMN_DEFS } from '../lib/plannerExportOptionalColumns';
@@ -175,6 +176,44 @@ function resolveShellRouteFromPathname(pathnameRaw) {
     return { activeTab: 'review', activeTopNav: 'review', activeSubtab: null, messagesPaneOpen: false };
   }
   return { activeTab: 'home', activeTopNav: 'home', activeSubtab: null, messagesPaneOpen: false };
+}
+
+/**
+ * Shell tabs used to rewrite the URL to /planner, /learning, etc.
+ * Expo web refresh on those paths often blanks the app — keep the address bar on `/`.
+ */
+function isShellDeepLinkPath(pathnameRaw) {
+  const pathname = String(pathnameRaw || '/').replace(/\/+$/, '') || '/';
+  if (pathname === '/' || pathname === '/home') return false;
+  if (pathname.match(/^\/subjects\/[^/]+$/)) return true;
+  return [
+    '/planner',
+    '/planner/preferences',
+    '/learning',
+    '/subject-catalog',
+    '/subjects',
+    '/intelligence',
+    '/messages',
+    '/materials',
+    '/library',
+    '/records',
+    '/family',
+    '/profile',
+    '/students',
+    '/review',
+  ].includes(pathname);
+}
+
+function canonicalizeShellUrlToRoot() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  const pathname = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
+  if (!isShellDeepLinkPath(pathname) && pathname === '/') return;
+  if (!isShellDeepLinkPath(pathname)) return;
+  const url = new URL(window.location.href);
+  url.pathname = '/';
+  // Drop planner view deep-link params; tab state is kept in React.
+  url.searchParams.delete('view');
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
 function getInitialShellRoute() {
@@ -2151,7 +2190,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             try {
               const { data: fullSubjectsData } = await supabase
                 .from('subject')
-                .select('id, name, child_id, grade, notes, created_at, updated_at, default_constraint_mode, default_target_days, default_target_hours')
+                .select('id, name, child_id, grade, notes, school_year, school_term, created_at, updated_at, default_constraint_mode, default_target_days, default_target_hours')
                 .eq('family_id', resolvedFamilyId)
                 .order('name');
               setFullSubjects(fullSubjectsData || []);
@@ -2394,23 +2433,33 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const refetchSubjects = useCallback(async () => {
     if (!familyId) return;
     try {
-      const { data: subjectsData } = await supabase
-        .from('subject')
-        .select('id, name')
-        .eq('family_id', familyId)
-        .order('name');
-      setSubjects(subjectsData || []);
-      // Also refetch full subject data (including planning targets) for Plan Year / courses / preferences UIs
-      const { data: fullSubjectsData } = await supabase
-        .from('subject')
-        .select('id, name, child_id, grade, notes, created_at, updated_at, default_constraint_mode, default_target_days, default_target_hours')
-        .eq('family_id', familyId)
-        .order('name');
-      setFullSubjects(fullSubjectsData || []);
+      // Same source Learning uses so planner pickers stay in sync after add/delete.
+      const overview = await getSubjectsWithOverview(familyId, null, session);
+      const list = Array.isArray(overview) ? overview : [];
+      setSubjects(list.map((row) => ({ id: row.id, name: row.name })));
+      setFullSubjects(list);
+      setFullSubjectsLoaded(true);
+      setSubjectsLoaded(true);
     } catch (err) {
       console.warn('[WebLayout] Error refetching subjects:', err);
+      try {
+        const { data: subjectsData } = await supabase
+          .from('subject')
+          .select('id, name, school_year, school_term')
+          .eq('family_id', familyId)
+          .order('name');
+        setSubjects(subjectsData || []);
+        const { data: fullSubjectsData } = await supabase
+          .from('subject')
+          .select('id, name, child_id, grade, notes, school_year, school_term, created_at, updated_at, default_constraint_mode, default_target_days, default_target_hours')
+          .eq('family_id', familyId)
+          .order('name');
+        setFullSubjects(fullSubjectsData || []);
+      } catch (fallbackErr) {
+        console.warn('[WebLayout] Subject refetch fallback failed:', fallbackErr);
+      }
     }
-  }, [familyId]);
+  }, [familyId, session]);
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const handleRefreshSubjects = () => refetchSubjects();
@@ -2508,9 +2557,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     };
   }, [onboardingBlocked, authUserId, hasSession, applyOnboardingCompleted]);
 
-  // Handle URL-based routing for subject detail pages / deep links.
-  // Do NOT wipe deep links on reload — that left /planner|/learning|/library stuck
-  // under the home loader until users edited the URL back to /.
+  // Handle one-time deep-link boot (e.g. old /planner bookmark), then canonicalize to `/`
+  // so Expo web refresh never depends on SPA rewrites for shell paths.
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
 
@@ -2518,17 +2566,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const pathnameRaw = window.location.pathname || '/';
       const pathname = pathnameRaw.replace(/\/$/, '') || '/';
       const route = resolveShellRouteFromPathname(pathname);
-
-      // Normalize legacy path aliases without destroying the deep link.
-      if (pathname === '/subject-catalog') {
-        window.history.replaceState({}, '', '/learning');
-      } else if (pathname === '/intelligence') {
-        window.history.replaceState({}, '', '/subjects');
-      } else if (pathname === '/materials') {
-        window.history.replaceState({}, '', '/library');
-      } else if (pathname === '/profile') {
-        window.history.replaceState({}, '', '/family');
-      }
 
       if (pathname === '/planner' || pathname === '/planner/preferences') {
         // Family panel uses pushState for About/Terms/Privacy; URL may still be /planner.
@@ -2553,6 +2590,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         const urlParams = new URLSearchParams(window.location.search);
         const view = urlParams.get('view');
         if (view) setCurrentView(sanitizeLegacyPlanYearView(view));
+      }
+
+      if (isShellDeepLinkPath(pathname)) {
+        canonicalizeShellUrlToRoot();
       }
     };
 
@@ -3380,10 +3421,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setCurrentView('year');
           setDefaultView('year');
           if (Platform.OS === 'web') {
-            const url = new URL(window.location.href);
-            url.pathname = '/planner';
-            url.searchParams.set('view', 'year');
-            window.history.pushState({}, '', url.toString());
             window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'year' }));
             window.setTimeout(() => {
               window.dispatchEvent(new CustomEvent('openPlannerExportAttendance'));
@@ -3537,17 +3574,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     if (target === 'navigate_planner_attendance') {
       handleTabChange('subjects');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.history.replaceState({}, '', '/subjects?mode=progress');
+        canonicalizeShellUrlToRoot();
       }
     } else if (target === 'navigate_subjects_progress') {
       handleTabChange('subjects');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.history.replaceState({}, '', '/subjects?mode=progress');
+        canonicalizeShellUrlToRoot();
       }
     } else if (target === 'navigate_planner') {
       handleTabChange('planner');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.history.replaceState({}, '', '/planner');
+        canonicalizeShellUrlToRoot();
       }
     } else if (target === 'navigate_home') {
       handleTabChange('home');
@@ -3563,7 +3600,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     } else if (target === 'navigate_subjects') {
       handleTabChange('subjects');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.history.replaceState({}, '', '/subjects');
+        canonicalizeShellUrlToRoot();
       }
     } else if (target === 'navigate_materials') {
       handleTabChange('materials');
@@ -3573,13 +3610,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     } else if (target === 'navigate_setup_attendance') {
       handleTabChange('planner');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.history.replaceState({}, '', '/planner?view=attendance');
+        canonicalizeShellUrlToRoot();
         window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
       }
     } else if (target === 'navigate_setup_planner_calendar') {
       handleTabChange('planner');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.history.replaceState({}, '', '/planner?view=month');
+        canonicalizeShellUrlToRoot();
         window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'month' }));
       }
     }
@@ -3706,6 +3743,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       }
       setShowPlannerCreateMenu(false);
       setShowLearningDaySubjectPicker(true);
+      // Refresh from the same Learning-page source so deleted/out-of-year rows don't linger.
+      refetchSubjects().catch(() => {});
       return;
     }
     if (sessionRestricted && !familyUserControls.allowed('events')) {
@@ -3878,54 +3917,51 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         //   handleTabChange('explore');
         //   break;
         case 'planner':
-          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            const url = new URL(window.location.href);
-            url.pathname = '/planner';
-            url.searchParams.delete('view');
-            window.history.pushState({}, '', url.toString());
-          }
           handleTabChange('planner', 'calendar');
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            canonicalizeShellUrlToRoot();
+          }
           break;
         case 'planning-preferences':
           handleTabChange('settings', 'planner-settings');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/planner/preferences');
+            canonicalizeShellUrlToRoot();
           }
           break;
         case 'new':
           handleTabChange('settings', 'profile');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/family');
+            canonicalizeShellUrlToRoot();
           }
           break;
         case 'materials':
           handleTabChange('subjects', 'materials');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/subjects');
+            canonicalizeShellUrlToRoot();
           }
           break;
         case 'subjects':
           handleTabChange('subjects', 'subjects');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/subjects');
+            canonicalizeShellUrlToRoot();
           }
           break;
         case 'learning':
           handleTabChange('learning', 'subjects');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/learning');
+            canonicalizeShellUrlToRoot();
           }
           break;
         case 'review':
           handleTabChange('review');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/review');
+            canonicalizeShellUrlToRoot();
           }
           break;
         case 'records':
           handleTabChange('records', 'attendance');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/records');
+            canonicalizeShellUrlToRoot();
           }
           break;
         case 'intelligence':
@@ -3940,13 +3976,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         case 'family':
           handleTabChange('family', 'members');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/family');
+            canonicalizeShellUrlToRoot();
           }
           break;
         case 'tutor-students':
           handleTabChange('tutor-students');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/students');
+            canonicalizeShellUrlToRoot();
           }
           break;
         default:
@@ -4530,7 +4566,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     section = null;
                   }
                   if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.history.pushState({}, '', href);
+                    // Never leave a shell deep path in the address bar (Expo web refresh blanks).
+                    window.history.replaceState({}, '', '/');
                   }
                   if (href.includes('/planner')) handleTopSelect('planner');
                   else if (href.includes('/learning') || href.includes('/subjects')) handleTopSelect('learning');
@@ -5630,6 +5667,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         title="Choose a subject"
         subtitle="Pick the subject you want to add learning days for."
         emptyMessage="No subjects yet. Create one to add learning days."
+        showYearFilter
         onSelect={handleLearningDaySubjectSelect}
         onCreateNew={
           sessionRestricted && !familyUserControls.allowed('subjects')

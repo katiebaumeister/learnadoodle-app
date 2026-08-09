@@ -19,12 +19,15 @@ export default function TodaysQuestsCard({ data, child, onNavigate }) {
   
   const handleOpenSchedule = () => {
     if (onNavigate) {
-      onNavigate(`/planner?view=day&child=${child?.id}`);
+      onNavigate('planner', null, { view: 'day', child: child?.id });
     } else if (typeof window !== 'undefined') {
       if (window.__ldSearchNavigate) {
         window.__ldSearchNavigate('planner', null, { view: 'day', child: child?.id });
       } else {
-        window.location.href = `/planner?view=day&child=${child?.id}`;
+        window.history.replaceState({}, '', '/');
+        window.dispatchEvent(new CustomEvent('navigateToPlanner', {
+          detail: { view: 'day', childId: child?.id },
+        }));
       }
     }
   };

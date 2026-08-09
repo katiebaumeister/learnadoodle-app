@@ -39,8 +39,12 @@ import {
 import {
   buildDraftWithAddedLesson,
   buildDraftWithAddedUnit,
+  buildDraftWithNoUnitLesson,
+  buildDraftWithoutLesson,
+  buildDraftWithoutUnit,
   deleteLessonFromSubjectCurriculum,
   deleteUnitFromSubjectCurriculum,
+  isNoUnitBucketTitle,
   moveLessonInSubjectCurriculum,
   saveSubjectCurriculumFromUnits,
 } from '../../lib/subjectClassworkLessonActions';
@@ -933,36 +937,68 @@ function ClassworkPanelHeader({
   );
 }
 
-function SubjectEmptyClassworkState() {
+function SubjectEmptyClassworkState({
+  onAddUnit,
+  onAddLesson,
+}) {
   return (
-    <View style={styles.emptyWrap}>
-      <Text style={styles.emptyHeading}>This subject is empty</Text>
-      <Text style={styles.emptySubtext}>
-        Add a unit, lesson, or assignment to start building classwork.
-      </Text>
-    </View>
-  );
-}
+    <View style={styles.skeletonWrap}>
+      <View style={styles.skeletonUnitCard}>
+        <View style={styles.skeletonUnitHeaderActions}>
+          {onAddUnit ? (
+            <TouchableOpacity
+              style={styles.skeletonAddUnitLink}
+              onPress={onAddUnit}
+              accessibilityLabel="Add unit"
+              activeOpacity={0.85}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={18} color={CLASSWORK_LINK} strokeWidth={2.4} />
+              <Text style={styles.skeletonAddUnitLinkText}>Add unit</Text>
+            </TouchableOpacity>
+          ) : null}
+          {onAddLesson ? (
+            <TouchableOpacity
+              style={styles.skeletonAddLessonBtn}
+              onPress={onAddLesson}
+              accessibilityLabel="Add lesson"
+              activeOpacity={0.85}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={15} color={CLASSWORK_LINK} strokeWidth={2.25} />
+              <Text style={styles.skeletonAddLinkText}>Add lesson</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        <View style={styles.skeletonLessonsWrap}>
+          <View style={styles.skeletonLessonRow}>
+            <View style={styles.skeletonGripGhost} />
+            <View style={styles.skeletonLessonIconGhost} />
+            <View style={styles.skeletonLessonCopy}>
+              <View style={[styles.skeletonBar, styles.skeletonBarLesson]} />
+              <View style={[styles.skeletonBar, styles.skeletonBarLessonMeta]} />
+            </View>
+          </View>
+          <View style={[styles.skeletonLessonRow, styles.skeletonLessonRowBorder]}>
+            <View style={styles.skeletonGripGhost} />
+            <View style={styles.skeletonLessonIconGhost} />
+            <View style={styles.skeletonLessonCopy}>
+              <View style={[styles.skeletonBar, styles.skeletonBarLessonShort]} />
+              <View style={[styles.skeletonBar, styles.skeletonBarLessonMeta]} />
+            </View>
+          </View>
+        </View>
+      </View>
 
-function EmptyNothingScheduledState({ onScheduleClassDays }) {
-  return (
-    <View style={styles.emptyScheduleWrap}>
-      <Text style={styles.emptyHeading}>Nothing scheduled yet</Text>
-      <Text style={styles.emptySubtext}>
-        Schedule class days or assign lessons to the planner.
-      </Text>
-      {onScheduleClassDays ? (
-        <TouchableOpacity
-          style={styles.emptyUnitsButton}
-          onPress={onScheduleClassDays}
-          accessibilityLabel="Schedule class days"
-          activeOpacity={0.85}
-          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-        >
-          <Plus size={18} color="#334155" strokeWidth={2.25} />
-          <Text style={styles.actionPillBtnText}>Schedule class days</Text>
-        </TouchableOpacity>
-      ) : null}
+      <View style={[styles.skeletonUnitCard, styles.skeletonUnitCardFaint]}>
+        <View style={styles.skeletonUnitHeader}>
+          <View style={styles.skeletonChevronGhost} />
+          <View style={styles.skeletonUnitHeaderBody}>
+            <View style={[styles.skeletonBarTitle, styles.skeletonBarFaint]} />
+            <View style={[styles.skeletonBarMeta, styles.skeletonBarFaint]} />
+          </View>
+        </View>
+      </View>
     </View>
   );
 }
@@ -1021,10 +1057,11 @@ function AddUnitLink({ onPress }) {
       style={styles.addUnitLink}
       onPress={onPress}
       accessibilityLabel="Add unit"
+      activeOpacity={0.85}
       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
     >
-      <Plus size={16} color={CLASSWORK_LINK} strokeWidth={2.25} />
-      <Text style={styles.addStructureLinkText}>Add unit</Text>
+      <Plus size={18} color={CLASSWORK_LINK} strokeWidth={2.4} />
+      <Text style={styles.addUnitLinkText}>Add unit</Text>
     </TouchableOpacity>
   );
 }
@@ -1042,6 +1079,7 @@ export default function SubjectClassworkSection({
   unitsActionLabel = 'Add units',
   onCreateAssignment = null,
   onAddLearningDay = null,
+  onEditSubject = null,
   onPlacementChanged,
   highlightLessonId = null,
   highlightAssignmentId = null,
@@ -1222,9 +1260,17 @@ export default function SubjectClassworkSection({
   }, [familyId, subjectId, units, flushPendingStructureSave]);
 
   useEffect(() => {
-    if (!pendingUnits) return;
+    if (pendingUnits == null) return;
     const propCounts = countCurriculumStructureItems(units);
     const pendingCounts = countCurriculumStructureItems(pendingUnits);
+    // Keep optimistic deletes while props still show the old larger structure.
+    if (
+      pendingCounts.unitCount < propCounts.unitCount
+      || pendingCounts.lessonCount < propCounts.lessonCount
+    ) {
+      return;
+    }
+    // Adds / renames: clear once props have caught up to (or passed) pending counts.
     if (
       propCounts.unitCount >= pendingCounts.unitCount
       && propCounts.lessonCount >= pendingCounts.lessonCount
@@ -1309,6 +1355,19 @@ export default function SubjectClassworkSection({
     });
   }, [schedulingAll]);
 
+  const openScheduleSetupInstead = useCallback(() => {
+    // No learning-day slots yet: send parents to set a recurring schedule or add a day.
+    if (typeof onEditSubject === 'function') {
+      onEditSubject();
+      return true;
+    }
+    if (typeof onAddLearningDay === 'function') {
+      onAddLearningDay();
+      return true;
+    }
+    return false;
+  }, [onEditSubject, onAddLearningDay]);
+
   const openScheduleAllModal = useCallback(() => {
     if (!familyId || !subjectId || schedulingAll) return;
     const count = model.unscheduledLessonCount;
@@ -1359,10 +1418,11 @@ export default function SubjectClassworkSection({
       );
     }
     if (scheduleLines.length === 0) {
+      if (openScheduleSetupInstead()) return;
       setScheduleModal({
         visible: true,
-        title: 'Schedule all lessons',
-        message: 'No open learning days are available for this subject. Use Gap analysis to add sessions or extend your school year.',
+        title: 'Schedule class days',
+        message: 'This subject does not have class days on the planner yet. Add a repeating schedule in Edit subject, or add a learning day.',
         scheduleLines: [],
         showConfirm: false,
         confirmLabel: 'OK',
@@ -1383,7 +1443,26 @@ export default function SubjectClassworkSection({
       working: false,
       mode: 'schedule',
     });
-  }, [familyId, subjectId, schedulingAll, model.unscheduledLessonCount, totalLessonCount, events, units]);
+  }, [
+    familyId,
+    subjectId,
+    schedulingAll,
+    model.unscheduledLessonCount,
+    totalLessonCount,
+    events,
+    units,
+    openScheduleSetupInstead,
+  ]);
+
+  const handleScheduleClassDaysPress = useCallback(() => {
+    const preview = buildLessonSchedulePreview({
+      subjectEvents: events,
+      units,
+      limit: Math.max(model.unscheduledLessonCount || 1, 20),
+    });
+    if (!preview.length && openScheduleSetupInstead()) return;
+    openScheduleAllModal();
+  }, [events, units, model.unscheduledLessonCount, openScheduleSetupInstead, openScheduleAllModal]);
 
   const confirmScheduleAllModal = useCallback(async () => {
     if (scheduleModal.mode === 'done' || scheduleModal.mode === 'info' || !scheduleModal.showConfirm) {
@@ -1415,10 +1494,15 @@ export default function SubjectClassworkSection({
           mode: 'done',
         });
       } else {
+        if (openScheduleSetupInstead()) {
+          setSchedulingAll(false);
+          closeScheduleModal();
+          return;
+        }
         setScheduleModal({
           visible: true,
-          title: 'Schedule all lessons',
-          message: 'No open learning days are available for this subject. Use Gap analysis to add sessions or extend your school year.',
+          title: 'Schedule class days',
+          message: 'This subject does not have class days on the planner yet. Add a repeating schedule in Edit subject, or add a learning day.',
           scheduleLines: [],
           showConfirm: false,
           confirmLabel: 'OK',
@@ -1452,6 +1536,7 @@ export default function SubjectClassworkSection({
     model.unscheduledLessonCount,
     closeScheduleModal,
     onPlacementChanged,
+    openScheduleSetupInstead,
   ]);
 
   useEffect(() => {
@@ -1459,11 +1544,11 @@ export default function SubjectClassworkSection({
     const handler = (event) => {
       const detail = event.detail || {};
       if (String(detail.subjectId || '') !== String(subjectId)) return;
-      openScheduleAllModal();
+      handleScheduleClassDaysPress();
     };
     window.addEventListener(OPEN_SUBJECT_CLASSWORK_SCHEDULE_ALL, handler);
     return () => window.removeEventListener(OPEN_SUBJECT_CLASSWORK_SCHEDULE_ALL, handler);
-  }, [subjectId, openScheduleAllModal]);
+  }, [subjectId, handleScheduleClassDaysPress]);
 
   const handleAddUnit = useCallback(() => {
     if (!familyId || !subjectId) return;
@@ -1510,6 +1595,38 @@ export default function SubjectClassworkSection({
       next.add(String(unit.unitId));
       return next;
     });
+    scrollPanelToBottom();
+    scheduleDebouncedStructureSave();
+  }, [
+    familyId,
+    subjectId,
+    units,
+    applyPendingUnits,
+    scrollPanelToBottom,
+    scheduleDebouncedStructureSave,
+    toast,
+  ]);
+
+  /** Empty / no-unit: put lessons in the "No unit" section (never invent Unit 1). */
+  const handleAddFirstLesson = useCallback(() => {
+    if (!familyId || !subjectId) return;
+    const baseUnits = pendingUnitsRef.current ?? units;
+    const { draft, error } = buildDraftWithNoUnitLesson(baseUnits);
+    if (error) {
+      toast.push(error, 'error');
+      return;
+    }
+    const nextUnits = unitsFromCurriculumDraft(draft);
+    applyPendingUnits(nextUnits);
+    const noUnit = nextUnits.find((unit) => isNoUnitBucketTitle(unit?.title))
+      || nextUnits[nextUnits.length - 1];
+    if (noUnit?.id) {
+      setExpandedUnits((prev) => {
+        const next = new Set(prev);
+        next.add(String(noUnit.id));
+        return next;
+      });
+    }
     scrollPanelToBottom();
     scheduleDebouncedStructureSave();
   }, [
@@ -1571,20 +1688,38 @@ export default function SubjectClassworkSection({
   const handleConfirmDeleteUnit = useCallback(async () => {
     const unit = pendingDeleteUnit;
     if (!unit?.unitId || !familyId || !subjectId || deletingUnit) return;
+
+    // Cancel any debounced structure save — it can rewrite deleted units from a stale snapshot.
+    if (structureSaveTimerRef.current) {
+      clearTimeout(structureSaveTimerRef.current);
+      structureSaveTimerRef.current = null;
+    }
+
+    const baseUnits = pendingUnitsRef.current ?? units;
+    const { draft, error: draftError } = buildDraftWithoutUnit(baseUnits, unit.unitId);
+    if (draftError || !draft) {
+      toast.push(draftError || 'Could not delete unit', 'error');
+      setPendingDeleteUnit(null);
+      return;
+    }
+
+    // Optimistic UI from the same snapshot we will persist (avoids stale props resurrecting units).
+    applyPendingUnits(unitsFromCurriculumDraft(draft));
+    setPendingDeleteUnit(null);
     setDeletingUnit(true);
     try {
       await deleteUnitFromSubjectCurriculum({
         familyId,
         subjectId,
         subjectName: subjectName || 'Subject',
-        units: effectiveUnits,
+        units: baseUnits,
         unitId: unit.unitId,
       });
       toast.push('Unit deleted', 'success');
-      setPendingDeleteUnit(null);
-      clearPendingUnits();
-      onPlacementChanged?.();
+      invalidateSubjectCurriculumStructureCache(familyId, subjectId, null);
+      await onPlacementChanged?.();
     } catch (err) {
+      clearPendingUnits();
       toast.push(err?.message || 'Could not delete unit', 'error');
     } finally {
       setDeletingUnit(false);
@@ -1594,8 +1729,9 @@ export default function SubjectClassworkSection({
     familyId,
     subjectId,
     subjectName,
-    effectiveUnits,
+    units,
     deletingUnit,
+    applyPendingUnits,
     clearPendingUnits,
     toast,
     onPlacementChanged,
@@ -1604,19 +1740,36 @@ export default function SubjectClassworkSection({
   const handleConfirmDeleteLesson = useCallback(async () => {
     const lesson = pendingDeleteLesson;
     if (!lesson?.lessonId || !familyId || !subjectId || deletingLesson) return;
+
+    if (structureSaveTimerRef.current) {
+      clearTimeout(structureSaveTimerRef.current);
+      structureSaveTimerRef.current = null;
+    }
+
+    const baseUnits = pendingUnitsRef.current ?? units;
+    const { draft, error: draftError } = buildDraftWithoutLesson(baseUnits, lesson.lessonId);
+    if (draftError || !draft) {
+      toast.push(draftError || 'Could not delete lesson', 'error');
+      setPendingDeleteLesson(null);
+      return;
+    }
+
+    applyPendingUnits(unitsFromCurriculumDraft(draft));
+    setPendingDeleteLesson(null);
     setDeletingLesson(true);
     try {
       await deleteLessonFromSubjectCurriculum({
         familyId,
         subjectId,
         subjectName: subjectName || 'Subject',
-        units: effectiveUnits,
+        units: baseUnits,
         lessonId: lesson.lessonId,
       });
       toast.push('Lesson deleted', 'success');
-      setPendingDeleteLesson(null);
-      onPlacementChanged?.();
+      invalidateSubjectCurriculumStructureCache(familyId, subjectId, null);
+      await onPlacementChanged?.();
     } catch (err) {
+      clearPendingUnits();
       toast.push(err?.message || 'Could not delete lesson', 'error');
     } finally {
       setDeletingLesson(false);
@@ -1626,8 +1779,10 @@ export default function SubjectClassworkSection({
     familyId,
     subjectId,
     subjectName,
-    effectiveUnits,
+    units,
     deletingLesson,
+    applyPendingUnits,
+    clearPendingUnits,
     toast,
     onPlacementChanged,
   ]);
@@ -2014,13 +2169,6 @@ export default function SubjectClassworkSection({
 
   const hasNoUnitAssignments = model.noUnitAssignments.length > 0;
   const hasScheduledEmptyDays = (model.unlinkedLearningDays || []).length > 0;
-  const hasAnyScheduledContent = useMemo(() => {
-    if ((events || []).length > 0) return true;
-    if (hasScheduledEmptyDays) return true;
-    return (model.units || []).some((unit) =>
-      (unit.lessons || []).some((lesson) => (lesson.learningDays || []).length > 0),
-    );
-  }, [events, hasScheduledEmptyDays, model.units]);
   const hasVisibleContent = hasNoUnitAssignments
     || hasUnitsContent
     || hasScheduledEmptyDays;
@@ -2052,7 +2200,10 @@ export default function SubjectClassworkSection({
               onDragStartLearningDay={handleLearningDayDragStart}
             />
           ) : isParentViewer ? (
-            <SubjectEmptyClassworkState />
+            <SubjectEmptyClassworkState
+              onAddUnit={handleAddUnit}
+              onAddLesson={handleAddFirstLesson}
+            />
           ) : (
             <EmptyClassworkState isParentViewer={isParentViewer} />
           )}
@@ -2162,9 +2313,6 @@ export default function SubjectClassworkSection({
           onDragStartLearningDay={handleLearningDayDragStart}
         />
       ) : null}
-      {hasUnitsContent && !hasAnyScheduledContent && isParentViewer ? (
-        <EmptyNothingScheduledState onScheduleClassDays={openScheduleAllModal} />
-      ) : null}
       {noUnitItems.length > 0 ? (
         <ClassworkUnitCard
           title="Assignments - No unit or lesson attached"
@@ -2216,10 +2364,14 @@ export default function SubjectClassworkSection({
       ) : null}
 
       {!hasUnitsContent && !hasScheduledEmptyDays && isParentViewer ? (
-        <SubjectEmptyClassworkState />
-      ) : model.units.map((unit) => {
+        <SubjectEmptyClassworkState
+          onAddUnit={handleAddUnit}
+          onAddLesson={handleAddFirstLesson}
+        />
+      ) : [...model.units]
+        .sort((a, b) => Number(isNoUnitBucketTitle(b?.title)) - Number(isNoUnitBucketTitle(a?.title)))
+        .map((unit) => {
         const peerItems = buildUnitPeerItems(unit, model.eventById);
-        if (peerItems.length === 0) return null;
         const dropKey = `unit-${unit.unitId}`;
         const lessonCount = (unit?.lessons || []).length;
         const isExpanded = expandedUnits.has(String(unit.unitId));
@@ -2531,7 +2683,8 @@ const styles = StyleSheet.create({
   },
   wrapEmptyExpanded: {
     flexGrow: 1,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 8,
   },
   sectionBlock: {
     gap: 12,
@@ -2769,10 +2922,18 @@ const styles = StyleSheet.create({
   addUnitLink: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 12,
+    alignSelf: 'flex-start',
+    gap: 7,
+    marginTop: 6,
+    paddingVertical: 10,
     paddingHorizontal: 12,
-    marginTop: 4,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  addUnitLinkText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: CLASSWORK_LINK,
+    ...CLASSWORK_LEAGUE_FONT,
   },
   addStructureLinkText: {
     fontSize: 13,
@@ -2817,18 +2978,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     ...CLASSWORK_BODY_FONT,
   },
-  emptyScheduleWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 20,
-    marginBottom: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-    gap: 8,
-  },
   emptyUnitsWrap: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -2851,10 +3000,167 @@ const styles = StyleSheet.create({
     borderRadius: 9999,
     borderWidth: 1,
     borderColor: '#E6EBF2',
-    marginTop: 8,
+    marginTop: 0,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
+  },
+  skeletonWrap: {
+    alignSelf: 'stretch',
+    width: '100%',
+    gap: 14,
+    paddingTop: 4,
+  },
+  skeletonUnitCard: {
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    backgroundColor: 'rgba(248, 250, 252, 0.7)',
+    overflow: 'hidden',
+  },
+  skeletonUnitCardFaint: {
+    opacity: 0.55,
+    borderColor: '#D8E0EA',
+  },
+  skeletonUnitHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    gap: 10,
+  },
+  skeletonChevronGhost: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    backgroundColor: '#E2E8F0',
+    flexShrink: 0,
+  },
+  skeletonUnitHeaderBody: {
+    flex: 1,
+    minWidth: 0,
+    gap: 8,
+  },
+  skeletonMenuGhost: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    backgroundColor: '#E2E8F0',
+    flexShrink: 0,
+  },
+  skeletonBar: {
+    height: 10,
+    borderRadius: 6,
+    backgroundColor: '#E2E8F0',
+  },
+  skeletonBarTitle: {
+    width: '38%',
+    maxWidth: 160,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#E2E8F0',
+  },
+  skeletonBarMeta: {
+    width: '22%',
+    maxWidth: 88,
+    height: 8,
+    borderRadius: 5,
+    backgroundColor: '#E8EDF3',
+  },
+  skeletonBarFaint: {
+    backgroundColor: '#E8EDF3',
+  },
+  skeletonBarLesson: {
+    width: '42%',
+    maxWidth: 180,
+  },
+  skeletonBarLessonShort: {
+    width: '34%',
+    maxWidth: 140,
+  },
+  skeletonBarLessonMeta: {
+    width: '28%',
+    maxWidth: 110,
+    height: 8,
+    marginTop: 2,
+    backgroundColor: '#E8EDF3',
+  },
+  skeletonBarLink: {
+    width: 88,
+    height: 10,
+  },
+  skeletonLessonsWrap: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148, 163, 184, 0.28)',
+    backgroundColor: 'rgba(248, 250, 252, 0.55)',
+    paddingBottom: 10,
+  },
+  skeletonLessonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  skeletonLessonRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148, 163, 184, 0.18)',
+  },
+  skeletonGripGhost: {
+    width: 12,
+    height: 16,
+    borderRadius: 3,
+    backgroundColor: '#E2E8F0',
+    flexShrink: 0,
+  },
+  skeletonLessonIconGhost: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    backgroundColor: '#E8EDF3',
+    flexShrink: 0,
+  },
+  skeletonLessonCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 6,
+  },
+  skeletonUnitHeaderActions: {
+    gap: 2,
+    paddingTop: 12,
+    paddingBottom: 8,
+    paddingHorizontal: 14,
+  },
+  skeletonAddUnitLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 7,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  skeletonAddUnitLinkText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: CLASSWORK_LINK,
+    ...CLASSWORK_LEAGUE_FONT,
+  },
+  skeletonAddLessonBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  skeletonAddLinkText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: CLASSWORK_LINK,
+    ...CLASSWORK_LEAGUE_FONT,
   },
   attachOverlay: {
     flex: 1,

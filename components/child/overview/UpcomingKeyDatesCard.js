@@ -19,12 +19,15 @@ export default function UpcomingKeyDatesCard({ data, child, onNavigate }) {
   
   const handleViewPlanner = () => {
     if (onNavigate) {
-      onNavigate(`/planner?view=month&child=${child?.id}`);
+      onNavigate('planner', null, { view: 'month', child: child?.id });
     } else if (typeof window !== 'undefined') {
       if (window.__ldSearchNavigate) {
         window.__ldSearchNavigate('planner', null, { view: 'month', child: child?.id });
       } else {
-        window.location.href = `/planner?view=month&child=${child?.id}`;
+        window.history.replaceState({}, '', '/');
+        window.dispatchEvent(new CustomEvent('navigateToPlanner', {
+          detail: { view: 'month', childId: child?.id },
+        }));
       }
     }
   };

@@ -114,7 +114,7 @@ export default function FamilySectionView({
   const handleNavigateLearning = useCallback(() => {
     onTabChange?.('subjects', 'subjects');
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.history.pushState({}, '', '/subjects');
+      window.history.replaceState({}, '', '/');
     }
   }, [onTabChange]);
 

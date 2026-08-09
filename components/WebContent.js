@@ -3500,6 +3500,25 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     return () => { refreshCalendarDataRef.current = null; };
   }, [refreshCalendarData]);
 
+  // One-shot: remove planner ClassDays left after subject delete (null subject_id / metadata links).
+  const orphanPlanCleanupFamilyRef = useRef(null);
+  useEffect(() => {
+    if (!familyId || orphanPlanCleanupFamilyRef.current === familyId) return undefined;
+    orphanPlanCleanupFamilyRef.current = familyId;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { cleanupOrphanedSubjectPlanEvents } = await import('../lib/services/deleteSubjectCascade');
+        const result = await cleanupOrphanedSubjectPlanEvents(supabase, familyId);
+        if (cancelled || !result?.softDeleted) return;
+        refreshCalendarDataRef.current?.(null, { force: true, background: true });
+      } catch (_) {
+        /* best-effort */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [familyId]);
+
   // Listen for calendar refresh events from global task modal
   // This allows the TaskCreateModal in WebLayout to trigger a calendar refresh
   useEffect(() => {
@@ -3614,6 +3633,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         .filter((d) => d instanceof Date && !Number.isNaN(d.getTime()));
       if (forceInvalidate && familyId) {
         invalidateHolidaysForRangeCache(familyId);
+        // Soft-delete ClassDay/plan rows left behind when subjects were removed
+        // (those often had subject_id null and only linked via metadata/title).
+        try {
+          const { cleanupOrphanedSubjectPlanEvents } = await import('../lib/services/deleteSubjectCascade');
+          await cleanupOrphanedSubjectPlanEvents(supabase, familyId);
+        } catch (_) {
+          /* best-effort */
+        }
       }
       if (forceInvalidate && refreshDate instanceof Date && !isNaN(refreshDate.getTime())) {
         const forceMonthPrefix = `${refreshDate.getFullYear()}-${String(refreshDate.getMonth() + 1).padStart(2, '0')}`;
@@ -4144,15 +4171,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const detail = event?.detail || {};
       if (onTabChange) onTabChange('planner', 'calendar');
       const view = detail.view || 'month';
-      const queryParams = new URLSearchParams();
-      if (detail.subjectId) queryParams.set('subjectId', detail.subjectId);
-      if (detail.childId) queryParams.set('childId', detail.childId);
-      if (detail.date) queryParams.set('date', detail.date);
-      queryParams.set('view', view);
-      const url = new URL(window.location.href);
-      url.pathname = '/planner';
-      url.search = queryParams.toString();
-      window.history.replaceState({}, '', url.toString());
+      // Keep the address bar on `/` — Expo web refresh blanks on /planner deep paths.
+      if (window.location.pathname !== '/' && window.location.pathname !== '') {
+        window.history.replaceState({}, '', '/');
+      }
       const syncView = () => {
         window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: view }));
       };
@@ -9898,21 +9920,21 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         displayText += `\n\n📅 I'm generating your 2-week plan. This may take a moment...`;
       }
 
-      // Navigate: switch tab and (legacy attendance target) set view
+      // Navigate: switch tab only — keep URL on `/` (Expo web blanks on shell deep paths).
       if (response.fetch === 'navigate_planner_attendance' && onTabChange) {
         onTabChange('subjects');
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.history.replaceState({}, '', '/subjects?mode=progress');
+          window.history.replaceState({}, '', '/');
         }
       } else if (response.fetch === 'navigate_subjects_progress' && onTabChange) {
         onTabChange('subjects');
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.history.replaceState({}, '', '/subjects?mode=progress');
+          window.history.replaceState({}, '', '/');
         }
       } else if (response.fetch === 'navigate_planner' && onTabChange) {
         onTabChange('planner');
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.history.replaceState({}, '', '/planner');
+          window.history.replaceState({}, '', '/');
         }
       } else if (response.fetch === 'navigate_home' && onTabChange) {
         onTabChange('home');
@@ -9928,12 +9950,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       } else if (response.fetch === 'navigate_subjects' && onTabChange) {
         onTabChange('subjects');
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.history.replaceState({}, '', '/subjects');
+          window.history.replaceState({}, '', '/');
         }
       } else if (response.fetch === 'navigate_materials' && onTabChange) {
         onTabChange('subjects', 'materials');
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.history.replaceState({}, '', '/subjects');
+          window.history.replaceState({}, '', '/');
         }
       }
 
@@ -10549,15 +10571,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       if (Platform.OS !== 'web' || typeof window === 'undefined') return;
       if (onTabChange) onTabChange('planner', 'calendar');
       const view = params.view || 'month';
-      const queryParams = new URLSearchParams();
-      if (params.subjectId) queryParams.set('subjectId', params.subjectId);
-      if (params.childId) queryParams.set('childId', params.childId);
-      if (params.date) queryParams.set('date', params.date);
-      queryParams.set('view', view);
-      const url = new URL(window.location.href);
-      url.pathname = '/planner';
-      url.search = queryParams.toString();
-      window.history.replaceState({}, '', url.toString());
+      window.history.replaceState({}, '', '/');
       const syncView = () => {
         window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: view }));
       };
@@ -10570,7 +10584,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     onNavigateToPlannerAttendance: () => {
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         if (onTabChange) onTabChange('records', 'attendance');
-        window.history.pushState({}, '', '/records');
+        window.history.replaceState({}, '', '/');
       }
     },
   }), [onEditChild, onTabChange]);
@@ -10728,10 +10742,10 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               if (onTabChange) {
                 onTabChange('subjects');
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.history.pushState({}, '', '/subjects');
+                  window.history.replaceState({}, '', '/');
                 }
               } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                window.history.pushState({}, '', '/subjects');
+                window.history.replaceState({}, '', '/');
                 window.location.reload();
               }
             }}

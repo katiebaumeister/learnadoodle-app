@@ -1497,6 +1497,34 @@ export default function AttendanceView({
     setYearRange({ start, end });
   }, [minStartKey, maxEndKey, yearRange.start]);
 
+  const termDayCounts = useMemo(() => {
+    if (bulkTermOptions.length === 0) return [];
+    const childId = heatmapSelectedChildId === FAMILY_HEATMAP_CHILD_ID ? null : heatmapSelectedChildId;
+    const termResults = bulkTermOptions.map((term) => {
+      const daysSet = new Set();
+      attendanceRecords.forEach((r) => {
+        if (r.status !== 'present') return;
+        if (childId && String(r.child_id) !== String(childId)) return;
+        const day = String(r.day_date || '').slice(0, 10);
+        if (day >= term.start && day <= term.end) daysSet.add(day);
+      });
+      return { label: term.label, start: term.start, end: term.end, count: daysSet.size };
+    });
+    // Count days outside any term
+    const noTermDays = new Set();
+    attendanceRecords.forEach((r) => {
+      if (r.status !== 'present') return;
+      if (childId && String(r.child_id) !== String(childId)) return;
+      const day = String(r.day_date || '').slice(0, 10);
+      const inAnyTerm = bulkTermOptions.some((t) => day >= t.start && day <= t.end);
+      if (!inAnyTerm) noTermDays.add(day);
+    });
+    if (noTermDays.size > 0) {
+      termResults.push({ label: 'Other', start: null, end: null, count: noTermDays.size });
+    }
+    return termResults;
+  }, [bulkTermOptions, attendanceRecords, heatmapSelectedChildId]);
+
   if (loading && !familyIdResolved) {
     return (
       <View style={styles.centered}>
@@ -1626,34 +1654,6 @@ export default function AttendanceView({
       ) : null}
     </View>
   );
-
-  const termDayCounts = useMemo(() => {
-    if (bulkTermOptions.length === 0) return [];
-    const childId = heatmapSelectedChildId === FAMILY_HEATMAP_CHILD_ID ? null : heatmapSelectedChildId;
-    const termResults = bulkTermOptions.map((term) => {
-      const daysSet = new Set();
-      attendanceRecords.forEach((r) => {
-        if (r.status !== 'present') return;
-        if (childId && String(r.child_id) !== String(childId)) return;
-        const day = String(r.day_date || '').slice(0, 10);
-        if (day >= term.start && day <= term.end) daysSet.add(day);
-      });
-      return { label: term.label, start: term.start, end: term.end, count: daysSet.size };
-    });
-    // Count days outside any term
-    const noTermDays = new Set();
-    attendanceRecords.forEach((r) => {
-      if (r.status !== 'present') return;
-      if (childId && String(r.child_id) !== String(childId)) return;
-      const day = String(r.day_date || '').slice(0, 10);
-      const inAnyTerm = bulkTermOptions.some((t) => day >= t.start && day <= t.end);
-      if (!inAnyTerm) noTermDays.add(day);
-    });
-    if (noTermDays.size > 0) {
-      termResults.push({ label: 'Other', start: null, end: null, count: noTermDays.size });
-    }
-    return termResults;
-  }, [bulkTermOptions, attendanceRecords, heatmapSelectedChildId]);
 
   const yearPlannerRangeRow = (
     <View style={styles.yearPlannerToolbar}>

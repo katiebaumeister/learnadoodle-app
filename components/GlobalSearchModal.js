@@ -360,23 +360,18 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
     const navHandler = onNavigate || (Platform.OS === 'web' ? window.__ldSearchNavigate : null);
 
     if (!navHandler) {
-      // Fallback to window.location if no navigation handler
+      // Fallback: keep URL on `/` and use in-app navigation events.
       if (Platform.OS === 'web') {
+        window.history.replaceState({}, '', '/');
         if (item.type === 'event') {
           const eventId = item.payload?.eventId || item.id.replace('event-', '');
-          window.location.href = `/planner?eventId=${eventId}`;
-        } else if (item.type === 'document') {
-          window.location.href = `/records`;
-        } else if (item.type === 'child') {
-          const childId = item.payload?.childId || item.id.replace('child-', '');
-          window.location.href = `/children-list?childId=${childId}`;
-        } else if (item.type === 'subject') {
-          const subjectId = item.payload?.subjectId || item.id.replace('subject-', '');
-          window.location.href = `/records?subjectId=${subjectId}`;
+          window.dispatchEvent(new CustomEvent('navigateToPlanner', {
+            detail: { view: 'month', eventId },
+          }));
         } else if (item.type === 'function') {
           const payload = item.payload || {};
-          if (payload.kind === 'navigate' && payload.href) {
-            window.location.href = payload.href;
+          if (payload.kind === 'navigate' && String(payload.href || '').includes('/planner')) {
+            window.dispatchEvent(new CustomEvent('navigateToPlanner', { detail: { view: 'month' } }));
           }
         }
       }

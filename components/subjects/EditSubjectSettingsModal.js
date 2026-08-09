@@ -266,17 +266,30 @@ export default function EditSubjectSettingsModal({
 
   const applyScheduleFormState = useCallback((initialSchedule, yearLabel, termId, loadedPlannerSettings) => {
     datesCustomizedRef.current = !!initialSchedule.hasCustomScheduleDates;
-    setWeekdays(
-      (initialSchedule.weekdays || [])
-        .map((day) => parseInt(day, 10))
-        .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6),
+    const nextWeekdays = (initialSchedule.weekdays || [])
+      .map((day) => parseInt(day, 10))
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
+    setWeekdays(nextWeekdays);
+    const hasScheduleDays = nextWeekdays.length > 0;
+    // Only show time/duration when a real schedule exists (or caller already set values).
+    setStartTime(
+      hasScheduleDays
+        ? (initialSchedule.startTime || DEFAULT_SCHEDULE_TIME)
+        : (initialSchedule.startTime || ''),
     );
-    setStartTime(initialSchedule.startTime || DEFAULT_SCHEDULE_TIME);
-    setDurationMinutes(
-      initialSchedule.durationMinutes === '' || initialSchedule.durationMinutes == null
-        ? DEFAULT_SCHEDULE_DURATION
-        : String(initialSchedule.durationMinutes),
-    );
+    if (hasScheduleDays) {
+      setDurationMinutes(
+        initialSchedule.durationMinutes === '' || initialSchedule.durationMinutes == null
+          ? DEFAULT_SCHEDULE_DURATION
+          : String(initialSchedule.durationMinutes),
+      );
+    } else {
+      setDurationMinutes(
+        initialSchedule.durationMinutes === '' || initialSchedule.durationMinutes == null
+          ? ''
+          : String(initialSchedule.durationMinutes),
+      );
+    }
     if (initialSchedule.startDate && initialSchedule.endDate) {
       setStartDate(initialSchedule.startDate);
       setEndDate(initialSchedule.endDate);
@@ -290,6 +303,13 @@ export default function EditSubjectSettingsModal({
   const handleWeekdaysChange = useCallback((next) => {
     markScheduleTouched();
     setWeekdays(next);
+    if (Array.isArray(next) && next.length > 0) {
+      setStartTime((prev) => (String(prev || '').trim() ? prev : DEFAULT_SCHEDULE_TIME));
+      setDurationMinutes((prev) => (Number(prev) > 0 ? prev : DEFAULT_SCHEDULE_DURATION));
+    } else {
+      setStartTime('');
+      setDurationMinutes('');
+    }
   }, [markScheduleTouched]);
 
   const handleStartTimeChange = useCallback((next) => {

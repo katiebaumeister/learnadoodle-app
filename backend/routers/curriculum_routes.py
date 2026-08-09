@@ -694,87 +694,67 @@ async def get_subject_curriculum_events_structure(
         if not academic_year_id:
             # Prefer curriculum_units/curriculum_lessons for subject-detail "saved units" so
             # unit/lesson editing can exist independently from planner events.
-            subject_res = (
-                supabase.table("subject")
-                .select("name")
-                .eq("id", subject_id)
-                .eq("family_id", family_id)
-                .limit(1)
-                .execute()
-            )
-            subject_name = (subject_res.data or [{}])[0].get("name") if subject_res.data else None
-            subject_name = (subject_name or "").strip()
-            if subject_name:
-                # Prefer precise subject_id metadata match. Fall back to historical subject_tags rows.
-                unit_rows: List[Dict[str, Any]] = []
-                try:
-                    units_res_by_meta = (
-                        supabase.table("curriculum_units")
-                        .select("id, title, source_type, created_at")
-                        .eq("family_id", family_id)
-                        .contains("metadata", {"subject_id": str(subject_id)})
-                        .order("created_at", desc=False)
+            # Only units explicitly linked via metadata.subject_id — never fall back to
+            # subject_tags-by-name (that reused old "Math"/"History" rows on new subjects).
+            unit_rows: List[Dict[str, Any]] = []
+            try:
+                units_res_by_meta = (
+                    supabase.table("curriculum_units")
+                    .select("id, title, source_type, created_at")
+                    .eq("family_id", family_id)
+                    .contains("metadata", {"subject_id": str(subject_id)})
+                    .order("created_at", desc=False)
+                    .execute()
+                )
+                unit_rows = units_res_by_meta.data or []
+            except Exception:
+                unit_rows = []
+            if unit_rows:
+                unit_ids = [u.get("id") for u in unit_rows if u.get("id")]
+                lessons_by_unit: Dict[str, List[Dict[str, Any]]] = {str(uid): [] for uid in unit_ids}
+                if unit_ids:
+                    lessons_res = (
+                        supabase.table("curriculum_lessons")
+                        .select("id, unit_id, title, sequence_index, minutes_est")
+                        .in_("unit_id", unit_ids)
+                        .order("sequence_index", desc=False)
                         .execute()
                     )
-                    unit_rows = units_res_by_meta.data or []
-                except Exception:
-                    unit_rows = []
-                if not unit_rows:
-                    units_res = (
-                        supabase.table("curriculum_units")
-                        .select("id, title, source_type, created_at")
-                        .eq("family_id", family_id)
-                        .contains("subject_tags", [subject_name])
-                        .order("created_at", desc=False)
-                        .execute()
+                    for lesson in (lessons_res.data or []):
+                        uid = str(lesson.get("unit_id") or "")
+                        if not uid:
+                            continue
+                        lessons_by_unit.setdefault(uid, []).append(
+                            {
+                                "id": lesson.get("id"),
+                                "title": (lesson.get("title") or "Untitled Lesson"),
+                                "type": "lesson",
+                                "sequence": lesson.get("sequence_index") or 0,
+                                "minutes": lesson.get("minutes_est") if isinstance(lesson.get("minutes_est"), int) else 60,
+                                "date": None,
+                            }
+                        )
+                units_out: List[Dict[str, Any]] = []
+                source_candidates: List[str] = []
+                for unit in unit_rows:
+                    uid = str(unit.get("id") or "")
+                    title = (unit.get("title") or "").strip() or "Untitled Unit"
+                    source_type = (unit.get("source_type") or "").strip()
+                    if source_type:
+                        source_candidates.append(source_type)
+                    unit_lessons = sorted(
+                        lessons_by_unit.get(uid, []),
+                        key=lambda x: (x.get("sequence") or 0, x.get("title") or ""),
                     )
-                    unit_rows = units_res.data or []
-                if unit_rows:
-                    unit_ids = [u.get("id") for u in unit_rows if u.get("id")]
-                    lessons_by_unit: Dict[str, List[Dict[str, Any]]] = {str(uid): [] for uid in unit_ids}
-                    if unit_ids:
-                        lessons_res = (
-                            supabase.table("curriculum_lessons")
-                            .select("id, unit_id, title, sequence_index, minutes_est")
-                            .in_("unit_id", unit_ids)
-                            .order("sequence_index", desc=False)
-                            .execute()
-                        )
-                        for lesson in (lessons_res.data or []):
-                            uid = str(lesson.get("unit_id") or "")
-                            if not uid:
-                                continue
-                            lessons_by_unit.setdefault(uid, []).append(
-                                {
-                                    "id": lesson.get("id"),
-                                    "title": (lesson.get("title") or "Untitled Lesson"),
-                                    "type": "lesson",
-                                    "sequence": lesson.get("sequence_index") or 0,
-                                    "minutes": lesson.get("minutes_est") if isinstance(lesson.get("minutes_est"), int) else 60,
-                                    "date": None,
-                                }
-                            )
-                    units_out: List[Dict[str, Any]] = []
-                    source_candidates: List[str] = []
-                    for unit in unit_rows:
-                        uid = str(unit.get("id") or "")
-                        title = (unit.get("title") or "").strip() or "Untitled Unit"
-                        source_type = (unit.get("source_type") or "").strip()
-                        if source_type:
-                            source_candidates.append(source_type)
-                        unit_lessons = sorted(
-                            lessons_by_unit.get(uid, []),
-                            key=lambda x: (x.get("sequence") or 0, x.get("title") or ""),
-                        )
-                        units_out.append({"id": uid, "title": title, "lessons": unit_lessons})
-                    saved_content_source = None
-                    for pref in ("manual", "plain_text_parsed", "ai_generated"):
-                        if pref in source_candidates:
-                            saved_content_source = pref
-                            break
-                    if not saved_content_source and source_candidates:
-                        saved_content_source = source_candidates[0]
-                    return {"units": units_out, "saved_content_source": saved_content_source}
+                    units_out.append({"id": uid, "title": title, "lessons": unit_lessons})
+                saved_content_source = None
+                for pref in ("manual", "plain_text_parsed", "ai_generated"):
+                    if pref in source_candidates:
+                        saved_content_source = pref
+                        break
+                if not saved_content_source and source_candidates:
+                    saved_content_source = source_candidates[0]
+                return {"units": units_out, "saved_content_source": saved_content_source}
 
         select_cols = (
             "id, title, curriculum_unit_title, unit, lesson, curriculum_lesson_sequence, curriculum_metadata, "

@@ -9,14 +9,15 @@ export type OnOpenAttendanceView = (() => void) | undefined;
 
 /**
  * Opens the Planner in Attendance mode (year heatmap + month drill-down).
- * On web: switches to planner tab, sets URL to /planner?view=attendance, dispatches plannerViewChange.
+ * On web: switches to planner tab, keeps URL on `/`, dispatches plannerViewChange.
  * On native: no-op unless caller passes a custom handler via modal prop.
  */
 export function openPlannerAttendance(options?: { onTabChange?: (tab: string) => void }): void {
   if (typeof window === 'undefined') return;
   const w = window as unknown as { history?: { replaceState: (a: unknown, b: string, url: string) => void }; dispatchEvent: (e: Event) => boolean };
   if (options?.onTabChange) options.onTabChange('planner');
-  if (w.history?.replaceState) w.history.replaceState({}, '', '/planner?view=attendance');
+  // Keep `/` — Expo web refresh blanks on /planner deep paths.
+  if (w.history?.replaceState) w.history.replaceState({}, '', '/');
   try {
     w.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
   } catch {

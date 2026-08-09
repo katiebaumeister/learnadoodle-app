@@ -894,6 +894,16 @@ export default function BulletinBoardSection({
   }, [familyId]);
 
   const [postsLoading, setPostsLoading] = useState(() => !initialBulletinState.fromCache);
+  const [subjectWelcomeSeedSettled, setSubjectWelcomeSeedSettled] = useState(() => !filterSubjectId);
+
+  const hasSubjectWelcomePost = useMemo(() => {
+    if (!filterSubjectId) return true;
+    const filterKey = String(filterSubjectId);
+    return posts.some(
+      (post) => String(post.subjectId || '') === filterKey
+        && post.systemKind === SUBJECT_GETTING_STARTED_SYSTEM_KIND,
+    );
+  }, [posts, filterSubjectId]);
 
   const loadPosts = useCallback(async () => {
     if (!familyId) return;
@@ -954,35 +964,47 @@ export default function BulletinBoardSection({
     return () => window.removeEventListener('refreshBulletinBoard', handler);
   }, [familyId, filterSubjectId, loadPosts]);
 
+  // Reset welcome-seed gate when switching subjects so we never flash empty before seed.
+  useEffect(() => {
+    if (!filterSubjectId) {
+      setSubjectWelcomeSeedSettled(true);
+      return;
+    }
+    setSubjectWelcomeSeedSettled(false);
+  }, [filterSubjectId]);
+
+  useEffect(() => {
+    if (hasSubjectWelcomePost) {
+      setSubjectWelcomeSeedSettled(true);
+    }
+  }, [hasSubjectWelcomePost]);
+
   // Backfill Learnadoodle welcome post for subjects created before / outside Add Subject modal.
   useEffect(() => {
-    if (!familyId || !filterSubjectId || postsLoading) return undefined;
-    const alreadyHasWelcome = posts.some(
-      (post) => String(post.subjectId || '') === String(filterSubjectId)
-        && post.systemKind === SUBJECT_GETTING_STARTED_SYSTEM_KIND,
-    );
-    if (alreadyHasWelcome) return undefined;
+    if (!familyId || !filterSubjectId || postsLoading || hasSubjectWelcomePost) return undefined;
 
     let cancelled = false;
     const subjectName = subjectById.get(String(filterSubjectId)) || 'your subject';
     (async () => {
       try {
-        const result = await seedSubjectGettingStartedBulletinPost({
+        await seedSubjectGettingStartedBulletinPost({
           familyId,
           subjectId: filterSubjectId,
           subjectName,
         });
-        if (cancelled || result?.skipped || result?.error || !result?.data) return;
-        loadPostsRef.current?.();
+        if (cancelled) return;
+        await loadPostsRef.current?.();
       } catch (err) {
         console.warn('[BulletinBoardSection] subject welcome seed failed:', err);
+      } finally {
+        if (!cancelled) setSubjectWelcomeSeedSettled(true);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [familyId, filterSubjectId, posts, postsLoading, subjectById]);
+  }, [familyId, filterSubjectId, postsLoading, hasSubjectWelcomePost, subjectById]);
 
   useEffect(() => {
     if (filterSubjectId) {
@@ -1008,7 +1030,10 @@ export default function BulletinBoardSection({
     true
   );
 
-  const bulletinInitialLoading = postsLoading || activityLoading;
+  // Subject boards: hold loading until welcome exists or seed attempt finishes (avoids "No posts yet" flash).
+  const bulletinInitialLoading = postsLoading
+    || activityLoading
+    || (Boolean(filterSubjectId) && !hasSubjectWelcomePost && !subjectWelcomeSeedSettled);
 
   const mergedStreamItems = useMemo(
     () => mergeBulletinStreamItems({

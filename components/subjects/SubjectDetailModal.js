@@ -592,8 +592,10 @@ export default function SubjectDetailModal({
                         if (navHandler) {
                           navHandler('planner', null, { subjectId });
                         } else {
-                          // Fallback: try to open planner in new tab or navigate
-                          window.location.href = '/planner';
+                          window.history.replaceState({}, '', '/');
+                          window.dispatchEvent(new CustomEvent('navigateToPlanner', {
+                            detail: { subjectId },
+                          }));
                         }
                       }
                       onClose();

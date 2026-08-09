@@ -63,10 +63,16 @@ export default function SubjectScheduleFields({
 
   useEffect(() => {
     startTimeRef.current = startTime;
-    setMaskedStartTime(hmToMaskedTime(startTime || SCHEDULE_FIELD_DEFAULTS.time));
+    // Keep blank when no time is set — do not paint fake 9:00 AM defaults.
+    setMaskedStartTime(startTime ? hmToMaskedTime(startTime) : '');
   }, [startTime]);
 
   const commitStartTime = (masked) => {
+    if (!String(masked || '').trim()) {
+      setMaskedStartTime('');
+      onStartTimeChange?.('');
+      return;
+    }
     const hm = maskedTimeToHm(masked, startTimeRef.current || SCHEDULE_FIELD_DEFAULTS.time);
     setMaskedStartTime(hmToMaskedTime(hm));
     onStartTimeChange?.(hm);
@@ -246,7 +252,7 @@ export default function SubjectScheduleFields({
           <TextInput
             value={durationMinutes === '' || durationMinutes == null ? '' : String(durationMinutes)}
             onChangeText={(text) => onDurationMinutesChange(text.replace(/[^\d]/g, ''))}
-            placeholder="60"
+            placeholder="Optional"
             keyboardType="numeric"
             style={styles.fieldInput}
           />

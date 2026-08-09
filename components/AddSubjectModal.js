@@ -1025,10 +1025,13 @@ export default function AddSubjectModal({
                     weekdays={weekdays}
                     onWeekdaysChange={(next) => {
                       setWeekdays(next);
-                      // Persist the visible schedule defaults as soon as the user opts into days.
+                      // Only fill time/duration once the user opts into days; clear when days are removed.
                       if (Array.isArray(next) && next.length > 0) {
                         if (!String(startTime || '').trim()) setStartTime(DEFAULT_SCHEDULE_TIME);
                         if (!Number(durationMinutes)) setDurationMinutes(DEFAULT_SCHEDULE_DURATION);
+                      } else {
+                        setStartTime('');
+                        setDurationMinutes('');
                       }
                     }}
                     startTime={startTime}
