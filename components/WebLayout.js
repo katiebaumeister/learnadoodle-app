@@ -5116,20 +5116,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         <View style={{
                           width: 14,
                           height: 14,
-                          borderRadius: 7,
+                          borderRadius: 3,
                           borderWidth: 1.5,
                           borderColor: allChildrenSelected ? '#8B5CF6' : '#D1D5DB',
-                          backgroundColor: 'transparent',
+                          backgroundColor: allChildrenSelected ? '#8B5CF6' : 'transparent',
                           alignItems: 'center',
                           justifyContent: 'center',
                         }}>
                           {allChildrenSelected ? (
-                            <View style={{
-                              width: 7,
-                              height: 7,
-                              borderRadius: 4,
-                              backgroundColor: '#8B5CF6',
-                            }} />
+                            <Check size={10} color="#FFFFFF" />
                           ) : null}
                         </View>
                         <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
@@ -5148,7 +5143,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                               gap: 8,
                               paddingVertical: 6,
                               paddingHorizontal: 10,
-                              borderRadius: 4,
+                              borderRadius: 6,
                             }}
                             onPress={() => {
                               // Exclusive: one child or all — never multi-select.
@@ -5159,21 +5154,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                               style={{
                                 width: 14,
                                 height: 14,
-                                borderRadius: 7,
+                                borderRadius: 3,
                                 borderWidth: 1.5,
                                 borderColor: isSelected ? '#8B5CF6' : '#D1D5DB',
-                                backgroundColor: 'transparent',
+                                backgroundColor: isSelected ? '#8B5CF6' : 'transparent',
                                 alignItems: 'center',
                                 justifyContent: 'center',
                               }}
                             >
                               {isSelected ? (
-                                <View style={{
-                                  width: 7,
-                                  height: 7,
-                                  borderRadius: 4,
-                                  backgroundColor: '#8B5CF6',
-                                }} />
+                                <Check size={10} color="#FFFFFF" />
                               ) : null}
                             </View>
                             <View
@@ -5197,7 +5187,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                                 resizeMode="cover"
                               />
                             </View>
-                            <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', flex: 1, fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+                            <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontWeight: '600', flex: 1, fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
                               {child.first_name || child.name || 'Unknown'}
                             </Text>
                           </TouchableOpacity>

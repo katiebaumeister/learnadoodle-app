@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { Info } from 'lucide-react';
 import { ATTENDANCE_COLORS, TOKENS } from './constants';
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -50,6 +51,15 @@ function buildMonthsInRange(yearStart, yearEnd) {
     }
   }
   return months;
+}
+
+function chunkArray(items, size) {
+  if (!size || size < 1) return [items];
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
 }
 
 function buildMonthCells(year, month) {
@@ -191,7 +201,10 @@ function MonthMiniCalendar({
   );
 }
 
-export function YearHeatmapLegend({ style, compact = false, toolbar = false }) {
+export function YearHeatmapLegend({ style, compact = false, toolbar = false, helpText = null }) {
+  const [helpHovered, setHelpHovered] = useState(false);
+  const [helpTooltipPos, setHelpTooltipPos] = useState({ x: 0, y: 0 });
+  const isWeb = Platform.OS === 'web';
   const pillStyle = [
     styles.legendPill,
     compact && styles.legendPillCompact,
@@ -202,29 +215,98 @@ export function YearHeatmapLegend({ style, compact = false, toolbar = false }) {
     compact && styles.legendPillTextCompact,
     toolbar && styles.legendPillTextToolbar,
   ];
+
+  const handleHelpHover = (isEnter, event) => {
+    if (!isWeb || !helpText) return;
+    if (isEnter) {
+      setHelpHovered(true);
+      const node = event?.currentTarget || event?.target;
+      if (node && typeof node.getBoundingClientRect === 'function') {
+        const rect = node.getBoundingClientRect();
+        setHelpTooltipPos({
+          x: rect.left + rect.width / 2,
+          y: rect.bottom + 6,
+        });
+      }
+    } else {
+      setHelpHovered(false);
+    }
+  };
+
+  const helpTooltip = helpHovered && helpText && isWeb ? (() => {
+    let ReactDOM;
+    try {
+      ReactDOM = require('react-dom');
+    } catch (e) {
+      return null;
+    }
+    const tip = (
+      <View
+        pointerEvents="none"
+        style={[
+          styles.legendHelpTooltip,
+          {
+            position: 'fixed',
+            left: helpTooltipPos.x,
+            top: helpTooltipPos.y,
+            transform: [{ translateX: '-50%' }],
+          },
+        ]}
+      >
+        <Text style={styles.legendHelpTooltipText}>{helpText}</Text>
+      </View>
+    );
+    return ReactDOM.createPortal ? ReactDOM.createPortal(tip, document.body) : null;
+  })() : null;
+
   return (
-    <View style={[styles.legend, compact && styles.legendCompact, toolbar && styles.legendToolbar, style]}>
-      <View style={pillStyle}>
-        <View style={[styles.legendDot, toolbar && styles.legendDotToolbar, { backgroundColor: ATTENDANCE_COLORS.present }]} />
-        <Text style={textStyle}>Attended</Text>
+    <>
+      <View style={[styles.legend, compact && styles.legendCompact, toolbar && styles.legendToolbar, style]}>
+        <View style={pillStyle}>
+          <View style={[styles.legendDot, toolbar && styles.legendDotToolbar, { backgroundColor: ATTENDANCE_COLORS.present }]} />
+          <Text style={textStyle}>Attended</Text>
+        </View>
+        <View style={pillStyle}>
+          <View style={[styles.legendDot, toolbar && styles.legendDotToolbar, { backgroundColor: ATTENDANCE_COLORS.absent }]} />
+          <Text style={textStyle}>Unattended</Text>
+        </View>
+        <View style={pillStyle}>
+          <View style={[styles.legendDot, toolbar && styles.legendDotToolbar, { backgroundColor: ATTENDANCE_COLORS.unmarked }]} />
+          <Text style={textStyle}>Upcoming</Text>
+        </View>
+        <View style={pillStyle}>
+          <View style={[styles.legendDot, toolbar && styles.legendDotToolbar, { backgroundColor: ATTENDANCE_COLORS.noEvents }]} />
+          <Text style={textStyle}>No events</Text>
+        </View>
+        <View style={pillStyle}>
+          <View style={[styles.legendDot, styles.legendDotOffDay, toolbar && styles.legendDotToolbar]} />
+          <Text style={textStyle}>Day off</Text>
+        </View>
+        {helpText ? (
+          <View
+            style={[
+              styles.legendHelpButton,
+              toolbar && styles.legendHelpButtonToolbar,
+              compact && styles.legendHelpButtonCompact,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Attendance help"
+            {...(isWeb && {
+              onMouseEnter: (event) => handleHelpHover(true, event),
+              onMouseLeave: () => handleHelpHover(false),
+              cursor: 'help',
+            })}
+          >
+            <Info
+              size={toolbar ? 15 : compact ? 13 : 14}
+              color="rgba(15, 23, 42, 0.55)"
+              strokeWidth={2.25}
+            />
+          </View>
+        ) : null}
       </View>
-      <View style={pillStyle}>
-        <View style={[styles.legendDot, toolbar && styles.legendDotToolbar, { backgroundColor: ATTENDANCE_COLORS.absent }]} />
-        <Text style={textStyle}>Unattended</Text>
-      </View>
-      <View style={pillStyle}>
-        <View style={[styles.legendDot, toolbar && styles.legendDotToolbar, { backgroundColor: ATTENDANCE_COLORS.unmarked }]} />
-        <Text style={textStyle}>Upcoming</Text>
-      </View>
-      <View style={pillStyle}>
-        <View style={[styles.legendDot, toolbar && styles.legendDotToolbar, { backgroundColor: ATTENDANCE_COLORS.noEvents }]} />
-        <Text style={textStyle}>No events</Text>
-      </View>
-      <View style={pillStyle}>
-        <View style={[styles.legendDot, styles.legendDotOffDay, toolbar && styles.legendDotToolbar]} />
-        <Text style={textStyle}>Day off</Text>
-      </View>
-    </View>
+      {helpTooltip}
+    </>
   );
 }
 
@@ -240,6 +322,7 @@ export default function YearHeatmapGrid({
   selectedDateKey = null,
   showLegend = true,
   compact = false,
+  columnsPerRow = null,
 }) {
   const [hoveredCellKey, setHoveredCellKey] = useState(null);
   const cellSize = compact ? TOKENS.hmCellCompact : TOKENS.hmCell;
@@ -247,34 +330,50 @@ export default function YearHeatmapGrid({
   const isWeb = Platform.OS === 'web';
 
   const months = useMemo(() => buildMonthsInRange(yearStart, yearEnd), [yearStart, yearEnd]);
+  const monthRows = useMemo(
+    () => (columnsPerRow ? chunkArray(months, columnsPerRow) : null),
+    [months, columnsPerRow],
+  );
 
   if (!selectedChildId) {
     return null;
   }
 
+  const renderMonth = (m) => (
+    <MonthMiniCalendar
+      key={m.index}
+      month={m}
+      selectedChildId={selectedChildId}
+      dayStatusByChild={dayStatusByChild}
+      offDayKeys={offDayKeys}
+      onMarkDayAttended={onMarkDayAttended}
+      onDayPress={onDayPress}
+      interactionMode={interactionMode}
+      selectedDateKey={selectedDateKey}
+      cellSize={cellSize}
+      gap={gap}
+      compact={compact}
+      isWeb={isWeb}
+      hoveredCellKey={hoveredCellKey}
+      setHoveredCellKey={setHoveredCellKey}
+    />
+  );
+
   return (
     <>
-      <View style={[styles.monthGrid, compact && styles.monthGridCompact]}>
-        {months.map((m) => (
-          <MonthMiniCalendar
-            key={m.index}
-            month={m}
-            selectedChildId={selectedChildId}
-            dayStatusByChild={dayStatusByChild}
-            offDayKeys={offDayKeys}
-            onMarkDayAttended={onMarkDayAttended}
-            onDayPress={onDayPress}
-            interactionMode={interactionMode}
-            selectedDateKey={selectedDateKey}
-            cellSize={cellSize}
-            gap={gap}
-            compact={compact}
-            isWeb={isWeb}
-            hoveredCellKey={hoveredCellKey}
-            setHoveredCellKey={setHoveredCellKey}
-          />
-        ))}
-      </View>
+      {monthRows ? (
+        <View style={[styles.monthGridEven, compact && styles.monthGridCompact]}>
+          {monthRows.map((row, rowIndex) => (
+            <View key={`month-row-${rowIndex}`} style={[styles.monthGridRow, compact && styles.monthGridRowCompact]}>
+              {row.map(renderMonth)}
+            </View>
+          ))}
+        </View>
+      ) : (
+        <View style={[styles.monthGrid, compact && styles.monthGridCompact]}>
+          {months.map(renderMonth)}
+        </View>
+      )}
       {showLegend ? <YearHeatmapLegend style={compact ? styles.legendCompact : null} /> : null}
     </>
   );
@@ -290,6 +389,20 @@ const styles = StyleSheet.create({
   monthGridCompact: {
     gap: TOKENS.s3,
     paddingVertical: 0,
+  },
+  monthGridEven: {
+    flexDirection: 'column',
+    gap: TOKENS.s5,
+    paddingVertical: TOKENS.s2,
+  },
+  monthGridRow: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    gap: TOKENS.s5,
+    justifyContent: 'flex-start',
+  },
+  monthGridRowCompact: {
+    gap: TOKENS.s3,
   },
   monthPanel: {},
   monthPanelTitle: {
@@ -434,5 +547,45 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(15,23,42,0.35)',
     borderStyle: 'dashed',
+  },
+  legendHelpButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: TOKENS.bgSubtle,
+  },
+  legendHelpButtonCompact: {
+    width: 24,
+    height: 24,
+  },
+  legendHelpButtonToolbar: {
+    width: 36,
+    height: 36,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#FFFFFF',
+  },
+  legendHelpTooltip: {
+    backgroundColor: '#0f172a',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    maxWidth: 320,
+    zIndex: 10000,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 4px 14px rgba(15, 23, 42, 0.35)',
+    }),
+  },
+  legendHelpTooltipText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500',
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

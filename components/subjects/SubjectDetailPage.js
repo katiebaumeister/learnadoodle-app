@@ -16,7 +16,6 @@ import {
   Calendar,
   Clock,
   Plus,
-  Sparkles,
   Upload,
   FileText,
   ExternalLink,
@@ -565,6 +564,7 @@ export default function SubjectDetailPage({
   const [subjectData, setSubjectData] = useState(preloadedSubjectData || null);
   const [optimisticAttendancePatches, setOptimisticAttendancePatches] = useState([]);
   const [showExportComingSoonModal, setShowExportComingSoonModal] = useState(false);
+  const [showBuildFromMaterialComingSoonModal, setShowBuildFromMaterialComingSoonModal] = useState(false);
   const [showAttendanceExportModal, setShowAttendanceExportModal] = useState(false);
   const [showMarkAllAttendedModal, setShowMarkAllAttendedModal] = useState(false);
   const [showPastEventsGradesModal, setShowPastEventsGradesModal] = useState(false);
@@ -4138,6 +4138,9 @@ export default function SubjectDetailPage({
               onMaterialsUpdate={() => {
                 loadSubjectDetail({ silent: true });
               }}
+              onBuildFromMaterial={
+                isParentViewer ? () => setShowBuildFromMaterialComingSoonModal(true) : null
+              }
             />
           </View>
         ) : null}
@@ -4153,6 +4156,11 @@ export default function SubjectDetailPage({
               onOpenGradedItem={(item) => {
                 if (item?.eventId) handleOpenEventDetails(item.eventId, item.event);
               }}
+              onAddGrade={
+                Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0
+                  ? () => setShowPastEventsGradesModal(true)
+                  : undefined
+              }
             />
           </View>
         ) : null}
@@ -4406,11 +4414,11 @@ export default function SubjectDetailPage({
                     }}
                     activeOpacity={0.7}
                     accessibilityRole="button"
-                    accessibilityLabel="Full planner"
+                    accessibilityLabel="All Subjects"
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <ExternalLink size={16} color="#334155" strokeWidth={2.25} />
-                    <Text style={styles.emptyStateButtonText}>Full planner</Text>
+                    <Text style={styles.emptyStateButtonText}>All Subjects</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
@@ -4438,62 +4446,69 @@ export default function SubjectDetailPage({
                   ) : null}
                 </View>
               </View>
-              <View style={styles.attendanceYearBody}>
-                <View style={styles.attendanceModeToolbar}>
-                  <View style={styles.attendanceModeTopRow}>
-                    <View style={styles.attendanceModeSwitch}>
-                      {[{ id: 'events', label: 'View events' }, { id: 'attendance', label: 'Attendance check' }].map((mode) => {
-                        const selected = attendanceInteractionMode === mode.id;
-                        return (
-                          <TouchableOpacity
-                            key={mode.id}
-                            style={[styles.attendanceModeChip, selected && styles.attendanceModeChipSelected]}
-                            onPress={() => setAttendanceInteractionMode(mode.id)}
-                            activeOpacity={0.85}
-                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                          >
-                            <Text style={[styles.attendanceModeChipText, selected && styles.attendanceModeChipTextSelected]}>
-                              {mode.label}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                    <YearHeatmapLegend style={styles.attendanceInlineLegend} toolbar />
-                  </View>
-                  <View style={styles.attendanceTermCountsRow}>
-                    {subjectAttendanceTermDayCounts.map((term) => (
-                      <View key={term.label} style={styles.attendanceTermCountItem}>
-                        <Text style={styles.attendanceTermCountLabel}>{term.label}</Text>
-                        <Text style={styles.attendanceTermCountValue}>
-                          {term.count} {term.count === 1 ? 'day' : 'days'}
+                <View style={styles.attendanceYearBody}>
+                  <View style={styles.attendanceModeShell}>
+                    <View style={styles.attendanceTermCountsCard}>
+                      {subjectAttendanceTermDayCounts.map((term) => (
+                        <View key={term.label} style={styles.attendanceTermCountRow}>
+                          <Text style={styles.attendanceTermCountLabel}>{term.label}</Text>
+                          <Text style={styles.attendanceTermCountValue}>
+                            {term.count} {term.count === 1 ? 'day' : 'days'}
+                          </Text>
+                        </View>
+                      ))}
+                      <View style={[styles.attendanceTermCountRow, styles.attendanceTermCountRowTotal]}>
+                        <Text style={styles.attendanceTermCountLabel}>Total</Text>
+                        <Text style={[styles.attendanceTermCountValue, styles.attendanceTermCountValueTotal]}>
+                          {subjectAttendanceTermDayCounts.reduce((sum, term) => sum + term.count, 0)} days
                         </Text>
                       </View>
-                    ))}
-                    <View style={styles.attendanceTermCountItem}>
-                      <Text style={styles.attendanceTermCountLabel}>Total</Text>
-                      <Text style={[styles.attendanceTermCountValue, styles.attendanceTermCountValueTotal]}>
-                        {subjectAttendanceTermDayCounts.reduce((sum, term) => sum + term.count, 0)} days
-                      </Text>
+                    </View>
+                    <View style={styles.attendanceModeToolbar}>
+                      <View style={styles.attendanceModeTopRow}>
+                        <View style={styles.attendanceModeSwitch}>
+                          {[{ id: 'events', label: 'View events' }, { id: 'attendance', label: 'Attendance check' }].map((mode) => {
+                            const selected = attendanceInteractionMode === mode.id;
+                            return (
+                              <TouchableOpacity
+                                key={mode.id}
+                                style={[styles.attendanceModeChip, selected && styles.attendanceModeChipSelected]}
+                                onPress={() => setAttendanceInteractionMode(mode.id)}
+                                activeOpacity={0.85}
+                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                              >
+                                <Text style={[styles.attendanceModeChipText, selected && styles.attendanceModeChipTextSelected]}>
+                                  {mode.label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                        <YearHeatmapLegend
+                          style={styles.attendanceInlineLegend}
+                          toolbar
+                          helpText={
+                            attendanceInteractionMode === 'events'
+                              ? 'Click a day to open that day\u2019s lessons. Use the circle on each event to mark it attended or unattended. Only instructional-time events count toward attendance.'
+                              : 'Click a day to mark it attended or unattended. You can mark days with no scheduled lessons.'
+                          }
+                        />
+                      </View>
+                    </View>
+                    <View style={styles.attendanceYearGridWrap}>
+                      <SubjectAttendanceYearHeatmap
+                        attendanceRecords={attendanceRecordsForUI}
+                        subjectEvents={subjectData?.events || []}
+                        isDayMarkable={canMarkAttendanceForDateKey}
+                        onDayPress={attendanceInteractionMode === 'events' ? handleViewEventsDayPress : null}
+                        onMarkDayAttended={attendanceInteractionMode === 'attendance' && canManageAttendance ? handleYearHeatmapDayPress : null}
+                        interactionMode={attendanceInteractionMode}
+                        hideLegend
+                        selectedDateKey={attendanceDayPanelKey}
+                      />
                     </View>
                   </View>
-                  <Text style={styles.attendanceModeHelp}>
-                    {attendanceInteractionMode === 'events'
-                      ? 'Click a day to open that day\u2019s lessons. Use the circle on each event to mark it attended or unattended. Only instructional-time events count toward attendance.'
-                      : 'Click a day to mark it attended or unattended. You can mark days with no scheduled lessons.'}
-                  </Text>
                 </View>
-                <SubjectAttendanceYearHeatmap
-                  attendanceRecords={attendanceRecordsForUI}
-                  subjectEvents={subjectData?.events || []}
-                  isDayMarkable={canMarkAttendanceForDateKey}
-                  onDayPress={attendanceInteractionMode === 'events' ? handleViewEventsDayPress : null}
-                  onMarkDayAttended={attendanceInteractionMode === 'attendance' && canManageAttendance ? handleYearHeatmapDayPress : null}
-                  interactionMode={attendanceInteractionMode}
-                  hideLegend
-                  selectedDateKey={attendanceDayPanelKey}
-                />
-              </View>
             </>
 
           {attendanceDayPanelKey && (
@@ -4856,6 +4871,39 @@ export default function SubjectDetailPage({
             <TouchableOpacity
               style={comingSoonModalStyles.button}
               onPress={() => setShowExportComingSoonModal(false)}
+              activeOpacity={0.8}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={comingSoonModalStyles.buttonText}>Got it</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        visible={showBuildFromMaterialComingSoonModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowBuildFromMaterialComingSoonModal(false)}
+      >
+        <View style={comingSoonModalStyles.overlay}>
+          <View style={comingSoonModalStyles.content}>
+            <TouchableOpacity
+              style={comingSoonModalStyles.close}
+              onPress={() => setShowBuildFromMaterialComingSoonModal(false)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <X size={24} color="#64748b" />
+            </TouchableOpacity>
+            <Text style={comingSoonModalStyles.title}>Coming soon</Text>
+            <Text style={comingSoonModalStyles.body}>
+              Build from material is in development. Stay tuned for updates!
+            </Text>
+            <TouchableOpacity
+              style={comingSoonModalStyles.button}
+              onPress={() => setShowBuildFromMaterialComingSoonModal(false)}
               activeOpacity={0.8}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
@@ -5638,13 +5686,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 14,
     paddingTop: 10,
-    paddingBottom: 4,
+    paddingBottom: 0,
     flexShrink: 0,
     gap: 12,
   },
   attendanceYearBody: {
     paddingHorizontal: 14,
-    paddingTop: 8,
+    paddingTop: 6,
     paddingBottom: 14,
   },
   attendanceYearHelpText: {
@@ -5656,21 +5704,49 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  attendanceModeShell: {
+    position: 'relative',
+    width: '100%',
+  },
   attendanceModeToolbar: {
-    gap: 8,
-    marginBottom: 12,
+    marginBottom: 0,
+    paddingRight: 148,
   },
-  attendanceTermCountsRow: {
+  attendanceYearGridWrap: {
+    paddingRight: 148,
+    marginTop: 0,
+  },
+  attendanceTermCountsCard: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    zIndex: 2,
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#FFFFFF',
+    flexShrink: 0,
+    minWidth: 132,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+    }),
+  },
+  attendanceTermCountRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
+    justifyContent: 'space-between',
     gap: 12,
-    alignSelf: 'flex-start',
   },
-  attendanceTermCountItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
+  attendanceTermCountRowTotal: {
+    marginTop: 2,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(15, 23, 42, 0.08)',
   },
   attendanceTermCountLabel: {
     fontSize: 12,
@@ -5739,12 +5815,6 @@ const styles = StyleSheet.create({
   attendanceModeChipTextSelected: {
     color: '#6BB3E8',
     fontWeight: '600',
-  },
-  attendanceModeHelp: {
-    fontSize: 12,
-    color: 'rgba(15, 23, 42, 0.62)',
-    lineHeight: 17,
-    maxWidth: 760,
   },
   dayPanelOverlay: {
     flex: 1,

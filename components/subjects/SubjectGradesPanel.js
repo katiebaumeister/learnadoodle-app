@@ -8,7 +8,7 @@ import {
   Image,
   ScrollView,
 } from 'react-native';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Plus } from 'lucide-react';
 import { getWorkStatusLabel, parseWorkSpec } from '../../lib/workEventHelpers';
 import { isPlannerLearningDayEvent } from '../../lib/planner/plannerLearningDayChip';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
@@ -120,10 +120,23 @@ function isMissingWork(assignment, eventById) {
   return due.getTime() < Date.now();
 }
 
-function GradesPanelHeader() {
+function GradesPanelHeader({ onAddGrade = null }) {
   return (
     <View style={styles.panelToolbar}>
       <Text style={styles.panelTitle}>Grades</Text>
+      {onAddGrade ? (
+        <TouchableOpacity
+          style={styles.headerActionButton}
+          onPress={onAddGrade}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Bulk add grades"
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Plus size={18} color="#334155" strokeWidth={2.25} />
+          <Text style={styles.headerActionButtonText}>Bulk add grades</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -367,7 +380,7 @@ export default function SubjectGradesPanel({
 
   return (
     <View style={[styles.root, styles.rootExpanded]}>
-      <GradesPanelHeader />
+      <GradesPanelHeader onAddGrade={onAddGrade} />
       <ScrollView
         style={styles.panelScroll}
         contentContainerStyle={styles.scrollContent}
@@ -414,6 +427,27 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
     flex: 1,
     minWidth: 0,
+    ...LEAGUE_FONT,
+  },
+  headerActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: 9999,
+    borderWidth: 1,
+    borderColor: '#E6EBF2',
+    backgroundColor: '#FFFFFF',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  headerActionButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'rgba(15,23,42,0.85)',
     ...LEAGUE_FONT,
   },
   panelScroll: {

@@ -1724,6 +1724,30 @@ export default function AttendanceView({
     </View>
   );
 
+  const yearPlannerTermCountsCard = (
+    <TouchableOpacity
+      style={styles.termCountsCard}
+      onPress={() => setTermCountsModalVisible(true)}
+      activeOpacity={0.7}
+      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+    >
+      {termDayCounts.map((term) => (
+        <View key={term.label} style={styles.termCountRow}>
+          <Text style={styles.termCountLabel}>{term.label}</Text>
+          <Text style={styles.termCountValue}>
+            {term.count} {term.count === 1 ? 'day' : 'days'}
+          </Text>
+        </View>
+      ))}
+      <View style={[styles.termCountRow, styles.termCountRowTotal]}>
+        <Text style={styles.termCountLabel}>Total</Text>
+        <Text style={[styles.termCountValue, styles.termCountValueTotal]}>
+          {termDayCounts.reduce((sum, t) => sum + t.count, 0)} days
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+
   const yearPlannerRangeRow = (
     <View style={styles.yearPlannerToolbar}>
       <View style={styles.yearPlannerTopRow}>
@@ -1745,7 +1769,11 @@ export default function AttendanceView({
             );
           })}
         </View>
-        <YearHeatmapLegend style={styles.yearPlannerInlineLegend} toolbar />
+        <YearHeatmapLegend
+          style={styles.yearPlannerInlineLegend}
+          toolbar
+          helpText={YEAR_PLANNER_MODE_COPY[yearPlannerInteractionMode].help}
+        />
         {lastBulkUndo && !readOnly ? (
           <TouchableOpacity
             style={[styles.rangeBulkChip, undoingBulk && styles.rangeBulkChipDisabled]}
@@ -1799,41 +1827,20 @@ export default function AttendanceView({
           </View>
         </View>
       ) : null}
-      <TouchableOpacity
-        style={styles.termCountsRow}
-        onPress={() => setTermCountsModalVisible(true)}
-        activeOpacity={0.7}
-        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-      >
-        {termDayCounts.map((term) => (
-          <View key={term.label} style={styles.termCountItem}>
-            <Text style={styles.termCountLabel}>{term.label}</Text>
-            <Text style={styles.termCountValue}>{term.count} {term.count === 1 ? 'day' : 'days'}</Text>
-          </View>
-        ))}
-        <View style={styles.termCountItem}>
-          <Text style={styles.termCountLabel}>Total</Text>
-          <Text style={[styles.termCountValue, styles.termCountValueTotal]}>
-            {termDayCounts.reduce((sum, t) => sum + t.count, 0)} days
-          </Text>
-        </View>
-      </TouchableOpacity>
-      <Text style={styles.yearPlannerModeHelp}>
-        {YEAR_PLANNER_MODE_COPY[yearPlannerInteractionMode].help}
-      </Text>
     </View>
   );
 
   const belowToolbarContent = renderBelowToolbar
     ? renderBelowToolbar()
     : (
-      <YearHeatmapGrid
-        yearStart={yearStartKey}
-        yearEnd={yearEndKey}
-        selectedChildId={heatmapSelectedChildId}
-        dayStatusByChild={heatmapDayStatusByChild}
-        offDayKeys={offDayKeys}
-        showLegend={!isYearPlannerLayout}
+      <View style={isYearPlannerLayout ? styles.yearPlannerGridWrap : undefined}>
+        <YearHeatmapGrid
+          yearStart={yearStartKey}
+          yearEnd={yearEndKey}
+          selectedChildId={heatmapSelectedChildId}
+          dayStatusByChild={heatmapDayStatusByChild}
+          offDayKeys={offDayKeys}
+          showLegend={!isYearPlannerLayout}
         onMarkDayAttended={
           readOnly
           || (isYearPlannerLayout && yearPlannerInteractionMode !== YEAR_PLANNER_MODE_ATTENDANCE)
@@ -1846,10 +1853,12 @@ export default function AttendanceView({
             : null
         }
         interactionMode={isYearPlannerLayout ? yearPlannerInteractionMode : YEAR_PLANNER_MODE_ATTENDANCE}
+        columnsPerRow={isYearPlannerLayout ? 4 : null}
         selectedDateKey={
           isYearPlannerLayout && yearPlannerDayPanelVisible ? selectedDay.dateKey : null
         }
-      />
+        />
+      </View>
     );
 
   return (
@@ -1861,10 +1870,18 @@ export default function AttendanceView({
       {children.length > 0 ? (
         <>
           {!isDrilldownMode && (
-            <>
-              {isYearPlannerLayout ? yearPlannerRangeRow : rangeRow}
-              {belowToolbarContent}
-            </>
+            isYearPlannerLayout ? (
+              <View style={styles.yearPlannerShell}>
+                {yearPlannerTermCountsCard}
+                {yearPlannerRangeRow}
+                {belowToolbarContent}
+              </View>
+            ) : (
+              <>
+                {rangeRow}
+                {belowToolbarContent}
+              </>
+            )
           )}
           {isDrilldownMode && (
             <View style={[styles.drilldownSection, styles.drilldownSectionStandalone]}>
@@ -2398,9 +2415,18 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: TOKENS.s4,
   },
+  yearPlannerShell: {
+    position: 'relative',
+    width: '100%',
+  },
   yearPlannerToolbar: {
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 0,
+    paddingRight: 148,
+  },
+  yearPlannerGridWrap: {
+    paddingRight: 148,
+    marginTop: 0,
   },
   yearPlannerTopRow: {
     flexDirection: 'row',
@@ -2451,33 +2477,53 @@ const styles = StyleSheet.create({
     color: '#6BB3E8',
     fontWeight: '600',
   },
-  yearPlannerModeHelp: {
-    fontSize: TOKENS.fontSizeCaption,
-    color: TOKENS.textMuted,
-    lineHeight: 17,
-    maxWidth: 760,
+  termCountsCard: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    zIndex: 2,
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#FFFFFF',
+    flexShrink: 0,
+    minWidth: 132,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+    }),
   },
-  termCountsRow: {
+  termCountRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
+    justifyContent: 'space-between',
     gap: 12,
-    alignSelf: 'flex-start',
   },
-  termCountItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
+  termCountRowTotal: {
+    marginTop: 2,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(15, 23, 42, 0.08)',
   },
   termCountLabel: {
     fontSize: 12,
     fontWeight: '600',
     color: 'rgba(15, 23, 42, 0.5)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   termCountValue: {
     fontSize: 12,
     fontWeight: '700',
     color: 'rgba(15, 23, 42, 0.8)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   termCountValueTotal: {
     color: '#0F172A',

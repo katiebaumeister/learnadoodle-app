@@ -112,7 +112,7 @@ function YearHeatmap({ title, dateKeys = [], colorForKey }) {
 
 const SUBJECT_SYNTHETIC_CHILD_ID = '__subject__';
 
-export const SubjectAttendanceYearHeatmap = React.memo(function SubjectAttendanceYearHeatmap({ attendanceRecords = [], subjectEvents = [], onDayPress = null, onMarkDayAttended = null, isDayMarkable = null, hideLegend = false, interactionMode = 'events', selectedDateKey = null, yearStart: yearStartProp = null, yearEnd: yearEndProp = null }) {
+export const SubjectAttendanceYearHeatmap = React.memo(function SubjectAttendanceYearHeatmap({ attendanceRecords = [], subjectEvents = [], onDayPress = null, onMarkDayAttended = null, isDayMarkable = null, hideLegend = false, interactionMode = 'events', selectedDateKey = null, yearStart: yearStartProp = null, yearEnd: yearEndProp = null, compact = false }) {
   const todayKey = useMemo(() => toDateKey(new Date()), []);
 
   const defaultYearRange = useMemo(() => resolveCalendarYearRange(new Date()), []);
@@ -189,6 +189,8 @@ export const SubjectAttendanceYearHeatmap = React.memo(function SubjectAttendanc
       interactionMode={interactionMode}
       showLegend={!hideLegend}
       selectedDateKey={selectedDateKey}
+      compact={compact}
+      columnsPerRow={4}
     />
   );
 });

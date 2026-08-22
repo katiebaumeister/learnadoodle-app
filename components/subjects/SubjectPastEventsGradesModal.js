@@ -318,11 +318,6 @@ export default function SubjectPastEventsGradesModal({
             </>
           ) : (
             <>
-              <Text style={styles.headline}>Quick-add grades for past events</Text>
-              <Text style={styles.subhead}>
-                Includes all subject-attached events. Use Edit to open the event editor.
-              </Text>
-
               <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
                 {pastEventGroups.map((group, idx) => {
                   const ev = group.representative;
@@ -542,25 +537,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  headline: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#0f172a',
-    marginBottom: 4,
-    lineHeight: 20,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  subhead: {
-    fontSize: 13,
-    color: '#64748b',
-    lineHeight: 18,
-    marginBottom: 12,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   empty: {
     fontSize: 15,

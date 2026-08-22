@@ -87,6 +87,7 @@ export default function MaterialsLibrary({
   hideChildrenFilter = false,
   scopedChildIds = null,
   embedded = false,
+  onBuildFromMaterial = null,
 }) {
   const subjectLocked = Boolean(lockedSubjectId);
   const showSubjectFilterRow = !hideSubjectFilter && !subjectLocked;
@@ -1050,7 +1051,22 @@ export default function MaterialsLibrary({
             ? `Materials (${libraryReady ? visibleMaterials.length : '—'})`
             : `Total Materials (${libraryReady ? allMaterials.length : '—'})`}
       </Text>
-      {renderUploadMaterialButton()}
+      <View style={styles.materialsToolbarActions}>
+        {embedded && typeof onBuildFromMaterial === 'function' ? (
+          <TouchableOpacity
+            style={styles.embeddedPanelActionBtn}
+            onPress={onBuildFromMaterial}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Build from material"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Sparkles size={18} color="#334155" strokeWidth={2.25} />
+            <Text style={styles.embeddedPanelActionBtnText}>Build from material</Text>
+          </TouchableOpacity>
+        ) : null}
+        {renderUploadMaterialButton()}
+      </View>
     </View>
   );
 
@@ -2926,6 +2942,12 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 4,
     gap: 12,
+  },
+  materialsToolbarActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0,
   },
   embeddedPanelTitle: {
     fontSize: 17,
