@@ -8,7 +8,7 @@ import {
   Image,
   ScrollView,
 } from 'react-native';
-import { ChevronRight, Plus } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { getWorkStatusLabel, parseWorkSpec } from '../../lib/workEventHelpers';
 import { isPlannerLearningDayEvent } from '../../lib/planner/plannerLearningDayChip';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
@@ -120,28 +120,10 @@ function isMissingWork(assignment, eventById) {
   return due.getTime() < Date.now();
 }
 
-function GradesPanelHeader({ onAddLearningDay, onAddAssignment }) {
-  const hasActions = typeof onAddAssignment === 'function';
+function GradesPanelHeader() {
   return (
     <View style={styles.panelToolbar}>
       <Text style={styles.panelTitle}>Grades</Text>
-      {hasActions ? (
-        <View style={styles.panelActions}>
-          {typeof onAddAssignment === 'function' ? (
-            <TouchableOpacity
-              style={styles.addGradeButton}
-              onPress={onAddAssignment}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Add assignment"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={18} color="#334155" strokeWidth={2.25} />
-              <Text style={styles.addGradeButtonText}>Add assignment</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -173,8 +155,6 @@ export default function SubjectGradesPanel({
   onOpenAssignment,
   onOpenGradedItem,
   onAddGrade,
-  onAddLearningDay,
-  onAddAssignment,
 }) {
   const eventById = useMemo(() => buildEventById(events), [events]);
 
@@ -387,7 +367,7 @@ export default function SubjectGradesPanel({
 
   return (
     <View style={[styles.root, styles.rootExpanded]}>
-      <GradesPanelHeader onAddLearningDay={onAddLearningDay} onAddAssignment={onAddAssignment} />
+      <GradesPanelHeader />
       <ScrollView
         style={styles.panelScroll}
         contentContainerStyle={styles.scrollContent}
@@ -427,11 +407,6 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     gap: 12,
   },
-  panelActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
   panelTitle: {
     fontSize: 17,
     fontWeight: '700',
@@ -439,26 +414,6 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
     flex: 1,
     minWidth: 0,
-    ...LEAGUE_FONT,
-  },
-  addGradeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderRadius: 9999,
-    borderWidth: 1,
-    borderColor: '#E6EBF2',
-    backgroundColor: '#FFFFFF',
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  addGradeButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: 'rgba(15,23,42,0.85)',
     ...LEAGUE_FONT,
   },
   panelScroll: {

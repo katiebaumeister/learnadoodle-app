@@ -37,7 +37,12 @@ import {
   validateSubjectAssigneeCombo,
 } from '../../lib/create/assignmentAssigneeHelpers';
 import { defaultWorkSpec } from '../../lib/workEventHelpers';
-import { parseStudentResponseType } from '../../lib/studentResponseTypes';
+import {
+  parseStudentResponseType,
+  buildWorkSpecForStudentResponseType,
+  studentResponseTypeShowsExtraEditor,
+  STUDENT_RESPONSE_NO_RESPONSE,
+} from '../../lib/studentResponseTypes';
 import {
   assignmentEditFormFromEvent,
   createPlannerEventForAssignment,
@@ -48,26 +53,15 @@ import {
 } from '../../lib/create/assignmentEditHelpers';
 
 function buildDefaultWorkSpec() {
-  return {
+  return buildWorkSpecForStudentResponseType(STUDENT_RESPONSE_NO_RESPONSE, {
     ...defaultWorkSpec('Assignment'),
-    student_response_type: null,
-    quiz_questions: [],
-    require_final_deliverable: false,
     allow_student_replies: true,
     allow_editing: true,
     auto_grade: true,
     presentation_required: false,
     exam_open_book: true,
     exam_time_limit_minutes: '',
-    submission_methods: {
-      text: false,
-      file: false,
-      photo: false,
-      link: false,
-      quiz: false,
-      parent_checkoff: false,
-    },
-  };
+  });
 }
 
 export default function AssignmentEditModal({
@@ -136,7 +130,7 @@ export default function AssignmentEditModal({
   }, []);
 
   useEffect(() => {
-    if (!parseStudentResponseType(workSpec?.student_response_type)) return;
+    if (!studentResponseTypeShowsExtraEditor(workSpec?.student_response_type)) return;
     scrollContentPanelDown();
   }, [workSpec?.student_response_type, scrollContentPanelDown]);
 
@@ -169,7 +163,7 @@ export default function AssignmentEditModal({
         setWorkSpec({
           ...buildDefaultWorkSpec(),
           ...form.workSpec,
-          student_response_type: form.workSpec?.student_response_type || null,
+          student_response_type: parseStudentResponseType(form.workSpec?.student_response_type),
         });
         setMaterialIds(form.materialIds || []);
         setAssigneeIds(

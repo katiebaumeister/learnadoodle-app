@@ -19,6 +19,9 @@ function ensureReadonlyInstructionStyles() {
       font-family: "League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       white-space: normal;
       word-break: break-word;
+      text-align: left;
+      width: 100%;
+      align-self: stretch;
     }
     .formatted-instruction-readonly p {
       margin: 0 0 8px 0;
@@ -214,6 +217,9 @@ function WebFormattedInstructionText({ text, style, wrapStyle }) {
       color: flatStyle.color || '#374151',
       marginTop: flatStyle.marginTop,
       marginBottom: flatStyle.marginBottom,
+      textAlign: flatStyle.textAlign || 'left',
+      width: '100%',
+      alignSelf: 'stretch',
     },
   });
 }

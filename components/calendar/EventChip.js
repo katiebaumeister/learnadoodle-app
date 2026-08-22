@@ -61,26 +61,45 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     [ev?.id, ev?.child_id, ev?.child_ids, children]
   );
 
-  // Get background color based on planner category (US public holidays stay blank)
+  // Planner chips: light grey fill (public holidays stay plain text).
+  const isPlannerChip = plannerCalendarChip || weekBoardChip;
+
   const getBackgroundColor = () => {
     if (isBlankHolidayChip) return 'transparent';
-    return categoryMeta.color;
+    if (isPlannerChip) return categoryMeta.color || '#F8FAFC';
+    return 'transparent';
   };
 
   const getHoverBackgroundColor = () => {
     if (isBlankHolidayChip) return 'rgba(0, 0, 0, 0.02)';
-    return categoryMeta.hoverColor || categoryMeta.color;
+    if (isPlannerChip) return categoryMeta.hoverColor || '#F1F5F9';
+    return 'transparent';
+  };
+
+  const getChipBorderColor = () => {
+    if (isBlankHolidayChip || isPlannerChip) return 'transparent';
+    return categoryMeta.borderColor || '#CBD5E1';
+  };
+
+  const getChipHoverBorderColor = () => {
+    if (isBlankHolidayChip || isPlannerChip) return 'transparent';
+    return categoryMeta.hoverBorderColor || '#94A3B8';
+  };
+
+  const getChipBorderWidth = () => {
+    if (isBlankHolidayChip || isPlannerChip) return 0;
+    return 1;
   };
 
   const getTitleColor = () => {
     if (isPlaceholder) return '#6B7280';
     if (isBlankHolidayChip) return '#111827';
-    return categoryMeta.chipText;
+    return '#374151';
   };
 
   const getTitleWeight = () => '600';
 
-  const getTextColor = () => categoryMeta.chipText;
+  const getTextColor = () => '#6B7280';
 
   // Get subject icon with pastel accent color
   const getSubjectIcon = () => {
@@ -402,8 +421,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         outline: 'none',
         boxShadow: 'none',
         borderStyle: 'solid',
-        borderWidth: baseStyle.borderWidth !== undefined ? baseStyle.borderWidth : 0,
-        borderColor: 'transparent',
+        borderWidth: baseStyle.borderWidth !== undefined ? baseStyle.borderWidth : getChipBorderWidth(),
+        borderColor: baseStyle.borderColor !== undefined ? baseStyle.borderColor : getChipBorderColor(),
       }),
     };
 
@@ -478,13 +497,21 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     target.style.backgroundColor = hovering ? getHoverBackgroundColor() : getBackgroundColor();
     target.style.outline = 'none';
     target.style.boxShadow = 'none';
-    target.style.border = 'none';
+    if (isBlankHolidayChip) {
+      target.style.border = 'none';
+      return;
+    }
+    target.style.borderStyle = 'solid';
+    target.style.borderWidth = `${getChipBorderWidth()}px`;
+    target.style.borderColor = hovering ? getChipHoverBorderColor() : getChipBorderColor();
   };
 
   if (compact && fullWidth) {
     const baseStyle = {
       borderRadius: PLANNER_CHIP_RADIUS,
       backgroundColor: getBackgroundColor(),
+      borderWidth: getChipBorderWidth(),
+      borderColor: getChipBorderColor(),
       paddingHorizontal: 6,
       paddingVertical: 4,
       width: '100%',
@@ -775,6 +802,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     const baseStyle = {
       borderRadius: PLANNER_CHIP_RADIUS,
       backgroundColor: getBackgroundColor(),
+      borderWidth: getChipBorderWidth(),
+      borderColor: getChipBorderColor(),
       paddingHorizontal: 6,
       paddingVertical: 3,
       maxWidth: '100%',

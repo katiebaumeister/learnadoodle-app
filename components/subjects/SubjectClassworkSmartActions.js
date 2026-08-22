@@ -1,14 +1,12 @@
 import React, { useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { ChevronDown, ChevronUp, Sparkles, BarChart3, CalendarCheck2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Sparkles, BarChart3 } from 'lucide-react';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { useHoverDropdown } from '../ui/useHoverDropdown';
 
 export default function SubjectClassworkSmartActions({
   onGapAnalysis,
   gapAnalysisWorking = false,
-  onScheduleAllLessons,
-  schedulingAll = false,
   buttonStyle,
   textStyle,
 }) {
@@ -16,10 +14,9 @@ export default function SubjectClassworkSmartActions({
   const [open, setOpen] = useState(false);
   const smartActionsHover = useHoverDropdown({ open, setOpen });
   const showGap = typeof onGapAnalysis === 'function';
-  const showSchedule = typeof onScheduleAllLessons === 'function';
-  if (!showGap && !showSchedule) return null;
+  if (!showGap) return null;
 
-  const disabled = gapAnalysisWorking || schedulingAll;
+  const disabled = gapAnalysisWorking;
 
   return (
     <View style={styles.anchor}>
@@ -74,18 +71,6 @@ export default function SubjectClassworkSmartActions({
             onPress={() => {
               setOpen(false);
               onGapAnalysis();
-            }}
-            disabled={disabled}
-            variant="context"
-          />
-        ) : null}
-        {showSchedule ? (
-          <DropdownItem
-            icon={CalendarCheck2}
-            label={schedulingAll ? 'Scheduling…' : 'Schedule all lessons'}
-            onPress={() => {
-              setOpen(false);
-              onScheduleAllLessons();
             }}
             disabled={disabled}
             variant="context"

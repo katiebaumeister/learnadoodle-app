@@ -5,6 +5,7 @@ import { ATTENDANCE_COLORS, TOKENS } from '../planner/attendance/constants';
 import YearHeatmapGrid from '../planner/attendance/YearHeatmapGrid';
 import MonthlyCalendarView from '../planner/attendance/MonthlyCalendarView';
 import DayEventsPanel from '../planner/attendance/DayEventsPanel';
+import { resolveCalendarYearRange } from '../planner/plannerYearRange';
 
 function toDateKey(value) {
   if (!value) return null;
@@ -111,10 +112,15 @@ function YearHeatmap({ title, dateKeys = [], colorForKey }) {
 
 const SUBJECT_SYNTHETIC_CHILD_ID = '__subject__';
 
-export const SubjectAttendanceYearHeatmap = React.memo(function SubjectAttendanceYearHeatmap({ attendanceRecords = [], subjectEvents = [], onDayPress = null, onMarkDayAttended = null, isDayMarkable = null, hideLegend = false, interactionMode = 'events', selectedDateKey = null }) {
+export const SubjectAttendanceYearHeatmap = React.memo(function SubjectAttendanceYearHeatmap({ attendanceRecords = [], subjectEvents = [], onDayPress = null, onMarkDayAttended = null, isDayMarkable = null, hideLegend = false, interactionMode = 'events', selectedDateKey = null, yearStart: yearStartProp = null, yearEnd: yearEndProp = null }) {
   const todayKey = useMemo(() => toDateKey(new Date()), []);
 
+  const defaultYearRange = useMemo(() => resolveCalendarYearRange(new Date()), []);
+
   const { yearStart, yearEnd, dayStatusByChild } = useMemo(() => {
+    const fallbackStart = yearStartProp || defaultYearRange.yearStart;
+    const fallbackEnd = yearEndProp || defaultYearRange.yearEnd;
+
     const recordStatusByKey = new Map();
     attendanceRecords.forEach((record) => {
       const key = toDateKey(record?.day_date);
@@ -134,12 +140,18 @@ export const SubjectAttendanceYearHeatmap = React.memo(function SubjectAttendanc
     });
 
     const allKeys = Array.from(new Set([...Array.from(recordStatusByKey.keys()), ...Array.from(eventKeys)])).sort();
-    if (!allKeys.length) return { yearStart: null, yearEnd: null, dayStatusByChild: {} };
+    if (!allKeys.length) {
+      return {
+        yearStart: fallbackStart,
+        yearEnd: fallbackEnd,
+        dayStatusByChild: { [SUBJECT_SYNTHETIC_CHILD_ID]: {} },
+      };
+    }
 
     const earliestYear = parseInt(allKeys[0].slice(0, 4), 10);
     const latestYear = parseInt(allKeys[allKeys.length - 1].slice(0, 4), 10);
-    const start = `${earliestYear}-01-01`;
-    const end = `${latestYear}-12-31`;
+    const start = yearStartProp || `${earliestYear}-01-01`;
+    const end = yearEndProp || `${latestYear}-12-31`;
 
     const statusMap = {};
     allKeys.forEach((key) => {
@@ -163,15 +175,7 @@ export const SubjectAttendanceYearHeatmap = React.memo(function SubjectAttendanc
       yearEnd: end,
       dayStatusByChild: { [SUBJECT_SYNTHETIC_CHILD_ID]: statusMap },
     };
-  }, [attendanceRecords, subjectEvents, isDayMarkable, todayKey]);
-
-  if (!yearStart || !yearEnd) {
-    return (
-      <View style={styles.emptyBox}>
-        <Text style={styles.emptyText}>No data yet for this view.</Text>
-      </View>
-    );
-  }
+  }, [attendanceRecords, subjectEvents, isDayMarkable, todayKey, yearStartProp, yearEndProp, defaultYearRange.yearStart, defaultYearRange.yearEnd]);
 
   return (
     <YearHeatmapGrid

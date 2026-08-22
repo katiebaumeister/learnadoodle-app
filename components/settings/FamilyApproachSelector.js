@@ -4,8 +4,9 @@ import { Check, ChevronDown } from 'lucide-react';
 import { setOnboardingPlanningMode, saveFamilyFeatureSettings } from '../../lib/apiClient';
 import {
   FAMILY_APPROACH_OPTIONS,
-  FEATURE_TOGGLE_DEFS,
+  PREFERENCE_FEATURE_TOGGLE_DEFS,
   APPROACH_DEFAULT_FEATURES,
+  buildStudentSelfManagedFeatureSettings,
   getPlanningModeLabel,
   resolveFeatureSettings,
 } from '../../lib/planningMode';
@@ -23,6 +24,7 @@ export default function FamilyApproachSelector({
   readOnly = false,
   fieldLabel = 'How your family uses Learnadoodle',
   onMenuOpenChange = null,
+  studentSelfManagedNoParent = false,
 }) {
   const toast = useToast();
   const [savingGoal, setSavingGoal] = useState(false);
@@ -35,8 +37,10 @@ export default function FamilyApproachSelector({
   const currentGoalLabel = getPlanningModeLabel(currentGoalId);
 
   const featureSettings = useMemo(
-    () => resolveFeatureSettings(currentGoalId, family?.feature_settings),
-    [currentGoalId, family?.feature_settings]
+    () => resolveFeatureSettings(currentGoalId, family?.feature_settings, {
+      studentSelfManagedNoParent,
+    }),
+    [currentGoalId, family?.feature_settings, studentSelfManagedNoParent]
   );
 
   const setMenuOpen = useCallback((nextOpen) => {
@@ -64,14 +68,16 @@ export default function FamilyApproachSelector({
   const saveApproachWithDefaults = useCallback(async (nextGoalId) => {
     setSavingGoal(true);
     try {
-      const defaults = APPROACH_DEFAULT_FEATURES[nextGoalId] || APPROACH_DEFAULT_FEATURES.AFTERSCHOOL_GOALS;
+      const defaults = studentSelfManagedNoParent
+        ? buildStudentSelfManagedFeatureSettings(nextGoalId)
+        : (APPROACH_DEFAULT_FEATURES[nextGoalId] || APPROACH_DEFAULT_FEATURES.AFTERSCHOOL_GOALS);
       const [modeRes, featRes] = await Promise.all([
         setOnboardingPlanningMode({ family_id: familyId, planning_mode: nextGoalId }),
         saveFamilyFeatureSettings(familyId, defaults),
       ]);
       if (modeRes?.error) throw new Error(modeRes.error?.message || 'Failed to update approach');
       if (featRes?.error) throw new Error(featRes.error?.message || 'Failed to update features');
-      const updated = { ...(family || {}), default_planning_mode: nextGoalId, feature_settings: defaults };
+      const updated = { ...(family || {}), default_planning_mode: nextGoalId, feature_settings: { ...defaults, learningAreas: true } };
       onFamilyUpdate?.(updated);
       dispatchPlanningModeChanged(nextGoalId);
     } catch (err) {
@@ -79,7 +85,7 @@ export default function FamilyApproachSelector({
     } finally {
       setSavingGoal(false);
     }
-  }, [family, familyId, onFamilyUpdate, toast]);
+  }, [family, familyId, onFamilyUpdate, toast, studentSelfManagedNoParent]);
 
   const handleGoalChange = useCallback((nextGoalId) => {
     if (!familyId || readOnly || nextGoalId === currentGoalId) {
@@ -92,7 +98,7 @@ export default function FamilyApproachSelector({
 
   const handleToggleFeature = useCallback(async (key, newValue) => {
     if (!familyId || readOnly) return;
-    const nextSettings = { ...featureSettings, [key]: newValue };
+    const nextSettings = { ...featureSettings, [key]: newValue, learningAreas: true };
     setSavingFeatures(true);
     try {
       const res = await saveFamilyFeatureSettings(familyId, nextSettings);
@@ -156,9 +162,8 @@ export default function FamilyApproachSelector({
       {/* Section 2: Feature Toggles */}
       <View style={styles.featuresSection}>
         <Text style={styles.featuresSectionTitle}>Features</Text>
-        <Text style={styles.featuresSectionHelper}>Choose which tools appear in your workspace.</Text>
         <View style={styles.togglesList}>
-          {FEATURE_TOGGLE_DEFS.map((def) => {
+          {PREFERENCE_FEATURE_TOGGLE_DEFS.map((def) => {
             const isOn = featureSettings[def.key] ?? false;
             return (
               <View key={def.key} style={styles.toggleRow}>
@@ -303,14 +308,6 @@ const styles = {
     marginBottom: 6,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  featuresSectionHelper: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginBottom: 16,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   togglesList: {

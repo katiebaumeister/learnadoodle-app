@@ -350,8 +350,10 @@ export default function DraggableEvent({
   }
   
   const eventColors = getEventColors(ev, children, isBlackoutDay);
-  
-  const getEventTypeBackgroundColor = () => getPlannerEventTypeColors(ev).chipBg;
+  const typeColors = getPlannerEventTypeColors(ev);
+
+  const getEventTypeBackgroundColor = () => typeColors.chipBg || '#F8FAFC';
+  const getEventTypeHoverBackgroundColor = () => typeColors.hoverBg || '#F1F5F9';
   
   // Focus mode: fade events not for focused child
   const isFocused = !focusedChildId || ev.child_id === focusedChildId;
@@ -414,7 +416,9 @@ export default function DraggableEvent({
           // When wrapped, allow pointer events but don't interfere with drag
           pointerEvents: 'auto',
           // Background color based on event type (matching filter colors)
-          backgroundColor: getEventTypeBackgroundColor(),
+          backgroundColor: isBlackoutDay
+            ? getEventTypeBackgroundColor()
+            : (isHovered ? getEventTypeHoverBackgroundColor() : getEventTypeBackgroundColor()),
           borderRadius: 8,
           borderStyle: isBlackoutDay ? 'dashed' : 'solid',
           borderWidth: 0,

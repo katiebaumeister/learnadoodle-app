@@ -28,29 +28,23 @@ import {
   validateSubjectAssigneeCombo,
 } from '../../lib/create/assignmentAssigneeHelpers';
 import { defaultWorkSpec } from '../../lib/workEventHelpers';
-import { buildWorkSpecForStudentResponseType, parseStudentResponseType } from '../../lib/studentResponseTypes';
+import {
+  buildWorkSpecForStudentResponseType,
+  parseStudentResponseType,
+  studentResponseTypeShowsExtraEditor,
+  STUDENT_RESPONSE_NO_RESPONSE,
+} from '../../lib/studentResponseTypes';
 
 function buildDefaultWorkSpec() {
-  return {
+  return buildWorkSpecForStudentResponseType(STUDENT_RESPONSE_NO_RESPONSE, {
     ...defaultWorkSpec('Assignment'),
-    student_response_type: null,
-    quiz_questions: [],
-    require_final_deliverable: false,
     allow_student_replies: true,
     allow_editing: true,
     auto_grade: true,
     presentation_required: false,
     exam_open_book: true,
     exam_time_limit_minutes: '',
-    submission_methods: {
-      text: false,
-      file: false,
-      photo: false,
-      link: false,
-      quiz: false,
-      parent_checkoff: false,
-    },
-  };
+  });
 }
 
 export default function AssignmentCreateModal({
@@ -93,7 +87,7 @@ export default function AssignmentCreateModal({
   const [validationBanner, setValidationBanner] = useState('');
   const [errors, setErrors] = useState({});
 
-  const subjects = useFamilySubjects(familyId);
+  const subjects = useFamilySubjects(familyId, { pinnedSubjectId: defaultSubjectId });
   const selectedSubject = useMemo(
     () => findSubjectById(subjects, subjectId),
     [subjects, subjectId],
@@ -122,7 +116,7 @@ export default function AssignmentCreateModal({
   }, []);
 
   useEffect(() => {
-    if (!parseStudentResponseType(workSpec?.student_response_type)) return;
+    if (!studentResponseTypeShowsExtraEditor(workSpec?.student_response_type)) return;
     scrollContentPanelDown();
   }, [workSpec?.student_response_type, scrollContentPanelDown]);
 

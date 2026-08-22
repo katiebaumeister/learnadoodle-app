@@ -10,7 +10,9 @@ import {
   getFamilyMembers,
   permanentDeleteChild,
   saveOnboardingParentProfile,
+  saveFamilyFeatureSettings,
 } from '../../lib/apiClient';
+import { buildStudentSelfManagedFeatureSettings } from '../../lib/planningMode';
 import { supabase } from '../../lib/supabase';
 import { persistStudentSelfSignupFromOnboarding } from '../../lib/services/accountPrefsClient';
 import { ONBOARDING_SKY } from '../../lib/constants/onboardingTheme';
@@ -249,6 +251,11 @@ export default function OnboardingModal({
         }
         const res = await setOnboardingPlanningMode({ family_id: fid, planning_mode: planningMode });
         if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to save');
+        if (onboardingWho === 'student') {
+          const featureSettings = buildStudentSelfManagedFeatureSettings(planningMode);
+          const featRes = await saveFamilyFeatureSettings(fid, featureSettings);
+          if (featRes?.error) throw new Error(featRes.error?.message || featRes.error || 'Failed to save feature settings');
+        }
       } catch (e) {
         setError(e?.message ?? 'Failed to save planning mode.');
       }
@@ -411,6 +418,11 @@ export default function OnboardingModal({
         console.warn('[OnboardingModal] home welcome bulletin', seedErr);
       }
       if (onboardingWho === 'student') {
+        const featureSettings = buildStudentSelfManagedFeatureSettings(planningMode || 'AFTERSCHOOL_GOALS');
+        const featRes = await saveFamilyFeatureSettings(fid, featureSettings);
+        if (featRes?.error) {
+          console.warn('[OnboardingModal] student feature settings', featRes.error);
+        }
         const { data: authData } = await supabase.auth.getUser();
         const uid = authData?.user?.id;
         if (uid) {

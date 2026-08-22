@@ -1607,7 +1607,7 @@ export default function BulletinBoardSection({
         style={styles.feedScrollExpanded}
         contentContainerStyle={[
           styles.feedContentStream,
-          filterSubjectId ? styles.feedContentStreamSpaced : null,
+          styles.feedContentStreamSpaced,
           mergedStreamItems.length === 0 && styles.feedContentEmptyExpanded,
         ]}
         showsVerticalScrollIndicator

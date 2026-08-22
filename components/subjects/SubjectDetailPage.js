@@ -54,6 +54,11 @@ import { getSubjectProgressCache, mergeSubjectProgressCache } from '../../lib/su
 import { fetchSubjectCurriculumEventsStructure, invalidateSubjectCurriculumStructureCache } from '../../lib/services/curriculumClient';
 import { createAttendanceLog, updateAttendanceLog, deleteAttendanceLog } from '../../lib/services/recordsClient';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
+import {
+  buildBulkTermOptionsFromPlannerSettings,
+  deriveDefaultBulkTermOptions,
+  getCachedPlannerTermOptions,
+} from '../../lib/services/plannerSettingsClient';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
 import { applyToCalendar, getAcademicYear } from '../../lib/services/academicYearClient';
 import { getAcademicYearExclusions } from '../../lib/services/plannerSettingsClient';
@@ -91,8 +96,7 @@ import { draftFromCurriculumStructure } from '../../lib/subjectUnitsEditorDraft'
 import SubjectClassroomTabs from './SubjectClassroomTabs';
 import SubjectClassworkSection from './SubjectClassworkSection';
 import MaterialsLibrary from '../materials/MaterialsLibrary';
-import SubjectClassworkSmartActions from './SubjectClassworkSmartActions';
-import { isHomeschoolPlanningMode } from '../../lib/planningMode';
+import { isHomeschoolPlanningMode, isSelfManagedStudentWithoutParent, getWorkspaceCapabilities } from '../../lib/planningMode';
 import { useFamilyPlanningMode } from '../../lib/useFamilyPlanningMode';
 import SubjectGradesPanel from './SubjectGradesPanel';
 import SubjectGapAnalysisModal from './SubjectGapAnalysisModal';
@@ -208,6 +212,52 @@ function fullYearRangeFromSchoolYearLabel(schoolYearLabel) {
   if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) return null;
   if (endYear < 100) endYear = Math.floor(startYear / 100) * 100 + endYear;
   return { start_date: `${startYear}-08-01`, end_date: `${endYear}-05-31` };
+}
+
+function resolveSubjectAttendanceTermOptions(subject, subjectPlanSettings, familyId) {
+  const fromPlanSettings = buildBulkTermOptionsFromPlannerSettings(subjectPlanSettings);
+  if (fromPlanSettings.length > 0) return fromPlanSettings;
+  const cached = familyId ? getCachedPlannerTermOptions(familyId) : null;
+  if (cached?.termOptions?.length) return cached.termOptions;
+  const schoolYearRange = fullYearRangeFromSchoolYearLabel(subject?.school_year);
+  if (schoolYearRange?.start_date && schoolYearRange?.end_date) {
+    const schoolStartYear = Number(String(schoolYearRange.start_date).slice(0, 4));
+    const schoolEndYear = Number(String(schoolYearRange.end_date).slice(0, 4));
+    if (Number.isFinite(schoolStartYear) && Number.isFinite(schoolEndYear)) {
+      return [
+        { label: 'Fall', start: `${schoolStartYear}-08-01`, end: `${schoolStartYear}-12-31` },
+        { label: 'Spring', start: `${schoolEndYear}-01-01`, end: `${schoolEndYear}-05-31` },
+        { label: 'Summer', start: `${schoolEndYear}-06-01`, end: `${schoolEndYear}-07-31` },
+      ];
+    }
+  }
+  return deriveDefaultBulkTermOptions(new Date());
+}
+
+function buildSubjectAttendanceTermDayCounts(attendanceRecords, termOptions) {
+  if (!Array.isArray(termOptions) || termOptions.length === 0) return [];
+  const termResults = termOptions.map((term) => {
+    const daysSet = new Set();
+    (attendanceRecords || []).forEach((record) => {
+      if (String(record?.status || '').toLowerCase() !== 'present') return;
+      const day = String(record?.day_date || '').slice(0, 10);
+      if (!DATE_KEY_RE.test(day)) return;
+      if (day >= term.start && day <= term.end) daysSet.add(day);
+    });
+    return { label: term.label, start: term.start, end: term.end, count: daysSet.size };
+  });
+  const noTermDays = new Set();
+  (attendanceRecords || []).forEach((record) => {
+    if (String(record?.status || '').toLowerCase() !== 'present') return;
+    const day = String(record?.day_date || '').slice(0, 10);
+    if (!DATE_KEY_RE.test(day)) return;
+    const inAnyTerm = termOptions.some((term) => day >= term.start && day <= term.end);
+    if (!inAnyTerm) noTermDays.add(day);
+  });
+  if (noTermDays.size > 0) {
+    termResults.push({ label: 'Other', start: null, end: null, count: noTermDays.size });
+  }
+  return termResults;
 }
 
 function addDaysToYmd(ymd, daysToAdd) {
@@ -493,6 +543,22 @@ export default function SubjectDetailPage({
   const session = useSession();
   const toast = useToast();
   const storedPlanningMode = useFamilyPlanningMode(familyId, family);
+  const studentSelfManagedNoParent = useMemo(
+    () => isSelfManagedStudentWithoutParent({
+      session,
+      family,
+      authUserId: session?.user_id,
+    }),
+    [session, family]
+  );
+  const subjectWorkspaceCapabilities = useMemo(
+    () => getWorkspaceCapabilities({
+      familyApproach: planningMode ?? storedPlanningMode ?? family?.default_planning_mode,
+      featureSettings: family?.feature_settings || null,
+      studentSelfManagedNoParent,
+    }),
+    [planningMode, storedPlanningMode, family?.default_planning_mode, family?.feature_settings, studentSelfManagedNoParent]
+  );
   const showSmartActions = isHomeschoolPlanningMode(storedPlanningMode);
   const [loading, setLoading] = useState(!preloadedSubjectData);
   const [error, setError] = useState(null);
@@ -534,7 +600,6 @@ export default function SubjectDetailPage({
   const [showAttendanceSuggestionConfirmModal, setShowAttendanceSuggestionConfirmModal] = useState(false);
   const [applyingAttendanceSuggestion, setApplyingAttendanceSuggestion] = useState(false);
   const [gapAnalysisWorking, setGapAnalysisWorking] = useState(false);
-  const [classworkSchedulingAll, setClassworkSchedulingAll] = useState(false);
   const [gapUndoing, setGapUndoing] = useState(false);
   const [gapHistoryRuns, setGapHistoryRuns] = useState([]);
   const [gapSlotLines, setGapSlotLines] = useState([]);
@@ -1144,6 +1209,14 @@ export default function SubjectDetailPage({
   }, [classroomTab, subject?.id]);
 
   useEffect(() => {
+    if (classroomTab === 'grades' && !subjectWorkspaceCapabilities.showGrades) {
+      setClassroomTab('bulletin');
+    } else if (classroomTab === 'attendance' && !subjectWorkspaceCapabilities.showAttendance) {
+      setClassroomTab('bulletin');
+    }
+  }, [classroomTab, subjectWorkspaceCapabilities.showGrades, subjectWorkspaceCapabilities.showAttendance]);
+
+  useEffect(() => {
     const action = String(initialProgressAction || '').trim().toLowerCase();
     if (!action || !subjectId) return;
     const actionKey = `${subjectId}:${action}`;
@@ -1537,6 +1610,15 @@ export default function SubjectDetailPage({
       return bTs - aTs;
     });
   }, [attendanceRecords, subjectEvents]);
+
+  const subjectAttendanceTermDayCounts = useMemo(() => {
+    const termOptions = resolveSubjectAttendanceTermOptions(
+      subject,
+      subjectPlanData?.settings,
+      familyId,
+    );
+    return buildSubjectAttendanceTermDayCounts(attendanceRecordsForUI, termOptions);
+  }, [subject, subjectPlanData?.settings, familyId, attendanceRecordsForUI]);
 
   // Process attendance at day-level so attendance chips align with day-based targets.
   const attendance30Days = useMemo(() => {
@@ -2035,7 +2117,7 @@ export default function SubjectDetailPage({
     return parts.length > 0 ? parts.join(' · ') : null;
   }, [subjectAssignments, isParentViewer]);
 
-  const unitsEditorLabel = hasLearningGoalsContent ? 'Edit units' : 'Add units';
+  const unitsEditorLabel = hasLearningGoalsContent ? 'Edit units & lessons' : 'Add units & lessons';
 
   const openEventWorkflow = useCallback((event, {
     parentFocus = null,
@@ -3960,20 +4042,11 @@ export default function SubjectDetailPage({
                 onChange={setClassroomTab}
                 planningMode={planningMode}
                 featureSettings={family?.feature_settings || null}
+                studentSelfManagedNoParent={studentSelfManagedNoParent}
               />
             </View>
             {isParentViewer ? (
               <View style={styles.tabBarActions}>
-                {showSmartActions ? (
-                  <SubjectClassworkSmartActions
-                    onGapAnalysis={openGapAnalysisModal}
-                    gapAnalysisWorking={gapAnalysisWorking}
-                    onScheduleAllLessons={handleScheduleAllLessons}
-                    schedulingAll={classworkSchedulingAll}
-                    buttonStyle={styles.headerTopActionBtn}
-                    textStyle={styles.headerTopActionText}
-                  />
-                ) : null}
                 <TouchableOpacity
                   style={styles.headerTopActionBtn}
                   onPress={() => openSubjectSettings('details')}
@@ -3982,6 +4055,24 @@ export default function SubjectDetailPage({
                 >
                   <Edit2 size={18} color="#334155" strokeWidth={2.25} />
                   <Text style={styles.headerTopActionText}>Edit subject</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.headerTopActionBtn}
+                  onPress={handleAddLearningDay}
+                  accessibilityLabel="Add learning day"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={18} color="#334155" strokeWidth={2.25} />
+                  <Text style={styles.headerTopActionText}>Add learning day</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.headerTopActionBtn}
+                  onPress={handleCreateAssignment}
+                  accessibilityLabel="Add assignment"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={18} color="#334155" strokeWidth={2.25} />
+                  <Text style={styles.headerTopActionText}>Add assignment</Text>
                 </TouchableOpacity>
               </View>
             ) : null}
@@ -4021,7 +4112,7 @@ export default function SubjectDetailPage({
               onPlacementChanged={handleClassworkPlacementChanged}
               highlightLessonId={highlightLessonId}
               highlightAssignmentId={highlightAssignmentId}
-              onSchedulingAllChange={setClassworkSchedulingAll}
+              showScheduleAllLessons={showSmartActions}
             />
           </View>
         ) : null}
@@ -4062,8 +4153,6 @@ export default function SubjectDetailPage({
               onOpenGradedItem={(item) => {
                 if (item?.eventId) handleOpenEventDetails(item.eventId, item.event);
               }}
-              onAddLearningDay={isParentViewer ? handleAddLearningDay : undefined}
-              onAddAssignment={isParentViewer ? handleCreateAssignment : undefined}
             />
           </View>
         ) : null}
@@ -4370,7 +4459,23 @@ export default function SubjectDetailPage({
                         );
                       })}
                     </View>
-                    <YearHeatmapLegend style={styles.attendanceInlineLegend} />
+                    <YearHeatmapLegend style={styles.attendanceInlineLegend} toolbar />
+                  </View>
+                  <View style={styles.attendanceTermCountsRow}>
+                    {subjectAttendanceTermDayCounts.map((term) => (
+                      <View key={term.label} style={styles.attendanceTermCountItem}>
+                        <Text style={styles.attendanceTermCountLabel}>{term.label}</Text>
+                        <Text style={styles.attendanceTermCountValue}>
+                          {term.count} {term.count === 1 ? 'day' : 'days'}
+                        </Text>
+                      </View>
+                    ))}
+                    <View style={styles.attendanceTermCountItem}>
+                      <Text style={styles.attendanceTermCountLabel}>Total</Text>
+                      <Text style={[styles.attendanceTermCountValue, styles.attendanceTermCountValueTotal]}>
+                        {subjectAttendanceTermDayCounts.reduce((sum, term) => sum + term.count, 0)} days
+                      </Text>
+                    </View>
                   </View>
                   <Text style={styles.attendanceModeHelp}>
                     {attendanceInteractionMode === 'events'
@@ -5552,14 +5657,45 @@ const styles = StyleSheet.create({
     }),
   },
   attendanceModeToolbar: {
-    gap: 10,
-    marginBottom: 16,
+    gap: 8,
+    marginBottom: 12,
+  },
+  attendanceTermCountsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    alignSelf: 'flex-start',
+  },
+  attendanceTermCountItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  attendanceTermCountLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(15, 23, 42, 0.5)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceTermCountValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: 'rgba(15, 23, 42, 0.8)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceTermCountValueTotal: {
+    color: '#0F172A',
   },
   attendanceModeTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 16,
+    gap: 12,
   },
   attendanceInlineLegend: {
     marginTop: 0,
@@ -5569,35 +5705,45 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 4,
     flexShrink: 0,
-    padding: 4,
+    padding: 3,
+    minHeight: 36,
     borderRadius: 999,
-    backgroundColor: 'rgba(15, 23, 42, 0.03)',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.06)',
+    borderColor: '#e5e7eb',
   },
   attendanceModeChip: {
-    paddingVertical: 7,
     paddingHorizontal: 14,
+    paddingVertical: 0,
+    minHeight: 30,
     borderRadius: 999,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   attendanceModeChipSelected: {
-    backgroundColor: '#FFFFFF',
-    ...(Platform.OS === 'web' && { boxShadow: '0 1px 2px rgba(15, 23, 42, 0.08)' }),
+    backgroundColor: 'rgba(107, 179, 232, 0.12)',
+    borderWidth: 1,
+    borderColor: '#6BB3E8',
   },
   attendanceModeChipText: {
-    fontSize: 12,
+    fontSize: 14,
+    lineHeight: 18,
     fontWeight: '600',
-    color: 'rgba(15, 23, 42, 0.62)',
+    color: 'rgba(15, 23, 42, 0.9)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   attendanceModeChipTextSelected: {
-    color: 'rgba(15, 23, 42, 0.92)',
+    color: '#6BB3E8',
+    fontWeight: '600',
   },
   attendanceModeHelp: {
     fontSize: 12,
     color: 'rgba(15, 23, 42, 0.62)',
-    lineHeight: 18,
+    lineHeight: 17,
     maxWidth: 760,
   },
   dayPanelOverlay: {

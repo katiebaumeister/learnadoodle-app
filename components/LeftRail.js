@@ -108,6 +108,7 @@ export default function LeftRail({
   permanentSidebar = false,
   familyPlanningMode = null,
   featureSettings = null,
+  studentSelfManagedNoParent = false,
   unreadMessagesCount = 0,
 }) {
   const [expandedChildren, setExpandedChildren] = useState(new Set());
@@ -122,8 +123,12 @@ export default function LeftRail({
   const isCollapsed = isCollapsedProp ?? false;
 
   const capabilities = useMemo(
-    () => getWorkspaceCapabilities({ familyApproach: familyPlanningMode, featureSettings }),
-    [familyPlanningMode, featureSettings]
+    () => getWorkspaceCapabilities({
+      familyApproach: familyPlanningMode,
+      featureSettings,
+      studentSelfManagedNoParent,
+    }),
+    [familyPlanningMode, featureSettings, studentSelfManagedNoParent]
   );
   
   // Handle closing menu with delay to allow moving to dropdown

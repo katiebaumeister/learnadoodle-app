@@ -20,16 +20,21 @@ export default function SubjectClassroomTabs({
   onChange,
   planningMode = null,
   featureSettings = null,
+  studentSelfManagedNoParent = false,
 }) {
   const tabs = useMemo(() => {
-    const caps = getWorkspaceCapabilities({ familyApproach: planningMode, featureSettings });
+    const caps = getWorkspaceCapabilities({
+      familyApproach: planningMode,
+      featureSettings,
+      studentSelfManagedNoParent,
+    });
     return ALL_TABS.filter((tab) => {
       if (tab.id === 'materials' && !caps.showMaterials) return false;
       if (tab.id === 'grades' && !caps.showGrades) return false;
       if (tab.id === 'attendance' && !caps.showAttendance) return false;
       return true;
     });
-  }, [planningMode, featureSettings]);
+  }, [planningMode, featureSettings, studentSelfManagedNoParent]);
 
   return (
     <View style={styles.bar} accessibilityRole="tablist">

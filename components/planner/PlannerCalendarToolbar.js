@@ -175,7 +175,6 @@ export default function PlannerCalendarToolbar({
                     style={[
                       styles.filterRow,
                       styles.filterTypeRow,
-                      { backgroundColor: opt.color },
                     ]}
                     onPress={() => {
                       const current = Array.isArray(selectedEventTypes) ? selectedEventTypes : [];

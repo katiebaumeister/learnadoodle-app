@@ -30,6 +30,44 @@ except ImportError:
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 
+APPROACH_DEFAULT_FEATURES = {
+    "HOMESCHOOL_COMPLIANCE": {
+        "learningAreas": True,
+        "assignments": True,
+        "materials": True,
+        "attendance": True,
+        "grades": True,
+        "complianceRecords": True,
+    },
+    "AFTERSCHOOL_GOALS": {
+        "learningAreas": True,
+        "assignments": True,
+        "materials": True,
+        "attendance": False,
+        "grades": True,
+        "complianceRecords": False,
+    },
+    "NONE": {
+        "learningAreas": True,
+        "assignments": True,
+        "materials": True,
+        "attendance": True,
+        "grades": False,
+        "complianceRecords": False,
+    },
+}
+
+
+def build_student_self_managed_feature_settings(planning_mode: str) -> dict:
+    base = APPROACH_DEFAULT_FEATURES.get(planning_mode or "AFTERSCHOOL_GOALS", APPROACH_DEFAULT_FEATURES["AFTERSCHOOL_GOALS"])
+    return {
+        **base,
+        "learningAreas": True,
+        "attendance": False,
+        "grades": False,
+        "complianceRecords": False,
+    }
+
 # Helper function to validate and clean avatar URLs
 # Filters out UUIDs that aren't valid URLs to prevent 404 errors
 def validate_avatar_url(url: Optional[str]) -> Optional[str]:
@@ -776,6 +814,26 @@ async def complete_onboarding(
             "onboarding_completed": True,
             "updated_at": datetime.utcnow().isoformat(),
         }
+        if body and body.onboarding_who == "student":
+            try:
+                family_res = (
+                    supabase.table("family")
+                    .select("default_planning_mode, feature_settings")
+                    .eq("id", family_id)
+                    .maybe_single()
+                    .execute()
+                )
+                family_row = family_res.data or {}
+                if not family_row.get("feature_settings"):
+                    planning_mode = family_row.get("default_planning_mode") or "AFTERSCHOOL_GOALS"
+                    update_payload["feature_settings"] = build_student_self_managed_feature_settings(planning_mode)
+            except Exception as feature_error:
+                log_event(
+                    "onboarding.complete.student_feature_settings_error",
+                    user_id=user["id"],
+                    family_id=family_id,
+                    error=str(feature_error),
+                )
         resp = supabase.table("family").update(update_payload).eq("id", family_id).execute()
         if not resp.data:
             raise HTTPException(

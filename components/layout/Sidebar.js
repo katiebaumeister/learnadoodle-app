@@ -31,6 +31,8 @@ export default function Sidebar({
   onReservedWidthChange = null,
   onHoverOverlayChange = null,
   familyPlanningMode = null,
+  featureSettings = null,
+  studentSelfManagedNoParent = false,
   unreadMessagesCount = 0,
 }) {
   React.useEffect(() => {
@@ -66,6 +68,8 @@ export default function Sidebar({
           hideBrandLogo={false}
           permanentSidebar
           familyPlanningMode={familyPlanningMode}
+          featureSettings={featureSettings}
+          studentSelfManagedNoParent={studentSelfManagedNoParent}
           unreadMessagesCount={unreadMessagesCount}
         />
       </View>

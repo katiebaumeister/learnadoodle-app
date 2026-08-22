@@ -82,7 +82,7 @@ import { preloadBulletinBoardForFamily, invalidateBulletinPostsCache } from '../
 import { subscribeOnboardingCompleted } from '../lib/onboardingCrossTab';
 import { seedHomeWelcomeBulletinPost } from '../lib/homeWelcomeBulletin';
 import { useFamilyPlanningMode } from '../lib/useFamilyPlanningMode';
-import { getWorkspaceCapabilities } from '../lib/planningMode';
+import { getWorkspaceCapabilities, isSelfManagedStudentWithoutParent } from '../lib/planningMode';
 import { PlannerDiffProvider } from '../app/state/usePlannerDiffStore';
 import { DoodleCommandProvider } from '../app/state/useDoodleCommandStore';
 import PlannerDiffModal from '../app/components/schedule/PlannerDiffModal';
@@ -420,9 +420,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [familyId, setFamilyId] = useState(() => (session?.family_id ?? null));
   const [family, setFamily] = useState(null);
   const familyPlanningMode = useFamilyPlanningMode(familyId, family);
+  const studentSelfManagedNoParent = useMemo(
+    () => isSelfManagedStudentWithoutParent({
+      session,
+      family,
+      authUserId: authUserId,
+    }),
+    [session, family, authUserId]
+  );
   const workspaceCapabilities = useMemo(
-    () => getWorkspaceCapabilities({ familyApproach: familyPlanningMode ?? family?.default_planning_mode, featureSettings: family?.feature_settings || null }),
-    [familyPlanningMode, family?.default_planning_mode, family?.feature_settings]
+    () => getWorkspaceCapabilities({
+      familyApproach: familyPlanningMode ?? family?.default_planning_mode,
+      featureSettings: family?.feature_settings || null,
+      studentSelfManagedNoParent,
+    }),
+    [familyPlanningMode, family?.default_planning_mode, family?.feature_settings, studentSelfManagedNoParent]
   );
   const [profile, setProfile] = useState(null);
 
@@ -4703,6 +4715,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             userRole: resolvedShellUserRole,
             familyPlanningMode: familyPlanningMode ?? family?.default_planning_mode ?? null,
             featureSettings: family?.feature_settings || null,
+            studentSelfManagedNoParent,
             unreadMessagesCount,
           }}
           onOpenSettings={(section = 'profile') => {
@@ -5263,7 +5276,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                               paddingVertical: 6,
                               paddingHorizontal: 10,
                               borderRadius: 6,
-                              backgroundColor: color,
                             }}
                             onPress={() => {
                               const current = selectedEventTypes || [];

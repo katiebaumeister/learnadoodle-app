@@ -6,9 +6,11 @@ import {
   StyleSheet,
   Platform,
   ScrollView,
+  Modal,
 } from 'react-native';
 import {
   BookOpen,
+  CalendarCheck2,
   ChevronDown,
   ChevronUp,
   FileText,
@@ -17,6 +19,7 @@ import {
   Pencil,
   Plus,
   Trash2,
+  X,
 } from 'lucide-react';
 import {
   buildSubjectClassworkModel,
@@ -31,12 +34,14 @@ import {
   formatLessonSchedulePreviewLine,
 } from '../../lib/subjectLessonLinking';
 import { formatDueShort } from '../tutor/tutorHelpUtils';
+import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 import { updateAssignmentPlacement } from '../../lib/services/assignmentPlacementClient';
 import {
   deleteAssignmentAndEvent,
   resolveLinkedEventIdFromAssignment,
 } from '../../lib/create/assignmentEditHelpers';
 import {
+  buildDraftAfterMovingLesson,
   buildDraftWithAddedLesson,
   buildDraftWithAddedUnit,
   buildDraftWithNoUnitLesson,
@@ -45,7 +50,6 @@ import {
   deleteLessonFromSubjectCurriculum,
   deleteUnitFromSubjectCurriculum,
   isNoUnitBucketTitle,
-  moveLessonInSubjectCurriculum,
   saveSubjectCurriculumFromUnits,
 } from '../../lib/subjectClassworkLessonActions';
 import { curriculumStructureHasContent, unitsFromCurriculumDraft } from '../../lib/subjectUnitsEditorDraft';
@@ -891,8 +895,15 @@ function ClassworkPanelHeader({
   tertiaryActionLabel,
   onTertiaryAction,
   showTertiaryAction = false,
+  unitsActionLabel,
+  onUnitsAction,
+  showUnitsAction = false,
+  showScheduleAllAction = false,
+  scheduleAllActionLabel = 'Schedule all lessons',
+  onScheduleAllAction = null,
+  scheduleAllDisabled = false,
 }) {
-  const hasAny = showAction || showSecondaryAction || showTertiaryAction;
+  const hasAny = showAction || showSecondaryAction || showTertiaryAction || showUnitsAction || showScheduleAllAction;
   return (
     <View style={styles.panelToolbar}>
       <Text style={styles.panelTitle}>Classwork</Text>
@@ -929,6 +940,29 @@ function ClassworkPanelHeader({
             >
               <Plus size={18} color="#334155" strokeWidth={2.25} />
               <Text style={styles.panelActionBtnText}>{secondaryActionLabel}</Text>
+            </TouchableOpacity>
+          ) : null}
+          {showScheduleAllAction ? (
+            <TouchableOpacity
+              style={[styles.panelActionBtn, scheduleAllDisabled && styles.panelActionBtnDisabled]}
+              onPress={onScheduleAllAction}
+              disabled={scheduleAllDisabled}
+              accessibilityLabel={scheduleAllActionLabel}
+              {...(Platform.OS === 'web' && { cursor: scheduleAllDisabled ? 'default' : 'pointer' })}
+            >
+              <CalendarCheck2 size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.panelActionBtnText}>{scheduleAllActionLabel}</Text>
+            </TouchableOpacity>
+          ) : null}
+          {showUnitsAction ? (
+            <TouchableOpacity
+              style={styles.panelActionBtn}
+              onPress={onUnitsAction}
+              accessibilityLabel={unitsActionLabel}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Pencil size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.panelActionBtnText}>{unitsActionLabel}</Text>
             </TouchableOpacity>
           ) : null}
         </View>
@@ -1066,6 +1100,44 @@ function AddUnitLink({ onPress }) {
   );
 }
 
+function ScheduleAllComingSoonModal({ visible, onClose }) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={comingSoonModalStyles.overlay}>
+        <View style={comingSoonModalStyles.content}>
+          <TouchableOpacity
+            style={comingSoonModalStyles.close}
+            onPress={onClose}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <X size={24} color="#64748b" />
+          </TouchableOpacity>
+          <Text style={comingSoonModalStyles.title}>Coming soon</Text>
+          <Text style={comingSoonModalStyles.body}>
+            Schedule all lessons is in development. Stay tuned for updates!
+          </Text>
+          <TouchableOpacity
+            style={comingSoonModalStyles.button}
+            onPress={onClose}
+            activeOpacity={0.8}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={comingSoonModalStyles.buttonText}>Got it</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 export default function SubjectClassworkSection({
   units = [],
   assignments = [],
@@ -1083,7 +1155,7 @@ export default function SubjectClassworkSection({
   onPlacementChanged,
   highlightLessonId = null,
   highlightAssignmentId = null,
-  onSchedulingAllChange = null,
+  showScheduleAllLessons = false,
 }) {
   const toast = useToast();
   const totalLessonCount = useMemo(
@@ -1094,10 +1166,8 @@ export default function SubjectClassworkSection({
     [units],
   );
   const [schedulingAll, setSchedulingAll] = useState(false);
+  const [showScheduleAllComingSoon, setShowScheduleAllComingSoon] = useState(false);
 
-  useEffect(() => {
-    onSchedulingAllChange?.(schedulingAll);
-  }, [schedulingAll, onSchedulingAllChange]);
   const [draggingAssignmentId, setDraggingAssignmentId] = useState(null);
   const [draggingLessonId, setDraggingLessonId] = useState(null);
   const [draggingLearningDayId, setDraggingLearningDayId] = useState(null);
@@ -1166,6 +1236,14 @@ export default function SubjectClassworkSection({
   );
   useWebDragAutoScroll(panelScrollRef, isClassworkDragging);
 
+  const syncPendingUnitsFromServer = useCallback(async () => {
+    if (!familyId || !subjectId) return;
+    invalidateSubjectCurriculumStructureCache(familyId, subjectId, null);
+    const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, subjectId, null);
+    if (error || !Array.isArray(data?.units) || !pendingUnitsRef.current) return;
+    applyPendingUnits(data.units);
+  }, [familyId, subjectId, applyPendingUnits]);
+
   const scheduleDebouncedStructureSave = useCallback(() => {
     if (structureSaveTimerRef.current) {
       clearTimeout(structureSaveTimerRef.current);
@@ -1183,7 +1261,8 @@ export default function SubjectClassworkSection({
           subjectName: subjectName || 'Subject',
           units: snapshot,
         });
-        onPlacementChanged?.();
+        await syncPendingUnitsFromServer();
+        await onPlacementChanged?.();
       } catch (err) {
         clearPendingUnits();
         toast.push(err?.message || 'Could not update curriculum', 'error');
@@ -1191,7 +1270,15 @@ export default function SubjectClassworkSection({
         structureSaveInFlightRef.current = false;
       }
     }, 350);
-  }, [familyId, subjectId, subjectName, onPlacementChanged, clearPendingUnits, toast]);
+  }, [
+    familyId,
+    subjectId,
+    subjectName,
+    onPlacementChanged,
+    clearPendingUnits,
+    toast,
+    syncPendingUnitsFromServer,
+  ]);
 
   const flushPendingStructureSave = useCallback(async () => {
     if (structureSaveTimerRef.current) {
@@ -1209,6 +1296,7 @@ export default function SubjectClassworkSection({
         subjectName: subjectName || 'Subject',
         units: snapshot,
       });
+      await syncPendingUnitsFromServer();
       clearPendingUnits();
       invalidateSubjectCurriculumStructureCache(familyId, subjectId, null);
       await onPlacementChanged?.();
@@ -1226,6 +1314,7 @@ export default function SubjectClassworkSection({
     clearPendingUnits,
     onPlacementChanged,
     toast,
+    syncPendingUnitsFromServer,
   ]);
 
   const resolvePersistedLessonId = useCallback(async (unit, lesson) => {
@@ -1455,14 +1544,8 @@ export default function SubjectClassworkSection({
   ]);
 
   const handleScheduleClassDaysPress = useCallback(() => {
-    const preview = buildLessonSchedulePreview({
-      subjectEvents: events,
-      units,
-      limit: Math.max(model.unscheduledLessonCount || 1, 20),
-    });
-    if (!preview.length && openScheduleSetupInstead()) return;
-    openScheduleAllModal();
-  }, [events, units, model.unscheduledLessonCount, openScheduleSetupInstead, openScheduleAllModal]);
+    setShowScheduleAllComingSoon(true);
+  }, []);
 
   const confirmScheduleAllModal = useCallback(async () => {
     if (scheduleModal.mode === 'done' || scheduleModal.mode === 'info' || !scheduleModal.showConfirm) {
@@ -1639,7 +1722,7 @@ export default function SubjectClassworkSection({
     toast,
   ]);
 
-  const handleEditLesson = useCallback(async () => {
+  const handleOpenUnitsEditor = useCallback(async () => {
     if (!onManageUnits) return;
     if (structureSaveTimerRef.current) {
       clearTimeout(structureSaveTimerRef.current);
@@ -1674,6 +1757,10 @@ export default function SubjectClassworkSection({
     onPlacementChanged,
     toast,
   ]);
+
+  const handleEditLesson = useCallback(() => {
+    handleOpenUnitsEditor();
+  }, [handleOpenUnitsEditor]);
 
   const handleDeleteLesson = useCallback(({ lesson }) => {
     if (!lesson?.lessonId || !familyId || !subjectId) return;
@@ -2031,12 +2118,14 @@ export default function SubjectClassworkSection({
     beforeLessonId = null,
   }) => {
     if (!lessonId || toUnitId == null || movingLesson) return;
-    const fromLoc = (effectiveUnits || []).flatMap((unit, unitIndex) => (
+
+    const unitsSnapshot = pendingUnitsRef.current ?? units;
+    const fromLoc = (unitsSnapshot || []).flatMap((unit, unitIndex) => (
       (unit?.lessons || []).map((lesson) => ({
         lessonId: lesson?.id,
         unitId: unit?.id != null ? String(unit.id) : `idx-${unitIndex}`,
       }))
-    )).find((row) => String(row.lessonId) === String(lessonId));
+    )).find((row) => row.lessonId != null && String(row.lessonId) === String(lessonId));
     if (
       fromLoc
       && String(fromLoc.unitId) === String(toUnitId)
@@ -2044,19 +2133,46 @@ export default function SubjectClassworkSection({
     ) {
       return;
     }
-    setMovingLesson(true);
-    try {
-      await moveLessonInSubjectCurriculum({
-        familyId,
-        subjectId,
-        subjectName: subjectName || 'Subject',
-        units: effectiveUnits,
-        lessonId,
+
+    const tryBuildDraft = (snapshot, resolvedLessonId = lessonId) => (
+      buildDraftAfterMovingLesson(snapshot, {
+        lessonId: resolvedLessonId,
         toUnitId,
         beforeLessonId,
-      });
+      })
+    );
+
+    let unitsForMove = unitsSnapshot;
+    let { draft, error } = tryBuildDraft(unitsForMove);
+
+    if (error === 'Lesson not found.' && (pendingUnitsRef.current || structureSaveTimerRef.current)) {
+      const flushed = await flushPendingStructureSave();
+      if (flushed) {
+        unitsForMove = units;
+        ({ draft, error } = tryBuildDraft(unitsForMove));
+      }
+    }
+
+    if (error === 'Lesson not found.' && !isPersistedCurriculumId(lessonId)) {
+      const resolved = findPersistedLessonIdInUnits(unitsForMove, { hintLessonId: lessonId });
+      if (resolved) {
+        ({ draft, error } = tryBuildDraft(unitsForMove, resolved));
+      }
+    }
+
+    if (error) {
+      toast.push(error, 'error');
+      setDraggingLessonId(null);
+      setDragOverLessonTarget(null);
+      return;
+    }
+
+    setMovingLesson(true);
+    try {
+      const nextUnits = unitsFromCurriculumDraft(draft);
+      applyPendingUnits(nextUnits);
+      scheduleDebouncedStructureSave();
       toast.push('Lesson moved', 'success');
-      onPlacementChanged?.();
     } catch (err) {
       toast.push(err?.message || 'Could not move lesson', 'error');
     } finally {
@@ -2067,11 +2183,12 @@ export default function SubjectClassworkSection({
   }, [
     familyId,
     subjectId,
-    subjectName,
-    effectiveUnits,
+    units,
     movingLesson,
     toast,
-    onPlacementChanged,
+    flushPendingStructureSave,
+    applyPendingUnits,
+    scheduleDebouncedStructureSave,
   ]);
 
   const handleLessonDropOnRow = useCallback((unit, beforeLessonId) => (payload) => {
@@ -2177,12 +2294,13 @@ export default function SubjectClassworkSection({
     return (
       <View style={[styles.root, styles.rootExpanded]}>
         <ClassworkPanelHeader
-          showSecondaryAction={isParentViewer && !!onCreateAssignment}
-          secondaryActionLabel="Add assignment"
-          onSecondaryAction={onCreateAssignment}
-          showTertiaryAction={isParentViewer && !!onAddLearningDay}
-          tertiaryActionLabel="Add learning day"
-          onTertiaryAction={onAddLearningDay}
+          showUnitsAction={isParentViewer && !!onManageUnits}
+          unitsActionLabel={unitsActionLabel}
+          onUnitsAction={handleOpenUnitsEditor}
+          showScheduleAllAction={isParentViewer && showScheduleAllLessons}
+          scheduleAllActionLabel={schedulingAll ? 'Scheduling…' : 'Schedule all lessons'}
+          onScheduleAllAction={handleScheduleClassDaysPress}
+          scheduleAllDisabled={schedulingAll}
         />
         <ScrollView
           ref={panelScrollRef}
@@ -2208,6 +2326,10 @@ export default function SubjectClassworkSection({
             <EmptyClassworkState isParentViewer={isParentViewer} />
           )}
         </ScrollView>
+        <ScheduleAllComingSoonModal
+          visible={showScheduleAllComingSoon}
+          onClose={() => setShowScheduleAllComingSoon(false)}
+        />
         <ClassworkPlanningModal
           visible={scheduleModal.visible}
           title={scheduleModal.title}
@@ -2290,12 +2412,13 @@ export default function SubjectClassworkSection({
   return (
     <View style={[styles.root, styles.rootExpanded]}>
       <ClassworkPanelHeader
-        showSecondaryAction={isParentViewer && !!onCreateAssignment}
-        secondaryActionLabel="Add assignment"
-        onSecondaryAction={onCreateAssignment}
-        showTertiaryAction={isParentViewer && !!onAddLearningDay}
-        tertiaryActionLabel="Add learning day"
-        onTertiaryAction={onAddLearningDay}
+        showUnitsAction={isParentViewer && !!onManageUnits}
+        unitsActionLabel={unitsActionLabel}
+        onUnitsAction={handleOpenUnitsEditor}
+        showScheduleAllAction={isParentViewer && showScheduleAllLessons}
+        scheduleAllActionLabel={schedulingAll ? 'Scheduling…' : 'Schedule all lessons'}
+        onScheduleAllAction={handleScheduleClassDaysPress}
+        scheduleAllDisabled={schedulingAll}
       />
       <ScrollView
         ref={panelScrollRef}
@@ -2384,7 +2507,7 @@ export default function SubjectClassworkSection({
             expanded={isExpanded}
             onToggleExpand={() => toggleUnitExpanded(unit.unitId)}
             showUnitMenu={isParentViewer}
-            onEditUnits={onManageUnits}
+            onEditUnits={handleOpenUnitsEditor}
             onDeleteUnit={isParentViewer ? () => handleDeleteUnit(unit) : null}
             dropActive={dragOverTarget === dropKey}
             dropWebProps={{
@@ -2517,6 +2640,10 @@ export default function SubjectClassworkSection({
 
       </ScrollView>
 
+      <ScheduleAllComingSoonModal
+        visible={showScheduleAllComingSoon}
+        onClose={() => setShowScheduleAllComingSoon(false)}
+      />
       <ClassworkPlanningModal
         visible={scheduleModal.visible}
         title={scheduleModal.title}
@@ -2653,6 +2780,12 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
+    }),
+  },
+  panelActionBtnDisabled: {
+    opacity: 0.6,
+    ...(Platform.OS === 'web' && {
+      cursor: 'default',
     }),
   },
   panelActionBtnText: {

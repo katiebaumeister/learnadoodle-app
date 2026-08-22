@@ -35,6 +35,10 @@ export const TOKENS = {
   hmCell: 26,
   hmGap: 6,
   hmRadius: 7,
+  /** Smaller year grid for Learning subject attendance (not Planner Year view). */
+  hmCellCompact: 20,
+  hmGapCompact: 4,
+  hmRadiusCompact: 5,
   barH: 6,
   barRadius: 999,
   studentColumnWidth: 360,

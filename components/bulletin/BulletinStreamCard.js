@@ -52,11 +52,11 @@ export default function BulletinStreamCard({
   const relativeWhen = formatRelativeStreamMeta(entry?.createdAt);
   const secondaryMeta = streamCardSecondaryMeta(entry);
 
-  const labelWithTime = (label, when, { numberOfLines = undefined } = {}) => {
+  const labelWithTime = (label, when, { numberOfLines = undefined, labelStyle = styles.typeLabel } = {}) => {
     if (!label) return null;
     return (
       <View style={styles.labelMetaRow}>
-        <Text style={styles.typeLabel} numberOfLines={numberOfLines}>
+        <Text style={labelStyle} numberOfLines={numberOfLines}>
           {label}
         </Text>
         {when ? (
@@ -95,51 +95,54 @@ export default function BulletinStreamCard({
     )
   ) : null;
 
-  const [previewHovered, setPreviewHovered] = useState(false);
-  const [cardHovered, setCardHovered] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const hoverHandlers = Platform.OS === 'web' && clickable ? {
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => setHovered(false),
+  } : {};
+  const cardSurfaceStyle = [
+    styles.card,
+    clickable && styles.cardClickable,
+    cardStyle,
+    hovered && styles.cardHovered,
+  ];
 
   if (preview) {
     const lines = buildStreamPreviewDisplay(entry, { showSubjectName });
-    const previewBody = (
-      <View style={styles.previewRow}>
-        <View style={[styles.previewIconWrap, { backgroundColor: iconBg }]}>
-          <Icon size={16} color={iconColor} strokeWidth={2.25} />
-        </View>
-        <View style={styles.previewCopy}>
-          {lines.label ? (
-            labelWithTime(
-              lines.label,
-              lines.meta && isRelativeStreamTime(lines.meta) ? lines.meta : relativeWhen,
-              { numberOfLines: 1 },
-            )
-          ) : null}
-          {lines.title ? (
-            <Text
-              style={[
-                lines.titleVariant === 'body' ? styles.previewBody : styles.previewTitle,
-                lines.titleLead ? styles.previewLead : null,
-              ]}
-              numberOfLines={lines.titleVariant === 'body' ? 3 : 2}
-            >
-              {lines.title}
-            </Text>
-          ) : null}
-          {lines.subtitle ? (
-            <Text style={styles.previewSubtitle} numberOfLines={1}>
-              {lines.subtitle}
-            </Text>
-          ) : null}
-        </View>
-      </View>
-    );
-
     const previewInner = (
-      <View style={[styles.previewCard, cardStyle]}>
-        <View style={styles.previewRowOuter} {...(contextMenuHandlers || {})}>
-          <View style={styles.previewPressArea}>{previewBody}</View>
-          {headerRight ? (
-            <View style={styles.previewMenuWrap}>{headerRight}</View>
-          ) : null}
+      <View style={cardSurfaceStyle} {...hoverHandlers}>
+        {headerRight ? (
+          <View style={styles.cardHeaderMenu}>{headerRight}</View>
+        ) : null}
+        <View style={styles.cardTop} {...(contextMenuHandlers || {})}>
+          <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
+            <Icon size={18} color={iconColor} strokeWidth={2.25} />
+          </View>
+          <View style={[styles.cardMain, headerRight ? styles.cardMainWithMenu : null]}>
+            {lines.label ? (
+              labelWithTime(
+                lines.label,
+                lines.meta && isRelativeStreamTime(lines.meta) ? lines.meta : relativeWhen,
+                { numberOfLines: 1, labelStyle: styles.previewTypeLabel },
+              )
+            ) : null}
+            {lines.title ? (
+              <Text
+                style={[
+                  lines.titleVariant === 'body' ? styles.previewBody : styles.previewTitle,
+                  lines.titleLead ? styles.previewLead : null,
+                ]}
+                numberOfLines={lines.titleVariant === 'body' ? 3 : 2}
+              >
+                {lines.title}
+              </Text>
+            ) : null}
+            {lines.subtitle ? (
+              <Text style={styles.previewSubtitle} numberOfLines={1}>
+                {lines.subtitle}
+              </Text>
+            ) : null}
+          </View>
         </View>
       </View>
     );
@@ -147,19 +150,11 @@ export default function BulletinStreamCard({
     if (clickable) {
       return (
         <TouchableOpacity
-          style={[
-            styles.previewWrap,
-            styles.previewWrapClickable,
-            Platform.OS === 'web' && previewHovered && styles.previewWrapHovered,
-          ]}
+          style={[styles.wrap, styles.wrapClickable]}
           onPress={() => onPress(entry)}
           accessibilityRole="button"
           activeOpacity={0.96}
-          {...(Platform.OS === 'web' && {
-            cursor: 'pointer',
-            onMouseEnter: () => setPreviewHovered(true),
-            onMouseLeave: () => setPreviewHovered(false),
-          })}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >
           {previewInner}
         </TouchableOpacity>
@@ -167,7 +162,7 @@ export default function BulletinStreamCard({
     }
 
     return (
-      <View style={styles.previewWrap}>
+      <View style={styles.wrap} {...(contextMenuHandlers || {})}>
         {previewInner}
       </View>
     );
@@ -190,11 +185,12 @@ export default function BulletinStreamCard({
         />
       ) : null}
       {!entry.showFormattedBody && (entry.fullBody || entry.payload?.body) ? (
-        <FormattedInstructionText
-          text={entry.fullBody || entry.payload?.body}
-          style={styles.cardBodyText}
-          wrapStyle={styles.announcementBodyWrap}
-        />
+        <View style={styles.announcementBodyWrap}>
+          <FormattedInstructionText
+            text={entry.fullBody || entry.payload?.body}
+            style={styles.cardBodyText}
+          />
+        </View>
       ) : null}
       <BulletinPostAttachmentList materials={entry.payload?.materials} />
       {clickable && entry.actionHint ? (
@@ -204,7 +200,7 @@ export default function BulletinStreamCard({
   );
 
   const cardInner = (
-    <View style={[styles.card, clickable && cardHovered && styles.cardHovered, cardStyle]}>
+    <View style={cardSurfaceStyle} {...hoverHandlers}>
       {headerRight ? (
         <View style={styles.cardHeaderMenu}>{headerRight}</View>
       ) : null}
@@ -232,11 +228,7 @@ export default function BulletinStreamCard({
         onPress={() => onPress(entry)}
         accessibilityRole="button"
         activeOpacity={0.96}
-        {...(Platform.OS === 'web' && {
-          cursor: 'pointer',
-          onMouseEnter: () => setCardHovered(true),
-          onMouseLeave: () => setCardHovered(false),
-        })}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         {...(contextMenuHandlers || {})}
       >
         {cardInner}
@@ -252,60 +244,6 @@ export default function BulletinStreamCard({
 }
 
 const styles = StyleSheet.create({
-  previewWrap: {
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(148, 163, 184, 0.14)',
-  },
-  previewWrapClickable: {
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      transition: 'background-color 0.12s ease',
-    }),
-  },
-  previewWrapHovered: {
-    backgroundColor: '#F1F5F9',
-    borderRadius: 10,
-  },
-  previewCard: {
-    paddingVertical: 14,
-    paddingHorizontal: 8,
-  },
-  previewRowOuter: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 2,
-  },
-  previewPressArea: {
-    flex: 1,
-    minWidth: 0,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  previewMenuWrap: {
-    flexShrink: 0,
-    marginTop: 2,
-    alignSelf: 'flex-start',
-  },
-  previewRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  previewIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    marginTop: 1,
-  },
-  previewCopy: {
-    flex: 1,
-    minWidth: 0,
-    gap: 8,
-  },
   previewTitle: {
     fontSize: 15,
     fontWeight: '600',
@@ -382,6 +320,10 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'border-color 0.12s ease, background-color 0.12s ease',
+      ':hover': {
+        backgroundColor: '#F8FAFC',
+        borderColor: '#CBD5E1',
+      },
     }),
   },
   cardHovered: {
@@ -445,6 +387,16 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  previewTypeLabel: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: ACCENT_TEXT,
+    letterSpacing: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   labelMetaDot: {
     fontSize: 12,
     lineHeight: 16,
@@ -496,12 +448,15 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: '400',
     color: '#334155',
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   announcementBodyWrap: {
     marginTop: 0,
+    alignSelf: 'stretch',
+    width: '100%',
   },
   subjectPill: {
     flexDirection: 'row',

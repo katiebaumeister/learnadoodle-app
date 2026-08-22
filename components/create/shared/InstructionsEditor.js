@@ -154,10 +154,30 @@ function prefixCurrentLine(text, selection, prefix = '• ') {
   return { next, selectionStart: cursor, selectionEnd: cursor };
 }
 
+function isSelectionInsideElement(el, selection) {
+  if (!el || !selection) return false;
+  const anchor = selection.anchorNode;
+  if (!anchor) return false;
+  return el.contains(anchor);
+}
+
 function readWebFormatState(editableEl) {
-  if (editableEl && typeof document !== 'undefined') {
-    const sel = document.getSelection?.();
-    let node = sel?.anchorNode || null;
+  if (!editableEl || typeof document === 'undefined') {
+    return { bold: false, italic: false, underline: false };
+  }
+
+  const sel = document.getSelection?.();
+  const activeEl = document.activeElement;
+  const editorHasFocus =
+    activeEl === editableEl || (activeEl != null && editableEl.contains(activeEl));
+  const selectionInsideEditor = isSelectionInsideElement(editableEl, sel);
+
+  if (!editorHasFocus && !selectionInsideEditor) {
+    return { bold: false, italic: false, underline: false };
+  }
+
+  if (sel) {
+    let node = sel.anchorNode || null;
     const formats = { bold: false, italic: false, underline: false };
     while (node && node !== editableEl) {
       if (node.nodeType === Node.ELEMENT_NODE) {
@@ -177,6 +197,11 @@ function readWebFormatState(editableEl) {
     }
     if (formats.bold || formats.italic || formats.underline) return formats;
   }
+
+  if (!editorHasFocus) {
+    return { bold: false, italic: false, underline: false };
+  }
+
   try {
     return {
       bold: document.queryCommandState('bold'),
@@ -316,6 +341,7 @@ function WebInstructionsEditor({
 
     const handleBlur = () => {
       emitMarkdown(el);
+      setActiveFormats({ bold: false, italic: false, underline: false });
     };
 
     const onSelectionActivity = () => refreshFormatState();

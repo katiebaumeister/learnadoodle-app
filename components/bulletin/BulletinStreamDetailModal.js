@@ -111,7 +111,7 @@ export default function BulletinStreamDetailModal({
             >
               <View style={styles.cardTop}>
                 <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
-                  <Icon size={20} color={iconColor} strokeWidth={2.25} />
+                  <Icon size={18} color={iconColor} strokeWidth={2.25} />
                 </View>
                 <View style={[styles.cardMain, hasHeaderActions ? styles.cardMainWithMenu : null]}>
                   <View style={styles.labelMetaRow}>
@@ -163,7 +163,7 @@ const styles = StyleSheet.create({
   },
   cardWrap: {
     width: '100%',
-    maxWidth: 625,
+    maxWidth: 840,
     zIndex: 1,
   },
   card: {
@@ -189,19 +189,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cardInner: {
-    paddingHorizontal: 32,
-    paddingTop: 32,
-    paddingBottom: 32,
+    paddingHorizontal: 24,
+    paddingTop: 28,
+    paddingBottom: 28,
   },
   cardTop: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 16,
+    gap: 12,
   },
   iconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
@@ -223,8 +223,8 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   label: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '600',
     color: ACCENT_TEXT,
     textTransform: 'uppercase',
@@ -234,8 +234,8 @@ const styles = StyleSheet.create({
     }),
   },
   labelMetaDot: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '400',
     color: '#CBD5E1',
     marginLeft: 4,
@@ -245,8 +245,8 @@ const styles = StyleSheet.create({
     }),
   },
   labelWhen: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '400',
     color: '#94A3B8',
     ...(Platform.OS === 'web' && {
@@ -264,8 +264,8 @@ const styles = StyleSheet.create({
     }),
   },
   secondaryMeta: {
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 20,
     color: '#64748B',
     marginBottom: 4,
     ...(Platform.OS === 'web' && {
@@ -291,8 +291,8 @@ const styles = StyleSheet.create({
     marginTop: 0,
   },
   cardBodyText: {
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '400',
     color: '#334155',
     ...(Platform.OS === 'web' && {

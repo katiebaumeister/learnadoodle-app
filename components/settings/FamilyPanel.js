@@ -3604,6 +3604,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 <FamilyApproachSelector
                   familyId={familyId || family?.id}
                   family={family}
+                  studentSelfManagedNoParent={isSelfManagedStudent}
                   onFamilyUpdate={(updatedFamily) => {
                     setFamily(updatedFamily);
                     onFamilyUpdate?.(updatedFamily);

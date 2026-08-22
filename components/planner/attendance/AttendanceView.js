@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { View, Text, ScrollView, ActivityIndicator, StyleSheet, Platform, Modal, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, ActivityIndicator, StyleSheet, Platform, Modal, TouchableOpacity, Image } from 'react-native';
 import { Check, ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 
@@ -29,7 +29,8 @@ function notifyAttendanceUpdated(patchedAttendances = []) {
 }
 import { getAttendanceLogs, createAttendanceLog, updateAttendanceLog, deleteAttendanceLog } from '../../../lib/services/recordsClient';
 import { updateEventStatus } from '../../../lib/services/attendanceClient';
-import { getFamilyPlannerSettings } from '../../../lib/services/plannerSettingsClient';
+import { getFamilyPlannerSettings, buildBulkTermOptionsFromPlannerSettings, pickCurrentTermStartFromPlannerSettings, getCachedPlannerTermOptions, setCachedPlannerTermOptions, deriveDefaultBulkTermOptions } from '../../../lib/services/plannerSettingsClient';
+import { getCachedYearAttendanceBundle, setCachedYearAttendanceBundle } from '../../../lib/services/plannerPrefetch';
 import { getAttendanceMode, isClassDayMode } from '../../../lib/attendanceMode';
 import { trackEvent } from '../../../lib/analytics';
 import HeaderSummaryStrip from './HeaderSummaryStrip';
@@ -41,6 +42,7 @@ import { useToast } from '../../Toast';
 import { TOKENS } from './constants';
 import { isAllDayEvent, isTimelessUntimedEvent } from '../plannerListTableUtils';
 import { resolveCalendarYearRange, buildMonthsInRange } from '../plannerYearRange';
+import { sourceForChild } from '../../ui/ChildAvatarCluster';
 
 const REQUIRED_DAYS_DEFAULT = 180;
 const REQUIRED_HOURS_DEFAULT = 1000;
@@ -173,31 +175,6 @@ function formatDateDisplay(ymd) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-/**
- * Resolve the start date (YYYY-MM-DD) of the term/semester that contains `today`,
- * using the family planner term dates. Falls back to the most recent term start
- * on/before today, then the configured year start. Returns null if unknown.
- */
-function pickCurrentTermStart(settings, today) {
-  if (!settings) return null;
-  const todayKey = toLocalYYYYMMDD(today);
-  const norm = (v) => (v ? String(v).slice(0, 10) : null);
-  const terms = [
-    [norm(settings.default_fall_term_start_date), norm(settings.default_fall_term_end_date)],
-    [norm(settings.default_spring_term_start_date), norm(settings.default_spring_term_end_date)],
-    [norm(settings.default_summer_term_start_date), norm(settings.default_summer_term_end_date)],
-  ];
-  for (const [start, end] of terms) {
-    if (start && end && start <= todayKey && todayKey <= end) return start;
-  }
-  const pastStarts = terms
-    .map(([s]) => s)
-    .filter((s) => s && s <= todayKey)
-    .sort();
-  if (pastStarts.length) return pastStarts[pastStarts.length - 1];
-  return norm(settings.default_year_start_date);
-}
-
 function getDefaultYearRange() {
   const now = new Date();
   const year = now.getFullYear();
@@ -254,6 +231,41 @@ function isInstructionalEventForMode(e, attendanceTrackingMode = 'subject') {
   return counts && (e?.subject_id == null || String(e?.subject_id || '').trim() === '');
 }
 
+function resolveWarmTermOptions(familyId, snapshot, yearAnchor) {
+  const cached = familyId ? getCachedPlannerTermOptions(familyId) : null;
+  if (cached?.termOptions?.length) return cached;
+  if (snapshot?.termOptions?.length && snapshot.familyId === familyId) {
+    return {
+      termOptions: snapshot.termOptions,
+      bulkTermStartKey: snapshot.bulkTermStartKey || null,
+      selectedBulkTermIdx: snapshot.selectedBulkTermIdx ?? 0,
+    };
+  }
+  const anchor = yearAnchor instanceof Date
+    ? yearAnchor
+    : (yearAnchor ? new Date(yearAnchor) : new Date());
+  return {
+    termOptions: deriveDefaultBulkTermOptions(anchor),
+    bulkTermStartKey: null,
+    selectedBulkTermIdx: 0,
+  };
+}
+
+function resolveWarmAttendanceBundle(familyId, layoutMode, yearAnchor, snapshot) {
+  if (layoutMode === 'year-planner' && familyId && yearAnchor) {
+    const { yearStart, yearEnd } = resolveCalendarYearRange(yearAnchor);
+    const cached = getCachedYearAttendanceBundle(familyId, yearStart, yearEnd);
+    if (cached) return cached;
+  }
+  if (snapshot?.familyId === familyId && Array.isArray(snapshot.attendanceRecords)) {
+    return {
+      attendanceRecords: snapshot.attendanceRecords,
+      yearEvents: snapshot.yearEvents || [],
+    };
+  }
+  return { attendanceRecords: [], yearEvents: [] };
+}
+
 export default function AttendanceView({
   familyId,
   children: childrenProp = [],
@@ -273,8 +285,12 @@ export default function AttendanceView({
   const [loading, setLoading] = useState(true);
   const [academicYear, setAcademicYear] = useState(null);
   const [yearRange, setYearRange] = useState(getDefaultYearRange());
-  const [attendanceRecords, setAttendanceRecords] = useState([]);
-  const [yearEvents, setYearEvents] = useState([]);
+  const [attendanceRecords, setAttendanceRecords] = useState(() =>
+    resolveWarmAttendanceBundle(familyId, layoutMode, plannerYearAnchor, plannerInitialSnapshot).attendanceRecords
+  );
+  const [yearEvents, setYearEvents] = useState(() =>
+    resolveWarmAttendanceBundle(familyId, layoutMode, plannerYearAnchor, plannerInitialSnapshot).yearEvents
+  );
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState({ dateKey: null, childId: null });
   const [exportModalVisible, setExportModalVisible] = useState(false);
@@ -292,10 +308,16 @@ export default function AttendanceView({
   const [yearPlannerInteractionMode, setYearPlannerInteractionMode] = useState(YEAR_PLANNER_MODE_EVENTS);
   const [yearPlannerDayPanelVisible, setYearPlannerDayPanelVisible] = useState(false);
   // Start of the current term/semester (YYYY-MM-DD); used to bound the year-planner bulk range.
-  const [bulkTermStartKey, setBulkTermStartKey] = useState(null);
+  const [bulkTermStartKey, setBulkTermStartKey] = useState(() =>
+    resolveWarmTermOptions(familyId, plannerInitialSnapshot, plannerYearAnchor).bulkTermStartKey
+  );
   // All available terms for the term chooser in the bulk modal.
-  const [bulkTermOptions, setBulkTermOptions] = useState([]);
-  const [selectedBulkTermIdx, setSelectedBulkTermIdx] = useState(0);
+  const [bulkTermOptions, setBulkTermOptions] = useState(() =>
+    resolveWarmTermOptions(familyId, plannerInitialSnapshot, plannerYearAnchor).termOptions
+  );
+  const [selectedBulkTermIdx, setSelectedBulkTermIdx] = useState(() =>
+    resolveWarmTermOptions(familyId, plannerInitialSnapshot, plannerYearAnchor).selectedBulkTermIdx ?? 0
+  );
   // Snapshot of the last bulk run so it can be undone.
   const [lastBulkUndo, setLastBulkUndo] = useState(null);
   const [undoingBulk, setUndoingBulk] = useState(false);
@@ -348,6 +370,16 @@ export default function AttendanceView({
       if (liveDataLoadedFamilyRef.current !== familyIdResolved) {
         setAttendanceRecords(snap.attendanceRecords ?? []);
         setYearEvents(snap.yearEvents ?? []);
+      }
+      if (snap.termOptions?.length) {
+        setBulkTermOptions(snap.termOptions);
+        if (snap.bulkTermStartKey) setBulkTermStartKey(snap.bulkTermStartKey);
+        setSelectedBulkTermIdx(snap.selectedBulkTermIdx ?? 0);
+        setCachedPlannerTermOptions(familyIdResolved, {
+          termOptions: snap.termOptions,
+          bulkTermStartKey: snap.bulkTermStartKey,
+          selectedBulkTermIdx: snap.selectedBulkTermIdx ?? 0,
+        });
       }
       if (!isYearPlannerLayout) {
         setRangeReady(true);
@@ -422,26 +454,43 @@ export default function AttendanceView({
   // Resolve the current term/semester start so the year-planner bulk action defaults
   // to "term start -> today" instead of the whole calendar year.
   useEffect(() => {
+    if (!isYearPlannerLayout || !plannerYearAnchor || !familyIdResolved) return;
+    const { yearStart, yearEnd } = resolveCalendarYearRange(plannerYearAnchor);
+    const cached = getCachedYearAttendanceBundle(familyIdResolved, yearStart, yearEnd);
+    if (cached) {
+      setAttendanceRecords(cached.attendanceRecords);
+      setYearEvents(cached.yearEvents);
+    }
+  }, [isYearPlannerLayout, plannerYearAnchor, familyIdResolved]);
+
+  useEffect(() => {
     if (!isYearPlannerLayout || !familyIdResolved) return undefined;
+    const cached = getCachedPlannerTermOptions(familyIdResolved);
+    if (cached?.termOptions?.length) {
+      setBulkTermOptions(cached.termOptions);
+      if (cached.bulkTermStartKey) setBulkTermStartKey(cached.bulkTermStartKey);
+      setSelectedBulkTermIdx(cached.selectedBulkTermIdx ?? 0);
+    }
     let cancelled = false;
     (async () => {
       try {
         const { data: settings } = await getFamilyPlannerSettings(familyIdResolved);
-        const start = pickCurrentTermStart(settings, new Date());
+        const start = pickCurrentTermStartFromPlannerSettings(settings, new Date());
         if (!cancelled && start) setBulkTermStartKey(start);
 
         if (!cancelled && settings) {
-          const norm = (v) => (v ? String(v).slice(0, 10) : null);
-          const todayKey = toLocalYYYYMMDD(new Date());
-          const terms = [
-            { label: 'Fall', start: norm(settings.default_fall_term_start_date), end: norm(settings.default_fall_term_end_date) },
-            { label: 'Spring', start: norm(settings.default_spring_term_start_date), end: norm(settings.default_spring_term_end_date) },
-            { label: 'Summer', start: norm(settings.default_summer_term_start_date), end: norm(settings.default_summer_term_end_date) },
-          ].filter((t) => t.start && t.end);
+          const terms = buildBulkTermOptionsFromPlannerSettings(settings);
           if (terms.length > 0) {
-            setBulkTermOptions(terms);
+            const todayKey = toLocalYYYYMMDD(new Date());
             const currentIdx = terms.findIndex((t) => t.start <= todayKey && todayKey <= t.end);
-            setSelectedBulkTermIdx(currentIdx >= 0 ? currentIdx : 0);
+            const nextIdx = currentIdx >= 0 ? currentIdx : 0;
+            setBulkTermOptions(terms);
+            setSelectedBulkTermIdx(nextIdx);
+            setCachedPlannerTermOptions(familyIdResolved, {
+              termOptions: terms,
+              bulkTermStartKey: start,
+              selectedBulkTermIdx: nextIdx,
+            });
           }
         }
       } catch (_) {
@@ -486,8 +535,14 @@ export default function AttendanceView({
         ]);
         if (!cancelled) {
           liveDataLoadedFamilyRef.current = familyIdResolved;
-          setAttendanceRecords(logs || []);
-          setYearEvents(Array.isArray(eventsData) ? eventsData : []);
+          const nextRecords = logs || [];
+          const nextEvents = Array.isArray(eventsData) ? eventsData : [];
+          setAttendanceRecords(nextRecords);
+          setYearEvents(nextEvents);
+          setCachedYearAttendanceBundle(familyIdResolved, yearStartKey, yearEndKey, {
+            attendanceRecords: nextRecords,
+            yearEvents: nextEvents,
+          });
         }
       } catch (e) {
         if (!cancelled) {
@@ -1497,10 +1552,17 @@ export default function AttendanceView({
     setYearRange({ start, end });
   }, [minStartKey, maxEndKey, yearRange.start]);
 
+  const effectiveTermOptions = useMemo(() => {
+    if (bulkTermOptions.length > 0) return bulkTermOptions;
+    const anchor = plannerYearAnchor instanceof Date
+      ? plannerYearAnchor
+      : (plannerYearAnchor ? new Date(plannerYearAnchor) : new Date());
+    return deriveDefaultBulkTermOptions(anchor);
+  }, [bulkTermOptions, plannerYearAnchor]);
+
   const termDayCounts = useMemo(() => {
-    if (bulkTermOptions.length === 0) return [];
     const childId = heatmapSelectedChildId === FAMILY_HEATMAP_CHILD_ID ? null : heatmapSelectedChildId;
-    const termResults = bulkTermOptions.map((term) => {
+    const termResults = effectiveTermOptions.map((term) => {
       const daysSet = new Set();
       attendanceRecords.forEach((r) => {
         if (r.status !== 'present') return;
@@ -1516,14 +1578,14 @@ export default function AttendanceView({
       if (r.status !== 'present') return;
       if (childId && String(r.child_id) !== String(childId)) return;
       const day = String(r.day_date || '').slice(0, 10);
-      const inAnyTerm = bulkTermOptions.some((t) => day >= t.start && day <= t.end);
+      const inAnyTerm = effectiveTermOptions.some((t) => day >= t.start && day <= t.end);
       if (!inAnyTerm) noTermDays.add(day);
     });
     if (noTermDays.size > 0) {
       termResults.push({ label: 'Other', start: null, end: null, count: noTermDays.size });
     }
     return termResults;
-  }, [bulkTermOptions, attendanceRecords, heatmapSelectedChildId]);
+  }, [effectiveTermOptions, attendanceRecords, heatmapSelectedChildId]);
 
   if (loading && !familyIdResolved) {
     return (
@@ -1630,6 +1692,13 @@ export default function AttendanceView({
               activeOpacity={0.8}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
+              <View style={styles.childFilterChipAvatarWrap}>
+                <Image
+                  source={sourceForChild(child)}
+                  style={styles.childFilterChipAvatar}
+                  resizeMode="cover"
+                />
+              </View>
               <Text style={[styles.childFilterChipText, selected && styles.childFilterChipTextSelected]}>
                 {childName}
               </Text>
@@ -1676,28 +1745,7 @@ export default function AttendanceView({
             );
           })}
         </View>
-        <YearHeatmapLegend style={styles.yearPlannerInlineLegend} />
-        {termDayCounts.length > 0 && (
-          <TouchableOpacity
-            style={styles.termCountsRow}
-            onPress={() => setTermCountsModalVisible(true)}
-            activeOpacity={0.7}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            {termDayCounts.map((term) => (
-              <View key={term.label} style={styles.termCountItem}>
-                <Text style={styles.termCountLabel}>{term.label}</Text>
-                <Text style={styles.termCountValue}>{term.count} {term.count === 1 ? 'day' : 'days'}</Text>
-              </View>
-            ))}
-            <View style={styles.termCountItem}>
-              <Text style={styles.termCountLabel}>Total</Text>
-              <Text style={[styles.termCountValue, styles.termCountValueTotal]}>
-                {termDayCounts.reduce((sum, t) => sum + t.count, 0)} days
-              </Text>
-            </View>
-          </TouchableOpacity>
-        )}
+        <YearHeatmapLegend style={styles.yearPlannerInlineLegend} toolbar />
         {lastBulkUndo && !readOnly ? (
           <TouchableOpacity
             style={[styles.rangeBulkChip, undoingBulk && styles.rangeBulkChipDisabled]}
@@ -1711,9 +1759,6 @@ export default function AttendanceView({
           </TouchableOpacity>
         ) : null}
       </View>
-      <Text style={styles.yearPlannerModeHelp}>
-        {YEAR_PLANNER_MODE_COPY[yearPlannerInteractionMode].help}
-      </Text>
       {children.length > 1 ? (
         <View style={styles.yearPlannerControlsRow}>
           <View style={styles.childFilterChips}>
@@ -1724,7 +1769,7 @@ export default function AttendanceView({
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
               <Text style={[styles.childFilterChipText, !effectiveYearChildId && styles.childFilterChipTextSelected]}>
-                All children
+                All Children
               </Text>
             </TouchableOpacity>
             {children.map((child) => {
@@ -1738,6 +1783,13 @@ export default function AttendanceView({
                   activeOpacity={0.8}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
+                  <View style={styles.childFilterChipAvatarWrap}>
+                    <Image
+                      source={sourceForChild(child)}
+                      style={styles.childFilterChipAvatar}
+                      resizeMode="cover"
+                    />
+                  </View>
                   <Text style={[styles.childFilterChipText, selected && styles.childFilterChipTextSelected]}>
                     {childName}
                   </Text>
@@ -1747,6 +1799,28 @@ export default function AttendanceView({
           </View>
         </View>
       ) : null}
+      <TouchableOpacity
+        style={styles.termCountsRow}
+        onPress={() => setTermCountsModalVisible(true)}
+        activeOpacity={0.7}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        {termDayCounts.map((term) => (
+          <View key={term.label} style={styles.termCountItem}>
+            <Text style={styles.termCountLabel}>{term.label}</Text>
+            <Text style={styles.termCountValue}>{term.count} {term.count === 1 ? 'day' : 'days'}</Text>
+          </View>
+        ))}
+        <View style={styles.termCountItem}>
+          <Text style={styles.termCountLabel}>Total</Text>
+          <Text style={[styles.termCountValue, styles.termCountValueTotal]}>
+            {termDayCounts.reduce((sum, t) => sum + t.count, 0)} days
+          </Text>
+        </View>
+      </TouchableOpacity>
+      <Text style={styles.yearPlannerModeHelp}>
+        {YEAR_PLANNER_MODE_COPY[yearPlannerInteractionMode].help}
+      </Text>
     </View>
   );
 
@@ -2070,11 +2144,11 @@ export default function AttendanceView({
                 {attendanceDateRangePicker({ showLabel: false })}
               </View>
             ) : null}
-            {isYearPlannerLayout && bulkTermOptions.length > 0 && (
+            {isYearPlannerLayout && effectiveTermOptions.length > 0 && (
               <View style={styles.bulkTermChooserWrap}>
                 <Text style={styles.bulkTermLabel}>Term</Text>
                 <View style={styles.bulkTermChooser}>
-                  {bulkTermOptions.map((term, idx) => (
+                  {effectiveTermOptions.map((term, idx) => (
                     <TouchableOpacity
                       key={term.label}
                       style={[styles.bulkTermChip, idx === selectedBulkTermIdx && styles.bulkTermChipSelected]}
@@ -2232,7 +2306,8 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   contentYearPlanner: {
-    paddingTop: 8,
+    paddingTop: 6,
+    paddingBottom: 12,
     paddingHorizontal: 24,
   },
   sectionTitle: {
@@ -2324,14 +2399,14 @@ const styles = StyleSheet.create({
     marginBottom: TOKENS.s4,
   },
   yearPlannerToolbar: {
-    gap: 10,
-    marginBottom: TOKENS.s4,
+    gap: 8,
+    marginBottom: 12,
   },
   yearPlannerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 16,
+    gap: 14,
   },
   yearPlannerInlineLegend: {
     marginTop: 0,
@@ -2341,42 +2416,53 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 4,
     flexShrink: 0,
-    padding: 4,
+    padding: 3,
+    minHeight: 36,
     borderRadius: 999,
-    backgroundColor: TOKENS.bgSubtle,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.06)',
+    borderColor: '#e5e7eb',
   },
   yearPlannerModeChip: {
-    paddingVertical: 7,
     paddingHorizontal: 14,
+    paddingVertical: 0,
+    minHeight: 30,
     borderRadius: 999,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   yearPlannerModeChipSelected: {
-    backgroundColor: '#FFFFFF',
-    ...(Platform.OS === 'web' && { boxShadow: '0 1px 2px rgba(15, 23, 42, 0.08)' }),
+    backgroundColor: 'rgba(107, 179, 232, 0.12)',
+    borderWidth: 1,
+    borderColor: '#6BB3E8',
   },
   yearPlannerModeChipText: {
-    fontSize: TOKENS.fontSizeCaption,
+    fontSize: 14,
+    lineHeight: 18,
     fontWeight: '600',
-    color: TOKENS.textMuted,
+    color: 'rgba(15, 23, 42, 0.9)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   yearPlannerModeChipTextSelected: {
-    color: TOKENS.text,
+    color: '#6BB3E8',
+    fontWeight: '600',
   },
   yearPlannerModeHelp: {
     fontSize: TOKENS.fontSizeCaption,
     color: TOKENS.textMuted,
-    lineHeight: 18,
+    lineHeight: 17,
     maxWidth: 760,
   },
   termCountsRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 12,
-    marginLeft: 'auto',
+    alignSelf: 'flex-start',
   },
   termCountItem: {
     flexDirection: 'row',
@@ -2399,10 +2485,9 @@ const styles = StyleSheet.create({
   yearPlannerControlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     flexWrap: 'wrap',
     gap: 8,
-    marginTop: 10,
   },
   yearPlannerDayModal: {
     width: '100%',
@@ -2429,29 +2514,53 @@ const styles = StyleSheet.create({
   childFilterChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 6,
+    gap: 7,
     paddingHorizontal: 12,
+    paddingVertical: 0,
+    minHeight: 36,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: TOKENS.border,
+    borderColor: '#e5e7eb',
     backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   childFilterChipSelected: {
-    backgroundColor: '#DBEAFE',
-    borderColor: '#93C5FD',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(107, 179, 232, 0.12)',
   },
   childFilterChipText: {
-    fontSize: TOKENS.fontSizeCaption,
-    fontWeight: '600',
-    color: TOKENS.textMuted,
+    fontSize: 14,
+    lineHeight: 18,
+    color: 'rgba(15, 23, 42, 0.9)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   childFilterChipTotal: {
     fontSize: 11,
     color: TOKENS.textFaint,
   },
   childFilterChipTextSelected: {
-    color: '#1E40AF',
+    color: '#6BB3E8',
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  childFilterChipAvatarWrap: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    flexShrink: 0,
+    overflow: 'hidden',
+    backgroundColor: '#f1f5f9',
+  },
+  childFilterChipAvatar: {
+    width: 18,
+    height: 18,
+    transform: [{ scale: 1.2 }],
+    ...(Platform.OS === 'web' && { objectFit: 'cover' }),
   },
   rangeRowWrap: {
     flexDirection: 'row',
@@ -2478,21 +2587,28 @@ const styles = StyleSheet.create({
   dateRangeArrowLabel: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted },
   rangeBulkChip: {
     borderRadius: 999,
-    paddingVertical: 7,
+    minHeight: 36,
+    paddingVertical: 0,
     paddingHorizontal: 14,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.08)',
+    borderColor: '#e5e7eb',
     alignSelf: 'center',
     marginLeft: 'auto',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   rangeBulkChipDisabled: {
     opacity: 0.55,
   },
   rangeBulkChipText: {
-    fontSize: 12,
+    fontSize: 14,
+    lineHeight: 18,
     fontWeight: '600',
-    color: 'rgba(15, 23, 42, 0.7)',
+    color: 'rgba(15, 23, 42, 0.9)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   confirmOverlay: {
     flex: 1,

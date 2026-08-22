@@ -152,12 +152,20 @@ export function isAllDayEvent(event) {
   return false;
 }
 
+function formatCompactTimeFromDate(date) {
+  if (!date || Number.isNaN(date.getTime())) return '';
+  if (date.getMinutes() === 0) {
+    return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+  }
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
 function isMidnightSpanTimeLabel(startLabel, endLabel) {
   if (!startLabel || !endLabel) return false;
-  const startMidnight = /^12:00\s*AM$/i.test(String(startLabel).trim());
+  const startMidnight = /^(12:00\s*AM|12\s*AM)$/i.test(String(startLabel).trim());
   const endLate =
     /^11:59\s*PM$/i.test(String(endLabel).trim()) ||
-    /^12:00\s*AM$/i.test(String(endLabel).trim());
+    /^(12:00\s*AM|12\s*AM)$/i.test(String(endLabel).trim());
   return startMidnight && endLate;
 }
 
@@ -168,7 +176,7 @@ function formatTimedRangeLabel(event) {
     if (!value) return '';
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    return formatCompactTimeFromDate(d);
   };
   const startLabel = formatTime(startValue);
   const endLabel = formatTime(endValue);
@@ -199,7 +207,7 @@ function formatSingleStartTimeLabel(event) {
   if (!startValue) return '';
   const d = new Date(startValue);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return formatCompactTimeFromDate(d);
 }
 
 /** Month/week calendar chips: start time only; blank for untimed; "All Day" for all-day. */
@@ -216,7 +224,7 @@ export function formatEventChipTimeLabel(event) {
     }
     if (startPart?.trim()) {
       // Never surface placeholder midnight as a real start time.
-      if (/^12:00\s*AM$/i.test(startPart.trim()) && !hasExplicitWallClockStart(event)) {
+      if (/^(12:00\s*AM|12\s*AM)$/i.test(startPart.trim()) && !hasExplicitWallClockStart(event)) {
         return '';
       }
       return startPart.trim();

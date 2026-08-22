@@ -76,6 +76,7 @@ function MonthMiniCalendar({
   selectedDateKey = null,
   cellSize,
   gap,
+  compact = false,
   isWeb,
   hoveredCellKey,
   setHoveredCellKey,
@@ -83,13 +84,23 @@ function MonthMiniCalendar({
   const { year, monthIndex, firstDay, lastDay } = month;
   const { cells, fullRows } = buildMonthCells(year, monthIndex);
   const statusMap = selectedChildId ? (dayStatusByChild[selectedChildId] || {}) : {};
+  const panelWidth = 7 * (cellSize + gap);
+  const cellMarginBottom = compact ? 1 : 2;
+  const borderRadius = compact ? TOKENS.hmRadiusCompact : TOKENS.hmRadius;
 
   return (
-    <View style={styles.monthPanel}>
-      <Text style={styles.monthPanelTitle}>{month.label}</Text>
-      <View style={styles.dayHeaders}>
+    <View style={[styles.monthPanel, { width: panelWidth, minWidth: panelWidth }]}>
+      <Text style={[styles.monthPanelTitle, compact && styles.monthPanelTitleCompact]}>{month.label}</Text>
+      <View style={[styles.dayHeaders, compact && styles.dayHeadersCompact]}>
         {DAY_HEADERS.map((h, i) => (
-          <Text key={`${h}-${i}`} style={[styles.dayHeaderText, { width: cellSize, marginHorizontal: gap / 2 }]}>
+          <Text
+            key={`${h}-${i}`}
+            style={[
+              styles.dayHeaderText,
+              compact && styles.dayHeaderTextCompact,
+              { width: cellSize, marginHorizontal: gap / 2 },
+            ]}
+          >
             {h}
           </Text>
         ))}
@@ -131,8 +142,9 @@ function MonthMiniCalendar({
                       width: cellSize,
                       height: cellSize,
                       marginHorizontal: gap / 2,
-                      marginBottom: 2,
+                      marginBottom: cellMarginBottom,
                       backgroundColor: inRange ? color : 'transparent',
+                      borderRadius,
                     },
                     inRange && isNone && !isOffDay && styles.cellNone,
                     inRange && isOffDay && styles.cellOffDay,
@@ -162,6 +174,7 @@ function MonthMiniCalendar({
                   <Text
                     style={[
                       styles.cellDayText,
+                      compact && styles.cellDayTextCompact,
                       !inRange && styles.cellDayTextMuted,
                     ]}
                     numberOfLines={1}
@@ -178,28 +191,38 @@ function MonthMiniCalendar({
   );
 }
 
-export function YearHeatmapLegend({ style }) {
+export function YearHeatmapLegend({ style, compact = false, toolbar = false }) {
+  const pillStyle = [
+    styles.legendPill,
+    compact && styles.legendPillCompact,
+    toolbar && styles.legendPillToolbar,
+  ];
+  const textStyle = [
+    styles.legendPillText,
+    compact && styles.legendPillTextCompact,
+    toolbar && styles.legendPillTextToolbar,
+  ];
   return (
-    <View style={[styles.legend, style]}>
-      <View style={styles.legendPill}>
-        <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.present }]} />
-        <Text style={styles.legendPillText}>Attended</Text>
+    <View style={[styles.legend, compact && styles.legendCompact, toolbar && styles.legendToolbar, style]}>
+      <View style={pillStyle}>
+        <View style={[styles.legendDot, toolbar && styles.legendDotToolbar, { backgroundColor: ATTENDANCE_COLORS.present }]} />
+        <Text style={textStyle}>Attended</Text>
       </View>
-      <View style={styles.legendPill}>
-        <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.absent }]} />
-        <Text style={styles.legendPillText}>Unattended</Text>
+      <View style={pillStyle}>
+        <View style={[styles.legendDot, toolbar && styles.legendDotToolbar, { backgroundColor: ATTENDANCE_COLORS.absent }]} />
+        <Text style={textStyle}>Unattended</Text>
       </View>
-      <View style={styles.legendPill}>
-        <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.unmarked }]} />
-        <Text style={styles.legendPillText}>Upcoming</Text>
+      <View style={pillStyle}>
+        <View style={[styles.legendDot, toolbar && styles.legendDotToolbar, { backgroundColor: ATTENDANCE_COLORS.unmarked }]} />
+        <Text style={textStyle}>Upcoming</Text>
       </View>
-      <View style={styles.legendPill}>
-        <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.noEvents }]} />
-        <Text style={styles.legendPillText}>No events</Text>
+      <View style={pillStyle}>
+        <View style={[styles.legendDot, toolbar && styles.legendDotToolbar, { backgroundColor: ATTENDANCE_COLORS.noEvents }]} />
+        <Text style={textStyle}>No events</Text>
       </View>
-      <View style={styles.legendPill}>
-        <View style={[styles.legendDot, styles.legendDotOffDay]} />
-        <Text style={styles.legendPillText}>Day off</Text>
+      <View style={pillStyle}>
+        <View style={[styles.legendDot, styles.legendDotOffDay, toolbar && styles.legendDotToolbar]} />
+        <Text style={textStyle}>Day off</Text>
       </View>
     </View>
   );
@@ -216,10 +239,11 @@ export default function YearHeatmapGrid({
   interactionMode = 'attendance',
   selectedDateKey = null,
   showLegend = true,
+  compact = false,
 }) {
   const [hoveredCellKey, setHoveredCellKey] = useState(null);
-  const cellSize = TOKENS.hmCell;
-  const gap = TOKENS.hmGap;
+  const cellSize = compact ? TOKENS.hmCellCompact : TOKENS.hmCell;
+  const gap = compact ? TOKENS.hmGapCompact : TOKENS.hmGap;
   const isWeb = Platform.OS === 'web';
 
   const months = useMemo(() => buildMonthsInRange(yearStart, yearEnd), [yearStart, yearEnd]);
@@ -230,7 +254,7 @@ export default function YearHeatmapGrid({
 
   return (
     <>
-      <View style={styles.monthGrid}>
+      <View style={[styles.monthGrid, compact && styles.monthGridCompact]}>
         {months.map((m) => (
           <MonthMiniCalendar
             key={m.index}
@@ -244,18 +268,17 @@ export default function YearHeatmapGrid({
             selectedDateKey={selectedDateKey}
             cellSize={cellSize}
             gap={gap}
+            compact={compact}
             isWeb={isWeb}
             hoveredCellKey={hoveredCellKey}
             setHoveredCellKey={setHoveredCellKey}
           />
         ))}
       </View>
-      {showLegend ? <YearHeatmapLegend /> : null}
+      {showLegend ? <YearHeatmapLegend style={compact ? styles.legendCompact : null} /> : null}
     </>
   );
 }
-
-const MONTH_PANEL_WIDTH = 7 * (TOKENS.hmCell + TOKENS.hmGap);
 
 const styles = StyleSheet.create({
   monthGrid: {
@@ -264,10 +287,11 @@ const styles = StyleSheet.create({
     gap: TOKENS.s5,
     paddingVertical: TOKENS.s2,
   },
-  monthPanel: {
-    width: MONTH_PANEL_WIDTH,
-    minWidth: MONTH_PANEL_WIDTH,
+  monthGridCompact: {
+    gap: TOKENS.s3,
+    paddingVertical: 0,
   },
+  monthPanel: {},
   monthPanelTitle: {
     fontSize: 13,
     fontWeight: '700',
@@ -275,16 +299,26 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     textAlign: 'center',
   },
+  monthPanelTitleCompact: {
+    fontSize: 11,
+    marginBottom: 3,
+  },
   dayHeaders: {
     flexDirection: 'row',
     marginBottom: 4,
     justifyContent: 'center',
+  },
+  dayHeadersCompact: {
+    marginBottom: 2,
   },
   dayHeaderText: {
     textAlign: 'center',
     fontSize: 10,
     color: TOKENS.textMuted,
     fontWeight: '600',
+  },
+  dayHeaderTextCompact: {
+    fontSize: 8,
   },
   grid: {},
   weekRow: {
@@ -329,6 +363,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: 'rgba(15, 23, 42, 0.75)',
   },
+  cellDayTextCompact: {
+    fontSize: 9,
+  },
   cellDayTextMuted: {
     color: TOKENS.textFaint,
   },
@@ -347,6 +384,14 @@ const styles = StyleSheet.create({
     gap: TOKENS.s3,
     marginTop: TOKENS.s4,
   },
+  legendCompact: {
+    marginTop: TOKENS.s2,
+    gap: TOKENS.s2,
+  },
+  legendToolbar: {
+    marginTop: 0,
+    gap: 8,
+  },
   legendPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -356,8 +401,34 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: TOKENS.bgSubtle,
   },
+  legendPillCompact: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    gap: 6,
+  },
+  legendPillToolbar: {
+    minHeight: 36,
+    paddingVertical: 0,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+  },
   legendPillText: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted, opacity: 0.9 },
+  legendPillTextCompact: { fontSize: 11 },
+  legendPillTextToolbar: {
+    fontSize: 14,
+    lineHeight: 18,
+    color: 'rgba(15, 23, 42, 0.9)',
+    opacity: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   legendDot: { width: 8, height: 8, borderRadius: 4, opacity: 0.9 },
+  legendDotToolbar: { width: 9, height: 9, borderRadius: 5 },
   legendDotOffDay: {
     backgroundColor: 'rgba(15,23,42,0.05)',
     borderWidth: 1,
