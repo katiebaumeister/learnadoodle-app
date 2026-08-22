@@ -1,55 +1,66 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
-import { CalendarDays, FileText, Trophy, Users, Lightbulb } from 'lucide-react';
+import {
+  CalendarDays,
+  FileText,
+  Trophy,
+  Users,
+  Lightbulb,
+  BookOpen,
+  Paperclip,
+} from 'lucide-react';
+import { useSession } from '../../contexts/SessionContext';
+import {
+  buildSubjectWelcomeIntro,
+  buildSubjectWelcomeLeadIn,
+  buildSubjectWelcomeTip,
+  resolveSubjectWelcomeViewerMode,
+  SUBJECT_WELCOME_USE_CASES_BY_MODE,
+} from '../../lib/subjectWelcomeBulletinContent';
 
 const USE_CASE_ICON_COLOR = '#64748B';
 const USE_CASE_ICON_BG = 'rgba(100, 116, 139, 0.12)';
 
-const USE_CASES = [
-  {
-    Icon: CalendarDays,
-    title: 'Share weekly plans and announcements',
-    description: 'Keep everyone informed about what\'s coming up.',
-  },
-  {
-    Icon: FileText,
-    title: 'Share assignment instructions and reminders',
-    description: 'Make expectations clear and deadlines easy to find.',
-  },
-  {
-    Icon: Trophy,
-    title: 'Celebrate completed projects and milestones',
-    description: 'Highlight progress and achievements together.',
-  },
-  {
-    Icon: Users,
-    title: 'Keep everyone learning this subject on the same page',
-    description: 'A shared space for students, parents, and tutors.',
-  },
-];
+const USE_CASE_ICONS = {
+  plans: CalendarDays,
+  assignments: FileText,
+  milestones: Trophy,
+  together: Users,
+  notes: BookOpen,
+  resources: Paperclip,
+};
 
 export default function SubjectWelcomeBulletinBody({ subjectName, textStyle = null }) {
-  const name = String(subjectName || '').trim() || 'this subject';
+  const session = useSession();
   const bodyStyle = textStyle || styles.bodyText;
+  const name = String(subjectName || '').trim() || 'this subject';
+
+  const viewerMode = useMemo(() => resolveSubjectWelcomeViewerMode(session), [session]);
+  const useCases = SUBJECT_WELCOME_USE_CASES_BY_MODE[viewerMode]
+    || SUBJECT_WELCOME_USE_CASES_BY_MODE.parent;
+  const intro = buildSubjectWelcomeIntro(name, viewerMode);
+  const leadIn = buildSubjectWelcomeLeadIn(viewerMode);
+  const tip = buildSubjectWelcomeTip(viewerMode);
 
   return (
     <View style={styles.wrap}>
-      <Text style={bodyStyle}>
-        {`Welcome to ${name}! This is the Bulletin Board for ${name}.`}
-      </Text>
-      <Text style={[bodyStyle, styles.sectionHeading]}>This is where you can:</Text>
+      <Text style={bodyStyle}>{intro}</Text>
+      <Text style={[bodyStyle, styles.sectionHeading]}>{leadIn}</Text>
       <View style={styles.list}>
-        {USE_CASES.map(({ Icon, title, description }) => (
-          <View key={title} style={styles.row}>
-            <View style={[styles.iconWrap, { backgroundColor: USE_CASE_ICON_BG }]}>
-              <Icon size={16} color={USE_CASE_ICON_COLOR} strokeWidth={2.25} />
+        {useCases.map(({ key, title, description }) => {
+          const Icon = USE_CASE_ICONS[key] || FileText;
+          return (
+            <View key={key} style={styles.row}>
+              <View style={[styles.iconWrap, { backgroundColor: USE_CASE_ICON_BG }]}>
+                <Icon size={16} color={USE_CASE_ICON_COLOR} strokeWidth={2.25} />
+              </View>
+              <View style={styles.copy}>
+                <Text style={[bodyStyle, styles.itemTitle]}>{title}</Text>
+                <Text style={[bodyStyle, styles.itemDescription]}>{description}</Text>
+              </View>
             </View>
-            <View style={styles.copy}>
-              <Text style={[bodyStyle, styles.itemTitle]}>{title}</Text>
-              <Text style={[bodyStyle, styles.itemDescription]}>{description}</Text>
-            </View>
-          </View>
-        ))}
+          );
+        })}
       </View>
       <View style={styles.tipRow}>
         <View style={styles.tipIconWrap}>
@@ -57,7 +68,7 @@ export default function SubjectWelcomeBulletinBody({ subjectName, textStyle = nu
         </View>
         <Text style={[bodyStyle, styles.tipText]}>
           <Text style={styles.tipLabel}>Tip: </Text>
-          Attach files, links, and images to posts to support learning. Explore Smart Actions in the top right for more planning and class tools.
+          {tip}
         </Text>
       </View>
     </View>

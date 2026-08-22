@@ -18,7 +18,10 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { getMe, getIntegrationStatus, getFamilyMembers } from '../lib/apiClient';
+import { promiseWithTimeout } from '../lib/promiseWithTimeout';
 import { useAuth } from './AuthContext';
+
+const SESSION_LOAD_TIMEOUT_MS = 35000;
 
 const SessionContext = createContext(null);
 
@@ -76,6 +79,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
 
   // Load session context
   const loadSession = useCallback(async (familyIdToUse) => {
+    const run = async () => {
     if (!authUserId) {
       setSession(null);
       setLoading(false);
@@ -310,6 +314,30 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
         legacyMode: true,
       });
     } finally {
+      setLoading(false);
+    }
+    };
+
+    try {
+      await promiseWithTimeout(run(), SESSION_LOAD_TIMEOUT_MS, 'SessionContext.loadSession');
+    } catch (error) {
+      console.warn('[SessionContext] Session load timed out or failed; releasing shell loader.', error);
+      commitSession({
+        family_id: null,
+        member_role: 'parent',
+        child_id: null,
+        child_scope: [],
+        accessible_children: [],
+        student_self_signup: false,
+        child_linked_via_accepted_invite: null,
+        effective_role: 'parent',
+        role_flags: {
+          isParent: true,
+          isTutor: false,
+          isChild: false,
+        },
+        legacyMode: true,
+      });
       setLoading(false);
     }
   }, [authUserId, propFamilyId, commitSession]);

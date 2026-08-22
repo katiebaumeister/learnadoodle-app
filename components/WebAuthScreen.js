@@ -73,7 +73,6 @@ export default function WebAuthScreen() {
   const [googleAuthLoading, setGoogleAuthLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
-  const [existingEmailOfferReset, setExistingEmailOfferReset] = useState(false);
   const [showAccountCreatedConfirmation, setShowAccountCreatedConfirmation] = useState(false);
   const [verifyEmailForConfirmation, setVerifyEmailForConfirmation] = useState('');
   const [resendLoading, setResendLoading] = useState(false);
@@ -90,6 +89,14 @@ export default function WebAuthScreen() {
   };
   const pageFadeAnim = useRef(new Animated.Value(1)).current;
 
+  const openAuthScreen = ({ signUp = false, resetPassword = false } = {}) => {
+    pageFadeAnim.setValue(0);
+    setJustClosedModal(false);
+    setShowWelcome(false);
+    setIsSignUp(signUp);
+    setIsResetPassword(resetPassword);
+  };
+
   const handleClose = () => {
     setJustClosedModal(true);
     Animated.timing(pageFadeAnim, {
@@ -105,11 +112,9 @@ export default function WebAuthScreen() {
     });
   };
 
-  // Reset animation when showing auth screen
+  // Fade in auth screen after opacity is set to 0 synchronously in openAuthScreen
   useEffect(() => {
     if (!showWelcome) {
-      // Fade in animation when auth screen appears
-      pageFadeAnim.setValue(0);
       Animated.timing(pageFadeAnim, {
         toValue: 1,
         duration: 300,
@@ -157,16 +162,11 @@ export default function WebAuthScreen() {
       }
 
       if (view === 'signup') {
-        setShowWelcome(false);
-        setIsSignUp(true);
-        setIsResetPassword(false);
+        openAuthScreen({ signUp: true });
       } else if (view === 'signin') {
-        setShowWelcome(false);
-        setIsSignUp(false);
-        setIsResetPassword(false);
+        openAuthScreen({ signUp: false });
       } else if (view === 'reset') {
-        setShowWelcome(false);
-        setIsResetPassword(true);
+        openAuthScreen({ resetPassword: true });
       } else {
         setShowWelcome(true);
         setIsResetPassword(false);
@@ -223,10 +223,18 @@ export default function WebAuthScreen() {
   const clearMessages = () => {
     setErrorMessage('');
     setSuccessMessage('');
-    setExistingEmailOfferReset(false);
     setShowAccountCreatedConfirmation(false);
     setVerifyEmailForConfirmation('');
     setResendFeedback('');
+  };
+
+  const switchToSignIn = (message) => {
+    setSuccessMessage('');
+    setShowAccountCreatedConfirmation(false);
+    setIsSignUp(false);
+    setIsResetPassword(false);
+    setErrorMessage(message || 'An account with this email already exists. Please sign in instead.');
+    updateURL('signin');
   };
 
   const hasSpecialCharRe = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?]/;
@@ -277,6 +285,11 @@ export default function WebAuthScreen() {
         const checkRes = await fetch(`${base}/api/auth/signup-confirmation-sent?email=${encodeURIComponent(email.trim())}`);
         if (checkRes.ok) {
           const checkData = await checkRes.json();
+          if (checkData.email_confirmed) {
+            switchToSignIn('An account with this email already exists. Please sign in instead.');
+            setEmailAuthLoading(false);
+            return;
+          }
           if (checkData.sent_at) {
             const formatted = formatConfirmationSentAt(checkData.sent_at);
             setSuccessMessage(formatted ? `Confirmation sent on ${formatted}. Please check your email!` : 'Confirmation already sent. Please check your email!');
@@ -323,8 +336,9 @@ export default function WebAuthScreen() {
         const { data, error } = await signUp(email.trim(), tempPassword, { emailRedirectTo: redirectTo });
         if (error) {
           if (isExistingEmailError(error.message)) {
-            setErrorMessage('An account with this email already exists.');
-            setExistingEmailOfferReset(true);
+            switchToSignIn();
+            setEmailAuthLoading(false);
+            return;
           } else if (error.status === 500 || (error.message && String(error.message).toLowerCase().includes('500'))) {
             setErrorMessage('We couldn\'t send the confirmation email right now (server error). Please try again in a few minutes or contact contact@learnadoodle.com.');
           } else if (error.code === 'unexpected_failure' || (error.message && String(error.message).toLowerCase().includes('database error saving new user'))) {
@@ -345,8 +359,7 @@ export default function WebAuthScreen() {
         }
         const existingAccount = data?.user && (!data.user.identities || data.user.identities.length === 0);
         if (existingAccount) {
-          setErrorMessage('An account with this email already exists.');
-          setExistingEmailOfferReset(true);
+          switchToSignIn();
           setEmailAuthLoading(false);
           return;
         }
@@ -418,7 +431,6 @@ export default function WebAuthScreen() {
       } else {
         setSuccessMessage('Success! If an account is associated with the provided email, you will receive an email to reset. If you do not receive an email, please create a new account.');
         setIsResetPassword(false);
-        setExistingEmailOfferReset(false);
       }
     } catch (error) {
       setErrorMessage('An unexpected error occurred: ' + error.message);
@@ -439,27 +451,6 @@ export default function WebAuthScreen() {
       setErrorMessage(error?.message || 'Failed to start Google sign in');
     } finally {
       setGoogleAuthLoading(false);
-    }
-  };
-
-  const handleSendResetForExistingEmail = async () => {
-    if (!email) return;
-    setEmailAuthLoading(true);
-    clearMessages();
-    try {
-      const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/reset-password` : undefined;
-      const { error } = await resetPassword(email, { redirectTo });
-      if (error) {
-        setErrorMessage(error.message);
-      } else {
-        setSuccessMessage('Password reset link sent! Check your email, then sign in below.');
-        setExistingEmailOfferReset(false);
-        setIsSignUp(false);
-      }
-    } catch (error) {
-      setErrorMessage(error.message || 'Failed to send reset link.');
-    } finally {
-      setEmailAuthLoading(false);
     }
   };
 
@@ -729,15 +720,11 @@ export default function WebAuthScreen() {
       <LandingPage
         skipLoader={justClosedModal}
         onGetStarted={() => {
-          setJustClosedModal(false);
-          setShowWelcome(false);
-          setIsSignUp(true);
+          openAuthScreen({ signUp: true });
           updateURL('signup');
         }}
         onLogIn={() => {
-          setJustClosedModal(false);
-          setShowWelcome(false);
-          setIsSignUp(false);
+          openAuthScreen({ signUp: false });
           updateURL('signin');
         }}
       />
@@ -770,19 +757,6 @@ export default function WebAuthScreen() {
         {errorMessage ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{errorMessage}</Text>
-          </View>
-        ) : null}
-        
-        {existingEmailOfferReset ? (
-          <View style={styles.existingEmailBox}>
-            <Text style={styles.existingEmailText}>Send a password reset link to this email?</Text>
-            <TouchableOpacity
-              style={styles.resetLinkButton}
-              onPress={handleSendResetForExistingEmail}
-              disabled={emailAuthLoading}
-            >
-              <Text style={styles.resetLinkButtonText}>{emailAuthLoading ? 'Sending…' : 'Send password reset link'}</Text>
-            </TouchableOpacity>
           </View>
         ) : null}
         

@@ -19,12 +19,30 @@ import PlanningModeStep from './PlanningModeStep';
 import LearningContextStep from './LearningContextStep';
 import AddChildStep from './AddChildStep';
 import ParentProfileStep from './ParentProfileStep';
+import SchoolYearSetupStep from './SchoolYearSetupStep';
 import CompleteStep from './CompleteStep';
 import { seedHomeWelcomeBulletinPost } from '../../lib/homeWelcomeBulletin';
 import { notifyOnboardingCompleted } from '../../lib/onboardingCrossTab';
 
-const STEPS = ['welcome', 'planning_mode', 'parent_profile', 'learning_context', 'add_child', 'complete'];
+const PARENT_STEPS = ['welcome', 'planning_mode', 'learning_context', 'parent_profile', 'add_child', 'school_year', 'complete'];
+const STUDENT_STEPS = ['welcome', 'planning_mode', 'learning_context', 'add_child', 'school_year', 'complete'];
 const ONBOARDING_WHO_STORAGE_KEY = 'ld_onboarding_who';
+const ONBOARDING_SCHOOL_YEAR_DONE_KEY = 'ld_onboarding_school_year_done';
+
+function getStepsForWho(who) {
+  return who === 'student' ? STUDENT_STEPS : PARENT_STEPS;
+}
+
+function getStepProgressPercent(step, who) {
+  const steps = getStepsForWho(who);
+  const idx = steps.indexOf(step);
+  if (idx < 0) return 0;
+  return ((idx + 1) / steps.length) * 100;
+}
+
+function resolveOnboardingWho(storedWho, fallback = 'parent') {
+  return storedWho === 'student' ? 'student' : fallback;
+}
 
 export default function OnboardingModal({
   visible,
@@ -101,7 +119,15 @@ export default function OnboardingModal({
       return () => { cancelled = true; };
     }
 
-    const stepIdx = STEPS.indexOf(stepRef.current);
+    let whoForSteps = onboardingWho;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const storedWho = localStorage.getItem(ONBOARDING_WHO_STORAGE_KEY);
+      if (storedWho === 'parent' || storedWho === 'student') {
+        whoForSteps = storedWho;
+      }
+    }
+    const stepsForWho = getStepsForWho(whoForSteps);
+    const stepIdx = stepsForWho.indexOf(stepRef.current);
     if (resumeKeyRef.current === 'no-family' && stepIdx > 0) {
       resumeKeyRef.current = familyId;
       finishResume();
@@ -128,6 +154,11 @@ export default function OnboardingModal({
           if (onCompleted) onCompleted();
           return;
         }
+        // Read step after await — user may have left welcome while status was loading.
+        const stepsForResume = getStepsForWho(resolveOnboardingWho(persistedWho, onboardingWho));
+        const currentStepIdx = stepsForResume.indexOf(stepRef.current);
+        if (currentStepIdx > 0) return;
+
         if (!data?.default_planning_mode) {
           if (!isStudentFlow && data?.has_parent_profile) {
             setStep('learning_context');
@@ -135,7 +166,7 @@ export default function OnboardingModal({
             setParentDisplayName(data.parent_display_name || '');
             setParentAvatarKey(data.parent_avatar_url || 'prof1');
             setCreatedChildren([]);
-          } else if (stepIdx === 0) {
+          } else if (currentStepIdx === 0) {
             setStep('welcome');
             setPlanningMode(initialPlanningMode ?? null);
             setCreatedChildren([]);
@@ -151,7 +182,11 @@ export default function OnboardingModal({
           setPlanningMode(data.default_planning_mode);
           setCreatedChildren([]);
         } else {
-          setStep('complete');
+          let schoolYearDone = false;
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            schoolYearDone = localStorage.getItem(ONBOARDING_SCHOOL_YEAR_DONE_KEY) === '1';
+          }
+          setStep(schoolYearDone ? 'complete' : 'school_year');
           setPlanningMode(data.default_planning_mode ?? null);
           try {
             const membersRes = await getFamilyMembers();
@@ -173,8 +208,9 @@ export default function OnboardingModal({
 
   const goBack = () => {
     setError(null);
-    const idx = STEPS.indexOf(step);
-    if (idx > 0) transitionToStep(STEPS[idx - 1]);
+    const steps = getStepsForWho(onboardingWho);
+    const idx = steps.indexOf(step);
+    if (idx > 0) transitionToStep(steps[idx - 1]);
   };
 
   const persistParentProfile = async ({ displayName, avatarKey }) => {
@@ -191,7 +227,7 @@ export default function OnboardingModal({
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshProfile'));
       }
-      transitionToStep('learning_context');
+      transitionToStep('add_child');
     } catch (e) {
       setError(e?.message ?? 'Failed to save your profile.');
     } finally {
@@ -202,7 +238,8 @@ export default function OnboardingModal({
   const persistPlanningMode = () => {
     if (!planningMode) return;
     setError(null);
-    transitionToStep('add_child');
+    const nextStep = onboardingWho === 'student' ? 'add_child' : 'parent_profile';
+    transitionToStep(nextStep);
     (async () => {
       try {
         const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
@@ -304,7 +341,7 @@ export default function OnboardingModal({
     setError(null);
     const pendingId = `pending-child-${Date.now()}`;
     setCreatedChildren((prev) => [...prev, { id: pendingId, name: childPayload.name }]);
-    transitionToStep('complete');
+    transitionToStep('school_year');
     (async () => {
       try {
         await addOneChild(childPayload, pendingId);
@@ -343,6 +380,14 @@ export default function OnboardingModal({
 
   const goToCompleteStep = () => {
     setError(null);
+    transitionToStep('school_year');
+  };
+
+  const finishSchoolYearSetup = () => {
+    setError(null);
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      localStorage.setItem(ONBOARDING_SCHOOL_YEAR_DONE_KEY, '1');
+    }
     transitionToStep('complete');
   };
 
@@ -376,6 +421,7 @@ export default function OnboardingModal({
       // Dispatch first so WebLayout can close modal immediately (avoids depending on refetch, e.g. 429)
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         localStorage.removeItem(ONBOARDING_WHO_STORAGE_KEY);
+        localStorage.removeItem(ONBOARDING_SCHOOL_YEAR_DONE_KEY);
         notifyOnboardingCompleted({
           planningMode: planningMode || null,
           familyId: fid,
@@ -410,7 +456,7 @@ export default function OnboardingModal({
                     style={[
                       styles.progressFill,
                       {
-                        width: `${((STEPS.indexOf(step) + 1) / STEPS.length) * 100}%`,
+                        width: `${getStepProgressPercent(step, onboardingWho)}%`,
                         backgroundColor: ONBOARDING_SKY,
                       },
                     ]}
@@ -467,16 +513,8 @@ export default function OnboardingModal({
                       if (Platform.OS === 'web' && typeof window !== 'undefined') {
                         localStorage.setItem(ONBOARDING_WHO_STORAGE_KEY, newWho);
                       }
-                      transitionToStep(newWho === 'parent' ? 'parent_profile' : 'learning_context');
+                      transitionToStep('learning_context');
                     }}
-                    isSaving={isSaving}
-                  />
-                </View>
-                <View style={step === 'parent_profile' ? undefined : styles.stepHidden}>
-                  <ParentProfileStep
-                    initialName={parentDisplayName}
-                    initialAvatar={parentAvatarKey}
-                    onNext={persistParentProfile}
                     isSaving={isSaving}
                   />
                 </View>
@@ -485,6 +523,14 @@ export default function OnboardingModal({
                     value={planningMode}
                     onChange={setPlanningMode}
                     onNext={persistPlanningMode}
+                    isSaving={isSaving}
+                  />
+                </View>
+                <View style={step === 'parent_profile' && onboardingWho !== 'student' ? undefined : styles.stepHidden}>
+                  <ParentProfileStep
+                    initialName={parentDisplayName}
+                    initialAvatar={parentAvatarKey}
+                    onNext={persistParentProfile}
                     isSaving={isSaving}
                   />
                 </View>
@@ -497,6 +543,14 @@ export default function OnboardingModal({
                     onContinue={goToCompleteStep}
                     isSaving={isSaving}
                     isStudentOnboarding={onboardingWho === 'student'}
+                  />
+                </View>
+                <View style={step === 'school_year' ? undefined : styles.stepHidden}>
+                  <SchoolYearSetupStep
+                    familyId={familyId}
+                    planningMode={planningMode}
+                    onNext={finishSchoolYearSetup}
+                    isSaving={isSaving}
                   />
                 </View>
                 <View style={step === 'complete' ? undefined : styles.stepHidden}>

@@ -46,6 +46,11 @@ import { getWorkspaceCapabilities, PLANNING_MODES } from '../../lib/planningMode
 import { trackEvent } from '../../lib/analytics';
 import { createModalStyles as assignmentModalStyles, ACCENT_TEXT } from '../create/shared/createModalStyles';
 import { SectionHeading } from '../create/shared/assignmentFormParts';
+import {
+  useModalStackElevation,
+  NESTED_MODAL_STACK_Z,
+  NESTED_OVER_PARENT_MODAL_Z,
+} from '../hooks/useModalStackElevation';
 
 const MUTED = 'rgba(15,23,42,0.6)';
 /** Body copy on this screen — solid black per design */
@@ -451,13 +456,15 @@ export default function PlannerSettingsContent({
   layoutVariant = 'default',
   familyApproach = null,
   featureSettings = null,
+  onboardingStep = false,
+  onOnboardingActionsReady = null,
 }) {
   const toast = useToast();
   const capabilities = useMemo(
     () => getWorkspaceCapabilities({ familyApproach, featureSettings }),
     [familyApproach, featureSettings]
   );
-  const showAttendanceSection = capabilities.showAttendance;
+  const showAttendanceSection = capabilities.showAttendance && !onboardingStep;
   const isHomeschoolMode = familyApproach === PLANNING_MODES.HOMESCHOOL_COMPLIANCE;
   const resolvedPageTitle = pageTitle || (isHomeschoolMode ? 'School Year' : 'Schedule Settings');
   const initialSnapshot = getInitialPlannerSettingsSnapshot({
@@ -466,13 +473,20 @@ export default function PlannerSettingsContent({
     initialSchoolYearLabel,
   });
   const [loading, setLoading] = useState(
-    embeddedInModal && !initialData && !initialSnapshot
+    embeddedInModal && !initialData && !initialSnapshot && !onboardingStep
   );
   const [saving, setSaving] = useState(false);
   const [savedIndicator, setSavedIndicator] = useState(false);
   const [hasPendingModalSave, setHasPendingModalSave] = useState(false);
   const [error, setError] = useState(null);
   const [showNoSubjectsForPerSubjectModal, setShowNoSubjectsForPerSubjectModal] = useState(false);
+  const noSubjectsOverlayRef = useRef(null);
+  const nestedChildModalStackZ = embeddedInModal ? NESTED_OVER_PARENT_MODAL_Z : NESTED_MODAL_STACK_Z;
+  useModalStackElevation(
+    noSubjectsOverlayRef,
+    showNoSubjectsForPerSubjectModal,
+    nestedChildModalStackZ
+  );
   const saveTimeoutRef = useRef(null);
   const persistDebounceRef = useRef(null);
   const subjectTargetSaveTimeoutRef = useRef(null);
@@ -1243,7 +1257,7 @@ export default function PlannerSettingsContent({
     // to refresh events here re-runs loadDefaults/reloadSubjectTargetsFromDb,
     // which clobbers what the user is typing (wiping the days field and snapping
     // the days/hours toggle back to "days"). Skip it for the modal.
-    if (embeddedInModal) return;
+    if (embeddedInModal || onboardingStep) return;
     const scheduleReload = () => {
       if (subjectTargetsExternalReloadTimerRef.current) {
         clearTimeout(subjectTargetsExternalReloadTimerRef.current);
@@ -1269,7 +1283,7 @@ export default function PlannerSettingsContent({
         clearTimeout(subjectTargetsExternalReloadTimerRef.current);
       }
     };
-  }, [familyId, reloadSubjectTargetsFromDb, loadDefaults, embeddedInModal, snapshotCacheKey]);
+  }, [familyId, reloadSubjectTargetsFromDb, loadDefaults, embeddedInModal, onboardingStep, snapshotCacheKey]);
 
   useEffect(() => {
     if (initialData) return; // Use preloaded data from FamilyPanel, skip fetch
@@ -1439,8 +1453,8 @@ export default function PlannerSettingsContent({
   );
 
   const queuePersist = useCallback((delayMs = 300) => {
-    if (embeddedInModal) {
-      setHasPendingModalSave(true);
+    if (embeddedInModal || onboardingStep) {
+      if (embeddedInModal) setHasPendingModalSave(true);
       return;
     }
     if (persistDebounceRef.current) clearTimeout(persistDebounceRef.current);
@@ -1448,7 +1462,7 @@ export default function PlannerSettingsContent({
       persistDebounceRef.current = null;
       persist({}, { silent: true });
     }, delayMs);
-  }, [embeddedInModal, persist]);
+  }, [embeddedInModal, onboardingStep, persist]);
 
   const getSelectedYearModeAndRisk = useCallback(async () => {
     const schoolYearStart = `${selectedYearMeta.start}-01-01`;
@@ -1538,7 +1552,7 @@ export default function PlannerSettingsContent({
     };
   }, [attendanceTrackingMode, familyId, selectedYearMeta.end, selectedYearMeta.start]);
 
-  const handleAttendanceTrackingModeChange = useCallback(async (mode) => {
+  const handleAttendanceTrackingModeChange = useCallback((mode) => {
     if (readOnly) {
       toast.push('Your family admin has disabled changing school year settings.', 'error');
       return;
@@ -1552,85 +1566,93 @@ export default function PlannerSettingsContent({
       return;
     }
 
-    let risk = null;
-    try {
-      risk = await getSelectedYearModeAndRisk();
-    } catch (_) {
-      risk = null;
-    }
-    trackEvent('attendance_mode_switch_confirmed', {
-      from_mode: previousMode,
-      to_mode: normalizedMode,
-      academic_year_id: risk?.academicYearId || null,
-      is_data_rich: risk?.is_data_rich === true,
-      confirmed: true,
-    });
-    try {
-      const schoolYearStart = `${selectedYearMeta.start}-01-01`;
-      const schoolYearEnd = `${selectedYearMeta.end}-12-31`;
-      const { data: updatedRows, error: yearSaveErr } = await supabase
-        .from('academic_years')
-        .update({ attendance_tracking_mode: normalizedMode })
-        .eq('family_id', familyId)
-        .gte('start_date', schoolYearStart)
-        .lte('start_date', schoolYearEnd)
-        .select('id');
-      if (yearSaveErr) throw yearSaveErr;
-      if (!Array.isArray(updatedRows) || updatedRows.length === 0) {
-        if (normalizedMode === ATTENDANCE_MODES.SUBJECT) {
-          setShowNoSubjectsForPerSubjectModal(true);
-          return;
+    const previousScope = targetScope;
+    const resolvedScope = resolveTargetScopeForAttendanceMode(normalizedMode);
+
+    setAttendanceTrackingMode(normalizedMode);
+    setTargetScope(resolvedScope);
+
+    void (async () => {
+      try {
+        const schoolYearStart = `${selectedYearMeta.start}-01-01`;
+        const schoolYearEnd = `${selectedYearMeta.end}-12-31`;
+        const { data: updatedRows, error: yearSaveErr } = await supabase
+          .from('academic_years')
+          .update({ attendance_tracking_mode: normalizedMode })
+          .eq('family_id', familyId)
+          .gte('start_date', schoolYearStart)
+          .lte('start_date', schoolYearEnd)
+          .select('id');
+        if (yearSaveErr) throw yearSaveErr;
+        if (!Array.isArray(updatedRows) || updatedRows.length === 0) {
+          if (normalizedMode === ATTENDANCE_MODES.SUBJECT) {
+            setShowNoSubjectsForPerSubjectModal(true);
+            setAttendanceTrackingMode(previousMode);
+            setTargetScope(previousScope);
+            return;
+          }
+          throw new Error('No academic year found for the selected school year. Create or load that year before changing attendance mode.');
         }
-        throw new Error('No academic year found for the selected school year. Create or load that year before changing attendance mode.');
-      }
 
-      const resolvedScope = resolveTargetScopeForAttendanceMode(normalizedMode);
-      trackEvent('manual_attendance_mode_change', {
-        selectedSchoolYearLabel,
-        normalizedMode,
-        resolvedScope,
-        embeddedInModal,
-        lockedSchoolYearLabel: normalizedLockedSchoolYearLabel || null,
-      });
-      setAttendanceTrackingMode(normalizedMode);
-      setTargetScope(resolvedScope);
+        trackEvent('manual_attendance_mode_change', {
+          selectedSchoolYearLabel,
+          normalizedMode,
+          resolvedScope,
+          embeddedInModal,
+          lockedSchoolYearLabel: normalizedLockedSchoolYearLabel || null,
+        });
 
-      const { error: compatSyncError } = await saveFamilyPlannerSettings(
-        familyId,
-        {
-          attendance_tracking_mode: normalizedMode,
-          target_scope: resolvedScope,
-        },
-        selectedSchoolYearLabel
-      );
-      if (compatSyncError) {
-        // Compatibility sync should not block the user once the source-of-truth write succeeds.
-        // eslint-disable-next-line no-console
-        console.warn('[PlannerSettingsCompat] attendance_tracking_mode sync failed', compatSyncError);
-      }
-
-      trackEvent('attendance_mode_selected', {
-        mode: normalizedMode,
-        academic_year_id: risk?.academicYearId || null,
-        source: 'planner_settings',
-      });
-      showSaved();
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('attendanceModeChanged', {
-          detail: {
-            mode: normalizedMode,
-            schoolYearLabel: selectedSchoolYearLabel || null,
+        const { error: compatSyncError } = await saveFamilyPlannerSettings(
+          familyId,
+          {
+            attendance_tracking_mode: normalizedMode,
+            target_scope: resolvedScope,
           },
-        }));
-        window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
-        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
-        window.dispatchEvent(new CustomEvent('refreshCalendar'));
+          selectedSchoolYearLabel
+        );
+        if (compatSyncError) {
+          // Compatibility sync should not block the user once the source-of-truth write succeeds.
+          // eslint-disable-next-line no-console
+          console.warn('[PlannerSettingsCompat] attendance_tracking_mode sync failed', compatSyncError);
+        }
+
+        void getSelectedYearModeAndRisk()
+          .then((risk) => {
+            trackEvent('attendance_mode_switch_confirmed', {
+              from_mode: previousMode,
+              to_mode: normalizedMode,
+              academic_year_id: risk?.academicYearId || null,
+              is_data_rich: risk?.is_data_rich === true,
+              confirmed: true,
+            });
+            trackEvent('attendance_mode_selected', {
+              mode: normalizedMode,
+              academic_year_id: risk?.academicYearId || null,
+              source: 'planner_settings',
+            });
+          })
+          .catch(() => {});
+
+        showSaved();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('attendanceModeChanged', {
+            detail: {
+              mode: normalizedMode,
+              schoolYearLabel: selectedSchoolYearLabel || null,
+            },
+          }));
+          window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+          window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+          window.dispatchEvent(new CustomEvent('refreshCalendar'));
+        }
+      } catch (err) {
+        setAttendanceTrackingMode(previousMode);
+        setTargetScope(previousScope);
+        toast.push(err?.message || 'Failed to save attendance mode', 'error');
       }
-    } catch (err) {
-      toast.push(err?.message || 'Failed to save attendance mode', 'error');
-    }
-  }, [attendanceTrackingMode, familyId, getSelectedYearModeAndRisk, readOnly, selectedSchoolYearLabel, selectedYearMeta.end, selectedYearMeta.start, toast, visibleSubjects]);
+    })();
+  }, [attendanceTrackingMode, targetScope, familyId, getSelectedYearModeAndRisk, readOnly, selectedSchoolYearLabel, selectedYearMeta.end, selectedYearMeta.start, toast, visibleSubjects]);
 
   const handleGoalChange = (mode) => {
     if (mode === 'days' && parsePositiveIntOrNull(stateRef.current?.targetDays) == null) {
@@ -1867,12 +1889,29 @@ export default function PlannerSettingsContent({
     if (ok) onRequestClose?.();
   }, [persist, onRequestClose, readOnly]);
 
+  const handleOnboardingSave = useCallback(async () => {
+    if (readOnly) return false;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return persist({});
+  }, [persist, readOnly]);
+
   const handleRequestClose = handleDiscardAndClose;
   const lastEmbeddedFooterStateRef = useRef({ saving: null, readOnly: null });
   const handleModalSaveRef = useRef(handleModalSave);
   const handleDiscardAndCloseRef = useRef(handleDiscardAndClose);
+  const handleOnboardingSaveRef = useRef(handleOnboardingSave);
   handleModalSaveRef.current = handleModalSave;
   handleDiscardAndCloseRef.current = handleDiscardAndClose;
+  handleOnboardingSaveRef.current = handleOnboardingSave;
+
+  useEffect(() => {
+    if (!onboardingStep || typeof onOnboardingActionsReady !== 'function') return undefined;
+    onOnboardingActionsReady({
+      handleSave: (...args) => handleOnboardingSaveRef.current?.(...args),
+      saving,
+    });
+    return undefined;
+  }, [onboardingStep, onOnboardingActionsReady, saving]);
 
   useEffect(() => {
     if (!(embeddedInModal && hideEmbeddedHeader) || typeof onEmbeddedModalActionsReady !== 'function') return undefined;
@@ -1907,7 +1946,7 @@ export default function PlannerSettingsContent({
   }, [embeddedInModal, handleRequestClose]);
 
   const useTwoColumnModalLayout =
-    (embeddedInModal && hideEmbeddedHeader);
+    (embeddedInModal && hideEmbeddedHeader && !onboardingStep);
 
   const usePlainSettingsSections =
     layoutVariant === 'settings' && !embeddedInModal;
@@ -2288,8 +2327,40 @@ export default function PlannerSettingsContent({
     onSchoolYearChange?.(normalized);
   }, [readOnly, selectedSchoolYearLabel, onSchoolYearChange]);
 
-  const fieldWrapStyle = useTwoColumnModalLayout ? assignmentModalStyles.formGroup : formFieldStyle;
-  const modalFieldLabelStyle = useTwoColumnModalLayout ? assignmentModalStyles.fieldLabel : formFieldLabelStyle;
+  const onboardingSubLabelStyle = {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#6B7280',
+    marginBottom: 6,
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+  };
+  const onboardingSelectTriggerStyle = {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  };
+
+  const fieldWrapStyle = onboardingStep
+    ? { width: '100%', marginBottom: 20 }
+    : useTwoColumnModalLayout ? assignmentModalStyles.formGroup : formFieldStyle;
+  const modalFieldLabelStyle = onboardingStep
+    ? {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#374151',
+        marginBottom: 8,
+        textAlign: 'left',
+        ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+      }
+    : useTwoColumnModalLayout ? assignmentModalStyles.fieldLabel : formFieldLabelStyle;
   const modalFormStackStyle = useTwoColumnModalLayout ? { width: '100%' } : formStackStyle;
   const modalCompactDateWidth = Platform.OS === 'web' ? 148 : 140;
   const modalCompactTimeWidth = Platform.OS === 'web' ? 120 : 116;
@@ -2478,6 +2549,52 @@ export default function PlannerSettingsContent({
   });
 
   const renderDateRangeField = (label, startValue, onStartChange, endValue, onEndChange) => {
+    if (onboardingStep) {
+      return (
+        <View style={fieldWrapStyle}>
+          <Text style={modalFieldLabelStyle}>{label}</Text>
+          <Text style={onboardingSubLabelStyle}>Start date</Text>
+          <PlannerPreferenceDateField
+            value={startValue}
+            onChange={onStartChange}
+            placeholder="Start"
+            borderColor="#e5e7eb"
+            textColor={TEXT_BLACK}
+            mutedColor="rgba(15,23,42,0.4)"
+            style={{
+              borderWidth: 1,
+              borderColor: '#E5E7EB',
+              borderRadius: 10,
+              backgroundColor: '#FFFFFF',
+              paddingVertical: 12,
+              paddingHorizontal: 14,
+              marginBottom: 12,
+            }}
+            minDate={yearRangeMinYmd}
+            maxDate={yearRangeMaxYmd}
+          />
+          <Text style={onboardingSubLabelStyle}>End date</Text>
+          <PlannerPreferenceDateField
+            value={endValue}
+            onChange={onEndChange}
+            placeholder="End"
+            borderColor="#e5e7eb"
+            textColor={TEXT_BLACK}
+            mutedColor="rgba(15,23,42,0.4)"
+            style={{
+              borderWidth: 1,
+              borderColor: '#E5E7EB',
+              borderRadius: 10,
+              backgroundColor: '#FFFFFF',
+              paddingVertical: 12,
+              paddingHorizontal: 14,
+            }}
+            minDate={yearRangeMinYmd}
+            maxDate={yearRangeMaxYmd}
+          />
+        </View>
+      );
+    }
     if (useTwoColumnModalLayout) {
       return (
         <View style={fieldWrapStyle}>
@@ -2555,12 +2672,12 @@ export default function PlannerSettingsContent({
 
   const learningDaysForm = (
     <View style={modalFormStackStyle}>
-      {embeddedInModal && !readOnly ? (
+      {(embeddedInModal || onboardingStep) && !readOnly ? (
         <View style={fieldWrapStyle}>
           <Text style={modalFieldLabelStyle}>School year</Text>
           <TouchableOpacity
             ref={embeddedSchoolYearTriggerRef}
-            style={modalSelectTriggerStyle}
+            style={onboardingStep ? onboardingSelectTriggerStyle : modalSelectTriggerStyle}
             onPress={() => setShowEmbeddedSchoolYearDropdown((open) => !open)}
             activeOpacity={0.85}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -2654,6 +2771,26 @@ export default function PlannerSettingsContent({
             ? `${SCHOOL_YEAR_SETTINGS_UI.sections.defaultLearningHours} start/end`
             : SCHOOL_YEAR_SETTINGS_UI.sections.defaultLearningHours}
         </Text>
+        {onboardingStep ? (
+          <>
+            <Text style={onboardingSubLabelStyle}>Start time</Text>
+            <MaskedTimeInput
+              wrapStyle={{ width: '100%', marginBottom: 12 }}
+              value={learningStartTime}
+              onChangeText={setLearningStartTime}
+              onBlur={(nextValue) => persistLearningTimes(nextValue, learningEndTime)}
+              placeholder="8:00 AM"
+            />
+            <Text style={onboardingSubLabelStyle}>End time</Text>
+            <MaskedTimeInput
+              wrapStyle={{ width: '100%' }}
+              value={learningEndTime}
+              onChangeText={setLearningEndTime}
+              onBlur={(nextValue) => persistLearningTimes(learningStartTime, nextValue)}
+              placeholder="3:00 PM"
+            />
+          </>
+        ) : (
         <View style={modalDateTimeRowStyle}>
           <View style={modalTimeColumnStyle}>
             {!useTwoColumnModalLayout ? (
@@ -2680,6 +2817,7 @@ export default function PlannerSettingsContent({
             />
           </View>
         </View>
+        )}
       </View>
       <View style={fieldWrapStyle}>
         <View style={{
@@ -2694,7 +2832,19 @@ export default function PlannerSettingsContent({
           {!readOnly ? (
             <TouchableOpacity
               onPress={() => openAddDayOffModal()}
-              style={[assignmentModalStyles.dropdownOption, assignmentModalStyles.addNewButton]}
+              style={onboardingStep ? {
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: '#E5E7EB',
+                backgroundColor: '#FFFFFF',
+                alignSelf: 'flex-start',
+                ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+              } : [assignmentModalStyles.dropdownOption, assignmentModalStyles.addNewButton]}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
               <Plus size={14} color={ACCENT_TEXT} />
@@ -2933,7 +3083,11 @@ export default function PlannerSettingsContent({
     </View>
   );
 
-  const settingsSections = useTwoColumnModalLayout ? (
+  const settingsSections = onboardingStep ? (
+    <View style={{ width: '100%' }}>
+      {learningDaysForm}
+    </View>
+  ) : useTwoColumnModalLayout ? (
     <View style={assignmentModalStyles.schoolYearSettingsFormRow}>
       <View style={assignmentModalStyles.schoolYearSettingsFormColumnMain}>
         <View style={assignmentModalStyles.schoolYearSettingsContentPanel}>
@@ -3367,7 +3521,7 @@ export default function PlannerSettingsContent({
           animationType="fade"
           onRequestClose={() => setShowNoSubjectsForPerSubjectModal(false)}
         >
-          <View style={comingSoonModalStyles.overlay}>
+          <View ref={noSubjectsOverlayRef} style={comingSoonModalStyles.overlay}>
             <View style={comingSoonModalStyles.content}>
               <TouchableOpacity
                 style={comingSoonModalStyles.close}
@@ -3404,6 +3558,27 @@ export default function PlannerSettingsContent({
         />
       </View>
   );
+
+  if (onboardingStep) {
+    return (
+      <View style={{ width: '100%' }}>
+        {settingsSections}
+        {error ? (
+          <Text style={{ color: '#DC2626', fontSize: 14, marginTop: 12 }}>{error}</Text>
+        ) : null}
+        <DayOffCreateModal
+          visible={showDayOffModal}
+          onClose={closeDayOffModal}
+          onSaved={handleDayOffSaved}
+          onDeleted={handleDayOffDeleted}
+          familyId={familyId}
+          schoolYearLabel={selectedSchoolYearLabel}
+          defaultDate={pendingDayOffDate}
+          editRow={editingDayOffRow}
+        />
+      </View>
+    );
+  }
 
   if (useTwoColumnModalLayout && embeddedInModal) {
     // Scroll within the modal frame so tall content (e.g. lots of holidays)

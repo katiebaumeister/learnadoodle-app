@@ -97,6 +97,7 @@ import SchedulingAssistant from './planner/SchedulingAssistant';
 import PlannerSettingsPopover from './planner/PlannerSettingsPopover';
 import PlannerSmartActionsMenu from './planner/PlannerSmartActionsMenu';
 import SchoolYearSettingsModal from './settings/SchoolYearSettingsModal';
+import { NESTED_OVER_PARENT_MODAL_Z } from './hooks/useModalStackElevation';
 import { resolveSchoolYearLabelFromAnchor } from './planner/plannerYearRange';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
@@ -621,6 +622,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [onboardingModalReady, setOnboardingModalReady] = useState(false);
   const [initialOnboardingBlocked, setInitialOnboardingBlocked] = useState(false);
   const [onboardingJustCompleted, setOnboardingJustCompleted] = useState(false);
+  const [sessionLoadingBypass, setSessionLoadingBypass] = useState(false);
+  const [onboardingGateBypass, setOnboardingGateBypass] = useState(false);
   const [shellImagesReady, setShellImagesReady] = useState(Platform.OS !== 'web');
   const [homeInitialDataReady, setHomeInitialDataReady] = useState(false);
   const handleHomeInitialDataReady = useCallback(() => {
@@ -875,10 +878,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const showLoader = !!(
     user &&
     session &&
-    ((session.loading === true) ||
+    ((session.loading === true && !sessionLoadingBypass) ||
       !shellImagesReady ||
       (homeNeedsInitialData && !homeInitialDataReady && !onboardingBlocked) ||
-      (onboardingBlocked && (!onboardingUiReady || !onboardingModalReady)))
+      (onboardingBlocked && !onboardingGateBypass && (!onboardingUiReady || !onboardingModalReady)))
   );
   const showLoaderEffective = showLoader;
 
@@ -919,6 +922,36 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }, 12000);
     return () => clearTimeout(timeoutId);
   }, [homeNeedsInitialData, homeInitialDataReady]);
+
+  // Fail-safe: never block the shell forever on session restore (auth lock / slow network).
+  useEffect(() => {
+    if (!user || !session || session.loading !== true) {
+      setSessionLoadingBypass(false);
+      return undefined;
+    }
+    const timeoutId = setTimeout(() => {
+      setSessionLoadingBypass(true);
+      if (typeof console !== 'undefined') {
+        console.warn('[WebLayout] Session loading gate timed out; releasing loader fail-safe.');
+      }
+    }, 15000);
+    return () => clearTimeout(timeoutId);
+  }, [user, session?.loading]);
+
+  // Fail-safe: onboarding gate must not spin forever if status API or modal mount stalls.
+  useEffect(() => {
+    if (!onboardingBlocked) {
+      setOnboardingGateBypass(false);
+      return undefined;
+    }
+    const timeoutId = setTimeout(() => {
+      setOnboardingGateBypass(true);
+      if (typeof console !== 'undefined') {
+        console.warn('[WebLayout] Onboarding gate timed out; releasing loader fail-safe.');
+      }
+    }, 20000);
+    return () => clearTimeout(timeoutId);
+  }, [onboardingBlocked]);
 
   const [selectedCalendarChildren, setSelectedCalendarChildren] = useState(null);
   const [selectedEventTypes, setSelectedEventTypes] = useState(null);
@@ -2333,6 +2366,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       return;
     }
     let cancelled = false;
+    const timeoutId = setTimeout(() => {
+      if (cancelled) return;
+      setOnboardingCheckDone(true);
+      setInitialOnboardingBlocked(false);
+      if (typeof console !== 'undefined') {
+        console.warn('[WebLayout] Onboarding status check timed out; continuing without blocking.');
+      }
+    }, 15000);
     (async () => {
       try {
         const res = await getOnboardingStatus();
@@ -2347,7 +2388,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
   }, [authUserId, hasSession]);
 
   // Onboarding path: brief delay so modal can mount under loader. Skipped when not blocked (faster shell).
@@ -5591,6 +5635,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       {/* Add Subject Modal */}
       <AddSubjectModal
         visible={showAddSubjectModal}
+        stackZIndex={showEditSchoolYearModal ? NESTED_OVER_PARENT_MODAL_Z : undefined}
         onClose={() => {
           setShowAddSubjectModal(false);
           setAddSubjectPrefill({ schoolYear: null, schoolTerm: null, childIds: [] });

@@ -1,6 +1,12 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { CheckCircle } from 'lucide-react';
+import {
+  ONBOARDING_SKY,
+  ONBOARDING_CONTINUE_BTN,
+  ONBOARDING_CONTINUE_BTN_TEXT,
+  ONBOARDING_CONTINUE_BTN_DISABLED,
+} from '../../lib/constants/onboardingTheme';
 
 export default function CompleteStep({ onFinish, isSaving }) {
   return (
@@ -10,7 +16,7 @@ export default function CompleteStep({ onFinish, isSaving }) {
       </View>
       <Text style={styles.title}>You're all set</Text>
       <Text style={styles.subtitle}>
-        Finish setup to unlock Learnadoodle. You can add more children anytime from Family settings.
+        Finish setup to unlock Learnadoodle. You can add more children anytime in your family settings.
       </Text>
       <TouchableOpacity
         style={[styles.finishBtn, isSaving && styles.finishBtnDisabled]}
@@ -51,26 +57,14 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
   finishBtn: {
-    backgroundColor: '#85C4F2',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    alignItems: 'center',
+    ...ONBOARDING_CONTINUE_BTN,
+    backgroundColor: ONBOARDING_SKY,
     alignSelf: 'flex-end',
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
-      fontFamily: '"League Spartan", sans-serif',
-    }),
   },
   finishBtnDisabled: {
-    backgroundColor: '#9CA3AF',
-    opacity: 0.8,
+    ...ONBOARDING_CONTINUE_BTN_DISABLED,
   },
   finishBtnText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    textTransform: 'uppercase',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+    ...ONBOARDING_CONTINUE_BTN_TEXT,
   },
 });

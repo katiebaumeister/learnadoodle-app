@@ -118,7 +118,8 @@ export default function AddSubjectModal({
   initialSchoolYear = null,
   initialSchoolTerm = null,
   subject = null, // If provided, edit mode
-  children: propChildren = [] // Pre-loaded children from parent
+  children: propChildren = [], // Pre-loaded children from parent
+  stackZIndex,
 }) {
   const [subjectName, setSubjectName] = useState(defaultSubjectName || '');
   const [additionalNotes, setAdditionalNotes] = useState('');
@@ -151,7 +152,7 @@ export default function AddSubjectModal({
   const [error, setError] = useState(null);
   const toast = useToast();
   const overlayRef = useRef(null);
-  useModalStackElevation(overlayRef, visible);
+  useModalStackElevation(overlayRef, visible, stackZIndex);
   const hasSetChildIdsRef = useRef(false);
   const lastSubjectIdRef = useRef(null);
   const [showAdditionalNotesAccordion, setShowAdditionalNotesAccordion] = useState(false);

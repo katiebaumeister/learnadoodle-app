@@ -421,7 +421,7 @@ export default function CalendarEventEditModal({
               />
 
               <View style={styles.formGroup}>
-                <Text style={styles.fieldLabel}>Repeat</Text>
+                <Text style={styles.fieldLabel}>Repeat<Text style={styles.required}> *</Text></Text>
                 <View
                   style={lockRecurrence ? { opacity: 0.55 } : null}
                   pointerEvents={lockRecurrence ? 'none' : 'auto'}

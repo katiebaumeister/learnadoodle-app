@@ -2,7 +2,7 @@
  * Google Classroom–style stream card for bulletin feed items.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -95,6 +95,9 @@ export default function BulletinStreamCard({
     )
   ) : null;
 
+  const [previewHovered, setPreviewHovered] = useState(false);
+  const [cardHovered, setCardHovered] = useState(false);
+
   if (preview) {
     const lines = buildStreamPreviewDisplay(entry, { showSubjectName });
     const previewBody = (
@@ -144,11 +147,19 @@ export default function BulletinStreamCard({
     if (clickable) {
       return (
         <TouchableOpacity
-          style={[styles.previewWrap, styles.previewWrapClickable]}
+          style={[
+            styles.previewWrap,
+            styles.previewWrapClickable,
+            Platform.OS === 'web' && previewHovered && styles.previewWrapHovered,
+          ]}
           onPress={() => onPress(entry)}
           accessibilityRole="button"
           activeOpacity={0.96}
-          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          {...(Platform.OS === 'web' && {
+            cursor: 'pointer',
+            onMouseEnter: () => setPreviewHovered(true),
+            onMouseLeave: () => setPreviewHovered(false),
+          })}
         >
           {previewInner}
         </TouchableOpacity>
@@ -192,39 +203,50 @@ export default function BulletinStreamCard({
     </>
   );
 
-  return (
-    <View style={[styles.wrap, clickable && styles.wrapClickable]} {...(contextMenuHandlers || {})}>
-      <View style={[styles.card, clickable && styles.cardClickable, cardStyle]}>
-        {headerRight ? (
-          <View style={styles.cardHeaderMenu}>{headerRight}</View>
-        ) : null}
-        <View style={styles.cardTop}>
-          <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
-            <Icon size={18} color={iconColor} strokeWidth={2.25} />
+  const cardInner = (
+    <View style={[styles.card, clickable && cardHovered && styles.cardHovered, cardStyle]}>
+      {headerRight ? (
+        <View style={styles.cardHeaderMenu}>{headerRight}</View>
+      ) : null}
+      <View style={styles.cardTop}>
+        <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
+          <Icon size={18} color={iconColor} strokeWidth={2.25} />
+        </View>
+        <View style={[styles.cardMain, headerRight ? styles.cardMainWithMenu : null]}>
+          <View style={styles.labelRow}>
+            {labelWithTime(entry.label, relativeWhen)}
+            {subjectChip ? (
+              <View style={styles.labelRowTrailing}>{subjectChip}</View>
+            ) : null}
           </View>
-          <View style={[styles.cardMain, headerRight ? styles.cardMainWithMenu : null]}>
-            <View style={styles.labelRow}>
-              {labelWithTime(entry.label, relativeWhen)}
-              {subjectChip ? (
-                <View style={styles.labelRowTrailing}>{subjectChip}</View>
-              ) : null}
-            </View>
-            {clickable ? (
-              <TouchableOpacity
-                onPress={() => onPress(entry)}
-                accessibilityRole="button"
-                activeOpacity={0.92}
-                style={styles.cardPressArea}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                {cardBody}
-              </TouchableOpacity>
-            ) : (
-              cardBody
-            )}
-          </View>
+          {cardBody}
         </View>
       </View>
+    </View>
+  );
+
+  if (clickable) {
+    return (
+      <TouchableOpacity
+        style={[styles.wrap, styles.wrapClickable]}
+        onPress={() => onPress(entry)}
+        accessibilityRole="button"
+        activeOpacity={0.96}
+        {...(Platform.OS === 'web' && {
+          cursor: 'pointer',
+          onMouseEnter: () => setCardHovered(true),
+          onMouseLeave: () => setCardHovered(false),
+        })}
+        {...(contextMenuHandlers || {})}
+      >
+        {cardInner}
+      </TouchableOpacity>
+    );
+  }
+
+  return (
+    <View style={styles.wrap} {...(contextMenuHandlers || {})}>
+      {cardInner}
     </View>
   );
 }
@@ -238,10 +260,11 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'background-color 0.12s ease',
-      ':hover': {
-        backgroundColor: 'rgba(241, 245, 249, 0.92)',
-      },
     }),
+  },
+  previewWrapHovered: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
   },
   previewCard: {
     paddingVertical: 14,
@@ -358,11 +381,12 @@ const styles = StyleSheet.create({
   cardClickable: {
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
-      ':hover': {
-        borderColor: '#CBD5E1',
-        backgroundColor: 'rgba(241, 245, 249, 0.92)',
-      },
+      transition: 'border-color 0.12s ease, background-color 0.12s ease',
     }),
+  },
+  cardHovered: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#CBD5E1',
   },
   cardTop: {
     flexDirection: 'row',

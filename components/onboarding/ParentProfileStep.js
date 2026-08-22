@@ -9,7 +9,7 @@ import {
   Image,
 } from 'react-native';
 import { getChildColorFromAvatar, hexToRgba } from '../../utils/avatarColors';
-import { ONBOARDING_SKY, ONBOARDING_TEXT_PRIMARY } from '../../lib/constants/onboardingTheme';
+import { ONBOARDING_SKY, ONBOARDING_TEXT_PRIMARY, ONBOARDING_CONTINUE_BTN, ONBOARDING_CONTINUE_BTN_TEXT, ONBOARDING_CONTINUE_BTN_DISABLED, ONBOARDING_CONTINUE_BTN_HOVERED } from '../../lib/constants/onboardingTheme';
 import { AVATAR_KEYS, DEFAULT_AVATAR_KEY, onboardingProfAvatarSources, AVATAR_PICKER_CELL_SIZE, AVATAR_PICKER_IMAGE_SIZE, AVATAR_PICKER_PREVIEW_RING_SIZE, AVATAR_PICKER_PREVIEW_IMAGE_SIZE } from '../../lib/onboardingProfAvatars';
 
 const AVATAR_SIZE = AVATAR_PICKER_CELL_SIZE;
@@ -153,7 +153,7 @@ const styles = StyleSheet.create({
     height: AVATAR_PICKER_PREVIEW_IMAGE_SIZE,
   },
   previewName: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
     color: ONBOARDING_TEXT_PRIMARY,
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
@@ -215,30 +215,18 @@ const styles = StyleSheet.create({
     height: AVATAR_PICKER_IMAGE_SIZE,
   },
   continueBtn: {
+    ...ONBOARDING_CONTINUE_BTN,
     backgroundColor: ONBOARDING_SKY,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    alignItems: 'center',
     alignSelf: 'flex-end',
     marginTop: 8,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
-      fontFamily: '"League Spartan", sans-serif',
-    }),
   },
   continueBtnDisabled: {
-    backgroundColor: '#9CA3AF',
-    opacity: 0.8,
+    ...ONBOARDING_CONTINUE_BTN_DISABLED,
   },
   continueBtnHovered: {
-    backgroundColor: '#78BCEF',
+    ...ONBOARDING_CONTINUE_BTN_HOVERED,
   },
   continueBtnText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    textTransform: 'uppercase',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+    ...ONBOARDING_CONTINUE_BTN_TEXT,
   },
 });

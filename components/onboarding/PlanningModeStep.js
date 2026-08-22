@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
-import { ONBOARDING_SKY, ONBOARDING_TEXT_PRIMARY } from '../../lib/constants/onboardingTheme';
+import { ONBOARDING_SKY, ONBOARDING_TEXT_PRIMARY, ONBOARDING_CONTINUE_BTN, ONBOARDING_CONTINUE_BTN_TEXT, ONBOARDING_CONTINUE_BTN_DISABLED, ONBOARDING_CONTINUE_BTN_HOVERED } from '../../lib/constants/onboardingTheme';
 
 const WHO_OPTIONS = [
   { id: 'parent', label: 'My family (I\'m a parent)' },
@@ -224,30 +224,18 @@ const styles = StyleSheet.create({
     color: ONBOARDING_TEXT_PRIMARY,
   },
   continueBtn: {
+    ...ONBOARDING_CONTINUE_BTN,
     backgroundColor: ONBOARDING_SKY,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    alignItems: 'center',
     alignSelf: 'flex-end',
     marginTop: 28,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
-      fontFamily: '"League Spartan", sans-serif',
-    }),
   },
   continueBtnDisabled: {
-    backgroundColor: '#9CA3AF',
-    opacity: 0.8,
+    ...ONBOARDING_CONTINUE_BTN_DISABLED,
   },
   continueBtnHovered: {
-    backgroundColor: '#78BCEF',
+    ...ONBOARDING_CONTINUE_BTN_HOVERED,
   },
   continueBtnText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    textTransform: 'uppercase',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+    ...ONBOARDING_CONTINUE_BTN_TEXT,
   },
 });

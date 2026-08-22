@@ -3,6 +3,12 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Image } 
 import { BookOpen, Brain, FileText, Check, X } from 'lucide-react';
 import { getChildColorFromAvatar, hexToRgba } from '../../utils/avatarColors';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
+import {
+  ONBOARDING_SKY,
+  ONBOARDING_CONTINUE_BTN,
+  ONBOARDING_CONTINUE_BTN_TEXT,
+  ONBOARDING_CONTINUE_BTN_DISABLED,
+} from '../../lib/constants/onboardingTheme';
 
 import { AVATAR_PICKER_CELL_SIZE, AVATAR_PICKER_IMAGE_SIZE, AVATAR_PICKER_LARGE_PREVIEW_SIZE } from '../../lib/onboardingProfAvatars';
 
@@ -925,31 +931,18 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
   },
   footerPrimaryBtn: {
-    backgroundColor: '#85C4F2',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
-      cursor: 'pointer',
-    }),
+    ...ONBOARDING_CONTINUE_BTN,
+    backgroundColor: ONBOARDING_SKY,
   },
   footerPrimaryBtnDisabled: {
-    backgroundColor: '#9CA3AF',
-    opacity: 0.8,
+    ...ONBOARDING_CONTINUE_BTN_DISABLED,
     ...(Platform.OS === 'web' && {
       boxShadow: 'none',
       cursor: 'not-allowed',
     }),
   },
   footerPrimaryBtnText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", sans-serif',
-    }),
+    ...ONBOARDING_CONTINUE_BTN_TEXT,
   },
   footerPrimaryBtnTextDisabled: {
     color: 'rgba(255,255,255,0.85)',

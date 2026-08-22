@@ -938,7 +938,7 @@ export default function BulletinBoardSection({
   }, [familyId]);
 
   useEffect(() => {
-    if (!usePreviewFeed || Platform.OS !== 'web') {
+    if (Platform.OS !== 'web') {
       setShowClickHint(false);
       return;
     }
@@ -948,7 +948,7 @@ export default function BulletinBoardSection({
       return;
     }
     setShowClickHint(!hasSeenBulletinClickHint(userKey));
-  }, [usePreviewFeed, currentUserId]);
+  }, [currentUserId]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
@@ -1076,7 +1076,6 @@ export default function BulletinBoardSection({
   }, [currentUserId]);
 
   const handleStreamCardPress = useCallback((entry) => {
-    if (usePreviewFeed) dismissClickHint();
     if (entry.kind === 'activity' && entry.payload) {
       if (onAssignmentActivityPress) {
         onAssignmentActivityPress(entry.payload);
@@ -1085,10 +1084,11 @@ export default function BulletinBoardSection({
       openBulletinActivityItem(entry.payload);
       return;
     }
-    if (entry.kind === 'post' && usePreviewFeed) {
+    if (entry.kind === 'post') {
+      dismissClickHint();
       setDetailEntry(entry);
     }
-  }, [onAssignmentActivityPress, usePreviewFeed, dismissClickHint]);
+  }, [onAssignmentActivityPress, dismissClickHint]);
 
   const openEditAssignmentFromActivity = useCallback(async (activityItem) => {
     if (!activityItem?.assignmentId) return;
@@ -1558,7 +1558,7 @@ export default function BulletinBoardSection({
               </TouchableOpacity>
             ) : null}
           </View>
-          {showClickHint && usePreviewFeed && feedTitle && mergedStreamItems.length > 0 ? (
+          {showClickHint && feedTitle && mergedStreamItems.length > 0 ? (
             <Text style={styles.feedClickHint}>Click a post to open it.</Text>
           ) : null}
         </View>
@@ -1642,11 +1642,7 @@ export default function BulletinBoardSection({
                       entry={entry}
                       preview={usePreviewFeed}
                       showSubjectName={!filterSubjectId}
-                      onPress={
-                        entry.kind === 'activity' || usePreviewFeed
-                          ? handleStreamCardPress
-                          : undefined
-                      }
+                      onPress={handleStreamCardPress}
                       onSubjectPress={onSubjectPress}
                     />
                   );
@@ -1659,11 +1655,7 @@ export default function BulletinBoardSection({
                       post={post}
                       preview={usePreviewFeed}
                       showSubjectName={!filterSubjectId}
-                      onPress={
-                        entry.kind === 'activity' || usePreviewFeed
-                          ? handleStreamCardPress
-                          : undefined
-                      }
+                      onPress={handleStreamCardPress}
                       onSubjectPress={onSubjectPress}
                       onEdit={openEditPost}
                       onDelete={setPendingDeletePost}
@@ -1691,11 +1683,7 @@ export default function BulletinBoardSection({
                     entry={entry}
                     preview={usePreviewFeed}
                     showSubjectName={!filterSubjectId}
-                    onPress={
-                      entry.kind === 'activity' || usePreviewFeed
-                        ? handleStreamCardPress
-                        : undefined
-                    }
+                    onPress={handleStreamCardPress}
                     onSubjectPress={onSubjectPress}
                   />
                 );

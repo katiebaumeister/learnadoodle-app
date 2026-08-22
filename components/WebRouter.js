@@ -33,6 +33,23 @@ function WebRouterContent() {
   const [currentPath, setCurrentPath] = useState(getPath);
   const [isPasswordResetFlow, setIsPasswordResetFlow] = useState(false);
   const [resetFlowStartTime, setResetFlowStartTime] = useState(null);
+  const [authLoadingBypass, setAuthLoadingBypass] = useState(false);
+
+  useEffect(() => {
+    if (!authLoading) {
+      setAuthLoadingBypass(false);
+      return undefined;
+    }
+    const timeoutId = setTimeout(() => {
+      setAuthLoadingBypass(true);
+      if (typeof console !== 'undefined') {
+        console.warn('[WebRouter] Auth restore timed out; continuing without blocking.');
+      }
+    }, 15000);
+    return () => clearTimeout(timeoutId);
+  }, [authLoading]);
+
+  const authLoadingEffective = authLoading && !authLoadingBypass;
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -260,7 +277,7 @@ function WebRouterContent() {
 
     // If no user, redirect to login (they need to be authenticated)
     if (!user) {
-      if (authLoading) return <AppLoader spinnerOnly />;
+      if (authLoadingEffective) return <AppLoader spinnerOnly />;
       return <WebAuthScreen />;
     }
 
@@ -443,7 +460,7 @@ function WebRouterContent() {
   // If no user, show appropriate auth screen based on route
   if (!user) {
     // Session still restoring — never paint landing (avoids flash before WebLayout for logged-in users)
-    if (authLoading) {
+    if (authLoadingEffective) {
       return <AppLoader spinnerOnly />;
     }
     if (currentPath === '/reset-password') {

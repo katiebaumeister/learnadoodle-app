@@ -1,11 +1,14 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { auth } from '../lib/supabase'
+import { promiseWithTimeout } from '../lib/promiseWithTimeout'
+
+const AUTH_BOOT_TIMEOUT_MS = 12000;
 
 const AuthContext = createContext({})
 
 const getGoogleAuthRedirectTo = () => {
   if (typeof window === 'undefined') return undefined
-  return `${window.location.origin}/home`
+  return `${window.location.origin}/`
 }
 
 export const useAuth = () => {
@@ -87,7 +90,7 @@ export const AuthProvider = ({ children }) => {
         const shouldRouteToHome = !hasInvite && (pathname === '/' || pathname === '/login' || pathname === '/signup');
 
         if (shouldRouteToHome) {
-          const nextUrl = new URL(`${url.origin}/home`);
+          const nextUrl = new URL(`${url.origin}/`);
           window.history.replaceState({}, '', nextUrl.toString());
           window.dispatchEvent(new PopStateEvent('popstate'));
           return true;
@@ -151,7 +154,12 @@ export const AuthProvider = ({ children }) => {
         const handledOAuth = await handleOAuthCallback();
         if (handledOAuth) return;
 
-        const { data: { session }, error } = await auth.getCurrentSession();
+        const sessionResult = await promiseWithTimeout(
+          auth.getCurrentSession(),
+          AUTH_BOOT_TIMEOUT_MS,
+          'auth.getCurrentSession'
+        );
+        const { data: { session }, error } = sessionResult ?? { data: { session: null } };
         
         if (error) {
           throw error;

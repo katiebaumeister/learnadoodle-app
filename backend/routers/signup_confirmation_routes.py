@@ -16,6 +16,18 @@ class SignupConfirmationRecordIn(BaseModel):
 
 class SignupConfirmationSentOut(BaseModel):
     sent_at: str | None
+    account_exists: bool = False
+    email_confirmed: bool = False
+
+
+def _parse_auth_user_status(data) -> tuple[bool, bool]:
+    """Parse auth_user_status_by_email RPC result into (exists, email_confirmed)."""
+    if isinstance(data, dict):
+        return bool(data.get("exists")), bool(data.get("email_confirmed"))
+    if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+        row = data[0]
+        return bool(row.get("exists")), bool(row.get("email_confirmed"))
+    return False, False
 
 
 @router.get("/signup-confirmation-sent", response_model=SignupConfirmationSentOut)
@@ -32,17 +44,22 @@ async def get_signup_confirmation_sent(
         # Only show "confirmation sent" if there is still a user in Auth for this email (pending or confirmed).
         # If the user was deleted (e.g. manual delete in Supabase), treat as fresh so they can sign up again.
         user_exists = False
+        email_confirmed = False
         try:
-            exists_res = supabase.rpc("auth_user_exists_by_email", {"p_email": email.strip()}).execute()
-            if exists_res.data is True:
-                user_exists = True
-            elif isinstance(exists_res.data, list) and len(exists_res.data) > 0:
-                user_exists = exists_res.data[0] is True or exists_res.data[0] == "true"
-            elif getattr(exists_res, "data", None) in (True, "true"):
-                user_exists = True
+            status_res = supabase.rpc("auth_user_status_by_email", {"p_email": email.strip()}).execute()
+            user_exists, email_confirmed = _parse_auth_user_status(status_res.data)
         except Exception:
-            # RPC missing or failed: treat as fresh (don't show stale "confirmation sent")
-            user_exists = False
+            # Fallback for environments without the newer RPC.
+            try:
+                exists_res = supabase.rpc("auth_user_exists_by_email", {"p_email": email.strip()}).execute()
+                if exists_res.data is True:
+                    user_exists = True
+                elif isinstance(exists_res.data, list) and len(exists_res.data) > 0:
+                    user_exists = exists_res.data[0] is True or exists_res.data[0] == "true"
+                elif getattr(exists_res, "data", None) in (True, "true"):
+                    user_exists = True
+            except Exception:
+                user_exists = False
         if not user_exists:
             # Optionally clear stale rows so future requests don't rely on RPC
             try:
@@ -52,6 +69,12 @@ async def get_signup_confirmation_sent(
             except Exception:
                 pass
             return SignupConfirmationSentOut(sent_at=None)
+        if email_confirmed:
+            return SignupConfirmationSentOut(
+                sent_at=None,
+                account_exists=True,
+                email_confirmed=True,
+            )
         res = (
             supabase.table("signup_confirmation_sent")
             .select("sent_at")
@@ -60,9 +83,12 @@ async def get_signup_confirmation_sent(
             .limit(1)
             .execute()
         )
-        if res.data and len(res.data) > 0:
-            return SignupConfirmationSentOut(sent_at=res.data[0]["sent_at"])
-        return SignupConfirmationSentOut(sent_at=None)
+        sent_at = res.data[0]["sent_at"] if res.data and len(res.data) > 0 else None
+        return SignupConfirmationSentOut(
+            sent_at=sent_at,
+            account_exists=True,
+            email_confirmed=False,
+        )
     except Exception:
         # Table missing, Supabase down, or any other failure: return empty so frontend never sees 500
         return SignupConfirmationSentOut(sent_at=None)
