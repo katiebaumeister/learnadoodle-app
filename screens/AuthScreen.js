@@ -27,6 +27,17 @@ export default function AuthScreen() {
   
   const { signIn, signUp, signInWithGoogle, resetPassword } = useAuth()
 
+  const runSignIn = async (emailValue, passwordValue) => {
+    if (typeof signIn === 'function') {
+      return signIn(emailValue, passwordValue)
+    }
+    const { auth } = await import('../lib/supabase')
+    if (!auth || typeof auth.signIn !== 'function') {
+      throw new Error('Authentication is not ready. Please refresh the page and try again.')
+    }
+    return auth.signIn(emailValue, passwordValue)
+  }
+
   const isExistingEmailError = (msg) => {
     if (!msg || typeof msg !== 'string') return false
     const lower = msg.toLowerCase()
@@ -90,7 +101,7 @@ export default function AuthScreen() {
     try {
       const { data, error } = isSignUp 
         ? await signUp(email, password)
-        : await signIn(email, password)
+        : await runSignIn(email, password)
 
       if (error) {
         if (isSignUp && isExistingEmailError(error.message)) {

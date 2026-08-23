@@ -81,6 +81,18 @@ export default function WebAuthScreen() {
 
   const { signIn, signUp, signInWithGoogle, resetPassword } = useAuth();
 
+  const runSignIn = async (emailValue, passwordValue) => {
+    if (typeof signIn === 'function') {
+      return signIn(emailValue, passwordValue);
+    }
+    // Fallback if auth context failed to hydrate (HMR / circular import).
+    const { auth } = await import('../lib/supabase');
+    if (!auth || typeof auth.signIn !== 'function') {
+      throw new Error('Authentication is not ready. Please refresh the page and try again.');
+    }
+    return auth.signIn(emailValue, passwordValue);
+  };
+
   const isExistingEmailError = (msg) => {
     if (!msg || typeof msg !== 'string') return false;
     const lower = msg.toLowerCase();
@@ -398,7 +410,7 @@ export default function WebAuthScreen() {
     setEmailAuthLoading(true);
 
     try {
-      const { data, error } = await signIn(email, password);
+      const { data, error } = await runSignIn(email, password);
 
       if (error) {
         setErrorMessage(mapSignInError(error));

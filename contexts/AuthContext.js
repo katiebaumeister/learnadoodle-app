@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react'
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react'
 import { auth } from '../lib/supabase'
 import { promiseWithTimeout } from '../lib/promiseWithTimeout'
 
@@ -9,6 +9,19 @@ const AuthContext = createContext({})
 const getGoogleAuthRedirectTo = () => {
   if (typeof window === 'undefined') return undefined
   return `${window.location.origin}/`
+}
+
+function recordSignedInActivity(session) {
+  // Dynamic import avoids circular deps that can leave useAuth() without signIn.
+  import('../lib/services/activityEventsClient')
+    .then(({ logUserActivityEvent }) =>
+      logUserActivityEvent(
+        'user_signed_in',
+        { provider: session?.user?.app_metadata?.provider || 'email' },
+        'auth',
+      )
+    )
+    .catch(() => {})
 }
 
 export const useAuth = () => {
@@ -200,6 +213,10 @@ export const AuthProvider = ({ children }) => {
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
+
+        if (event === 'SIGNED_IN' && session?.user?.id) {
+          recordSignedInActivity(session);
+        }
       }
     );
 
@@ -210,7 +227,7 @@ export const AuthProvider = ({ children }) => {
     };
   }, []);
 
-  const signUp = async (email, password, options = {}) => {
+  const signUp = useCallback(async (email, password, options = {}) => {
     try {
       const siteUrl = typeof window !== 'undefined'
         ? (process.env.REACT_APP_SITE_URL || process.env.EXPO_PUBLIC_SITE_URL || window.location.origin)
@@ -223,19 +240,22 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       return { data: null, error }
     }
-  }
+  }, [])
 
-  const signIn = async (email, password) => {
+  const signIn = useCallback(async (email, password) => {
     try {
+      if (!auth || typeof auth.signIn !== 'function') {
+        throw new Error('Authentication is not ready. Please refresh the page and try again.')
+      }
       const { data, error } = await auth.signIn(email, password)
       if (error) throw error
       return { data, error: null }
     } catch (error) {
       return { data: null, error }
     }
-  }
+  }, [])
 
-  const signInWithGoogle = async (options = {}) => {
+  const signInWithGoogle = useCallback(async (options = {}) => {
     try {
       const redirectTo = options.redirectTo || getGoogleAuthRedirectTo()
       const { data, error } = await auth.signInWithGoogle({ redirectTo })
@@ -244,9 +264,9 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       return { data: null, error }
     }
-  }
+  }, [])
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     const goHome = () => {
       if (typeof window !== 'undefined') {
         window.location.href = '/'
@@ -278,10 +298,10 @@ export const AuthProvider = ({ children }) => {
       } catch (_) {}
       return { error }
     }
-  }
+  }, [])
 
   /** After account deletion the Auth user is gone; server signOut returns 403. Clear storage only. */
-  const signOutLocal = async () => {
+  const signOutLocal = useCallback(async () => {
     try {
       await auth.signOutLocal()
     } catch (_) {}
@@ -291,9 +311,9 @@ export const AuthProvider = ({ children }) => {
       window.location.href = '/'
     }
     return { error: null }
-  }
+  }, [])
 
-  const resetPassword = async (email, options = {}) => {
+  const resetPassword = useCallback(async (email, options = {}) => {
     try {
       const { data, error } = await auth.resetPassword(email, options)
       if (error) throw error
@@ -301,9 +321,9 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       return { data: null, error }
     }
-  }
+  }, [])
 
-  const value = {
+  const value = useMemo(() => ({
     user,
     session,
     loading,
@@ -313,7 +333,17 @@ export const AuthProvider = ({ children }) => {
     signOut,
     signOutLocal,
     resetPassword,
-  }
+  }), [
+    user,
+    session,
+    loading,
+    signUp,
+    signIn,
+    signInWithGoogle,
+    signOut,
+    signOutLocal,
+    resetPassword,
+  ])
 
   return (
     <AuthContext.Provider value={value}>

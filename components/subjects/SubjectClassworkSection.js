@@ -900,7 +900,7 @@ function ClassworkPanelHeader({
   onUnitsAction,
   showUnitsAction = false,
   showCreateFromMaterialAction = false,
-  createFromMaterialActionLabel = 'Create from material',
+  createFromMaterialActionLabel = 'Build from material',
   onCreateFromMaterialAction = null,
   showScheduleAllAction = false,
   scheduleAllActionLabel = 'Schedule all lessons',
@@ -1137,7 +1137,7 @@ function CreateFromMaterialComingSoonModal({ visible, onClose }) {
           </TouchableOpacity>
           <Text style={comingSoonModalStyles.title}>Coming soon</Text>
           <Text style={comingSoonModalStyles.body}>
-            Create from material is in development. Stay tuned for updates!
+            Build from material is in development. Stay tuned for updates!
           </Text>
           <TouchableOpacity
             style={comingSoonModalStyles.button}
