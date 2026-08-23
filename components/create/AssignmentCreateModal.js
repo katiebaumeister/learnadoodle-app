@@ -17,7 +17,14 @@ import AssignmentReleaseDateModal from './assignment/AssignmentReleaseDateModal'
 import StudentResponseSection from './assignment/StudentResponseSection';
 import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
+import EditSubjectUnitsModal from '../subjects/EditSubjectUnitsModal';
 import { nestedAddMaterialModalProps } from './shared/nestedAddMaterialModalProps';
+import { NESTED_OVER_PARENT_MODAL_Z } from '../hooks/useModalStackElevation';
+import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
+import {
+  curriculumStructureHasContent,
+  draftFromCurriculumStructure,
+} from '../../lib/subjectUnitsEditorDraft';
 import { createModalStyles as styles, PLACEHOLDER, CREATE_ASSIGNMENT_MODAL_MAX_WIDTH } from './shared/createModalStyles';
 import { useFamilySubjects } from './shared/useSubjectsForAssignees';
 import { saveAssignment } from '../../lib/create/saveEventHelpers';
@@ -82,6 +89,7 @@ export default function AssignmentCreateModal({
   const [rubricId, setRubricId] = useState(null);
   const [datePickerTarget, setDatePickerTarget] = useState(null);
   const [showAddMaterial, setShowAddMaterial] = useState(false);
+  const [showUnitsEditor, setShowUnitsEditor] = useState(false);
   const [showReleaseDateModal, setShowReleaseDateModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [validationBanner, setValidationBanner] = useState('');
@@ -119,6 +127,25 @@ export default function AssignmentCreateModal({
     if (!studentResponseTypeShowsExtraEditor(workSpec?.student_response_type)) return;
     scrollContentPanelDown();
   }, [workSpec?.student_response_type, scrollContentPanelDown]);
+
+  const unitsEditorInitialDraft = useMemo(() => {
+    if (!familyId || !subjectId) return null;
+    const cached = getSubjectProgressCache(familyId, subjectId);
+    const units = Array.isArray(cached?.curriculumUnits) ? cached.curriculumUnits : [];
+    return units.length ? draftFromCurriculumStructure({ units }) : null;
+  }, [familyId, subjectId, showUnitsEditor]);
+
+  const unitsEditorHasContent = useMemo(() => {
+    if (unitsEditorInitialDraft?.units?.length) return true;
+    if (!familyId || !subjectId) return false;
+    const cached = getSubjectProgressCache(familyId, subjectId);
+    return curriculumStructureHasContent({ units: cached?.curriculumUnits || [] });
+  }, [familyId, subjectId, unitsEditorInitialDraft]);
+
+  const handleOpenUnitsEditor = useCallback(() => {
+    if (!subjectId) return;
+    setShowUnitsEditor(true);
+  }, [subjectId]);
 
   useEffect(() => {
     if (!visible) {
@@ -428,6 +455,8 @@ export default function AssignmentCreateModal({
                       setCurriculumLessonId(nextLessonId || null);
                       setLessonLabel(nextLessonLabel || '');
                     }}
+                    onAddUnitNew={subjectId ? handleOpenUnitsEditor : null}
+                    onAddLessonNew={subjectId ? handleOpenUnitsEditor : null}
                   />
 
                   <SingleDateField
@@ -496,6 +525,24 @@ export default function AssignmentCreateModal({
             }
             setShowAddMaterial(false);
           }}
+        />
+      ) : null}
+
+      {showUnitsEditor && subjectId ? (
+        <EditSubjectUnitsModal
+          visible
+          onClose={() => setShowUnitsEditor(false)}
+          onSaved={() => {
+            setShowUnitsEditor(false);
+          }}
+          familyId={familyId}
+          subject={{
+            id: subjectId,
+            name: selectedSubject?.name || 'Subject',
+          }}
+          hasExistingContent={unitsEditorHasContent}
+          initialDraft={unitsEditorInitialDraft}
+          stackZIndex={NESTED_OVER_PARENT_MODAL_Z}
         />
       ) : null}
     </>

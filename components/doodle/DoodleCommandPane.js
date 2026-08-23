@@ -38,6 +38,7 @@ import {
   ACCENT_CHIP_BG,
 } from '../create/shared/createModalStyles';
 import { humanizeDoodleError } from '../../lib/messages/doodleErrorCopy';
+import { useDoodleCommandStore } from '../../app/state/useDoodleCommandStore';
 
 function formatMessageTime(createdAt) {
   if (!createdAt) return '';

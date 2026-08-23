@@ -94,8 +94,8 @@ export const createModalStyles = StyleSheet.create({
   assignmentFormColumnSide: {
     flexGrow: 0,
     flexShrink: 0,
-    flexBasis: 260,
-    width: 260,
+    flexBasis: 300,
+    width: 300,
     maxWidth: '100%',
     minHeight: 0,
     alignSelf: 'stretch',
@@ -717,6 +717,24 @@ export const createModalStyles = StyleSheet.create({
           maxWidth: '48%',
         }),
   },
+  /** Learning day row: wider start date so full year is visible (3-column row). */
+  scheduleColumnLearningDayDate: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    minWidth: 0,
+    ...(Platform.OS === 'web'
+      ? {
+          width: 'calc((100% - 24px) * 0.46)',
+          maxWidth: 'calc((100% - 24px) * 0.46)',
+          minWidth: 152,
+        }
+      : {
+          width: '46%',
+          maxWidth: '46%',
+          minWidth: 152,
+        }),
+  },
   /** Learning day row: fixed-width start time (narrower than flex column). */
   scheduleColumnLearningDayTime: {
     flexGrow: 0,
@@ -1030,6 +1048,7 @@ export const createModalStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     borderColor: ACCENT_CHIP_BORDER,
+    flexShrink: 0,
   },
   addNewButtonText: {
     fontSize: 14,

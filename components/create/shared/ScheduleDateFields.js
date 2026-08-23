@@ -24,22 +24,22 @@ export default function ScheduleDateFields({
   timeError = null,
   trailingContent = null,
   matchEventModalDateWidth = false,
+  dateColumnStyle = null,
   timeColumnStyle = null,
   trailingColumnStyle = null,
   endDateRequired = false,
 }) {
   const handleStartPrev = () => onStartDateChange?.(addDays(startDate, -1));
   const handleStartNext = () => onStartDateChange?.(addDays(startDate, 1));
-  const dateColumnStyle = matchEventModalDateWidth
-    ? styles.scheduleColumnEventDate
-    : styles.scheduleColumn;
+  const dateColumnStyleResolved = dateColumnStyle
+    || (matchEventModalDateWidth ? styles.scheduleColumnEventDate : styles.scheduleColumn);
   const startTimeColumnStyle = timeColumnStyle || styles.scheduleColumn;
   const trailingWrapStyle = trailingColumnStyle || styles.scheduleTrailingColumn;
 
   return (
     <View style={styles.formGroup}>
       <View style={styles.dateTimeInlineRow}>
-        <View style={dateColumnStyle}>
+        <View style={dateColumnStyleResolved}>
           <Text style={styles.fieldLabel}>Start date <Text style={styles.required}>*</Text></Text>
           <View style={[styles.chip, styles.scheduleDateChip, startDateError && { borderColor: '#ef4444' }]}>
             <TouchableOpacity onPress={handleStartPrev}>
@@ -62,7 +62,7 @@ export default function ScheduleDateFields({
         </View>
 
         {showEndDate && onEndDateChange ? (
-          <View style={dateColumnStyle}>
+          <View style={dateColumnStyleResolved}>
             <Text style={styles.fieldLabel}>
               End date
               {endDateRequired ? <Text style={styles.required}> *</Text> : null}

@@ -7,10 +7,7 @@ import {
   Platform,
   StyleSheet,
 } from 'react-native';
-import { CalendarDays, CalendarPlus, Check } from 'lucide-react';
-import CreateModalShell from '../create/shared/CreateModalShell';
-import { createModalStyles as styles, FG, MUTED } from '../create/shared/createModalStyles';
-import { MODAL_ACCENT, MODAL_ACCENT_TEXT } from '../ui/modalButtonStyles';
+import { CalendarDays, CalendarPlus, Check, X } from 'lucide-react';
 
 function ChoiceCard({
   icon: Icon,
@@ -18,23 +15,31 @@ function ChoiceCard({
   subtitle,
   onPress,
   selected = false,
+  isLast = false,
 }) {
   return (
     <TouchableOpacity
       onPress={onPress}
-      style={[choiceStyles.card, selected ? choiceStyles.cardSelected : choiceStyles.cardDefault]}
-      activeOpacity={0.88}
+      style={[
+        styles.item,
+        isLast && styles.itemLast,
+        selected && styles.itemSelected,
+      ]}
+      activeOpacity={0.75}
       accessibilityRole="button"
       accessibilityLabel={label}
       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
     >
-      <View style={[choiceStyles.iconWrap, selected ? choiceStyles.iconWrapSelected : choiceStyles.iconWrapDefault]}>
-        <Icon size={18} color={selected ? MODAL_ACCENT_TEXT : FG} strokeWidth={2.1} />
+      <View style={[styles.iconWrap, selected && styles.iconWrapSelected]}>
+        <Icon size={18} color={selected ? '#6BB3E8' : '#1F2937'} strokeWidth={2.1} />
       </View>
-      <View style={choiceStyles.textWrap}>
-        <Text style={[choiceStyles.label, selected && choiceStyles.labelSelected]}>{label}</Text>
-        {subtitle ? <Text style={choiceStyles.subtitle}>{subtitle}</Text> : null}
+      <View style={styles.itemTextWrap}>
+        <Text style={[styles.itemText, selected && styles.itemTextSelected]}>{label}</Text>
+        {subtitle ? <Text style={styles.itemSubtitle}>{subtitle}</Text> : null}
       </View>
+      {selected ? (
+        <Check size={16} color="#6BB3E8" strokeWidth={2.5} />
+      ) : null}
     </TouchableOpacity>
   );
 }
@@ -64,79 +69,193 @@ export default function LearningDaySetupChoiceModal({
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <CreateModalShell
-        title={subjectName}
-        onClose={onClose}
-        maxWidth={460}
-        shellStyle={[styles.compactShell, localStyles.choiceModalShell]}
-        titleRowStyle={styles.compactTitleRow}
-        bodyStyle={[styles.shellBody, localStyles.choiceModalBody]}
-        footerStyle={localStyles.choiceModalFooter}
-        footer={
-          <View style={localStyles.footer}>
+      <TouchableOpacity
+        style={styles.backdrop}
+        activeOpacity={1}
+        onPress={onClose}
+      >
+        <TouchableOpacity style={styles.card} activeOpacity={1} onPress={() => {}}>
+          <View style={styles.header}>
+            <View style={styles.headerTextWrap}>
+              <Text style={styles.title}>{subjectName}</Text>
+              <Text style={styles.subtitle}>How would you like to add learning for this subject?</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.closeBtn}
+              onPress={onClose}
+              activeOpacity={0.8}
+              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+            >
+              <X size={20} color="#6b7280" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.list}>
+            <ChoiceCard
+              icon={CalendarPlus}
+              label="One-off learning event"
+              subtitle="Add one session on any date, outside the recurring schedule"
+              onPress={() => setSelectedChoice('one_off')}
+              selected={selectedChoice === 'one_off'}
+            />
+            <ChoiceCard
+              icon={CalendarDays}
+              label="Add/Edit subject schedule"
+              subtitle="Set recurring days, times, and date range for this subject"
+              onPress={() => setSelectedChoice('schedule')}
+              selected={selectedChoice === 'schedule'}
+              isLast
+            />
+          </View>
+
+          <View style={styles.actions}>
             <TouchableOpacity
               onPress={onClose}
-              style={localStyles.cancelButton}
+              style={styles.cancelBtn}
               activeOpacity={0.85}
               accessibilityRole="button"
               accessibilityLabel="Cancel"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
             >
-              <Text style={localStyles.cancelButtonText}>Cancel</Text>
+              <Text style={styles.cancelText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={handleContinue}
-              style={localStyles.continueButton}
+              style={styles.primaryBtn}
               activeOpacity={0.85}
               accessibilityRole="button"
               accessibilityLabel="Continue"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
             >
               <Check size={16} color="#FFFFFF" strokeWidth={2.5} />
-              <Text style={localStyles.continueButtonText}>Continue</Text>
+              <Text style={styles.primaryText}>Continue</Text>
             </TouchableOpacity>
           </View>
-        }
-      >
-        <View style={choiceStyles.list}>
-          <ChoiceCard
-            icon={CalendarPlus}
-            label="One-off learning event"
-            subtitle="Add one session on any date, outside the recurring schedule"
-            onPress={() => setSelectedChoice('one_off')}
-            selected={selectedChoice === 'one_off'}
-          />
-          <ChoiceCard
-            icon={CalendarDays}
-            label="Add/Edit subject schedule"
-            subtitle="Set recurring days, times, and date range for this subject"
-            onPress={() => setSelectedChoice('schedule')}
-            selected={selectedChoice === 'schedule'}
-          />
-        </View>
-      </CreateModalShell>
+        </TouchableOpacity>
+      </TouchableOpacity>
     </Modal>
   );
 }
 
-const localStyles = StyleSheet.create({
-  choiceModalShell: {
-    minHeight: 0,
+const styles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
   },
-  choiceModalBody: {
-    paddingBottom: 4,
+  card: {
+    width: '100%',
+    maxWidth: 460,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 32,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 12px 24px -8px rgba(0, 0, 0, 0.08)',
+    }),
   },
-  choiceModalFooter: {
-    paddingTop: 4,
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
   },
-  footer: {
+  headerTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  closeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    color: '#6b7280',
+  },
+  list: {
+    marginTop: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    overflow: 'hidden',
+  },
+  item: {
+    minHeight: 56,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  itemLast: {
+    borderBottomWidth: 0,
+  },
+  itemSelected: {
+    backgroundColor: '#F0F9FF',
+  },
+  iconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F3F4F6',
+    flexShrink: 0,
+  },
+  iconWrapSelected: {
+    backgroundColor: '#E0F2FE',
+  },
+  itemTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  itemText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  itemTextSelected: {
+    color: '#1F2937',
+  },
+  itemSubtitle: {
+    marginTop: 4,
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#94A3B8',
+    lineHeight: 20,
+  },
+  actions: {
+    marginTop: 18,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 14,
   },
-  cancelButton: {
+  cancelBtn: {
     minHeight: 50,
     paddingVertical: 12,
     paddingHorizontal: 28,
@@ -144,12 +263,11 @@ const localStyles = StyleSheet.create({
     backgroundColor: '#E5E7EB',
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
-  cancelButtonText: {
+  cancelText: {
     fontSize: 16,
     fontWeight: '700',
     color: '#374151',
@@ -157,8 +275,7 @@ const localStyles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  continueButton: {
-    minHeight: 50,
+  primaryBtn: {
     height: 50,
     flexDirection: 'row',
     alignItems: 'center',
@@ -166,10 +283,10 @@ const localStyles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 18,
     borderRadius: 16,
-    backgroundColor: MODAL_ACCENT,
+    backgroundColor: '#9ECFFB',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
-  continueButtonText: {
+  primaryText: {
     fontSize: 16,
     fontWeight: '800',
     color: '#FFFFFF',
@@ -178,62 +295,3 @@ const localStyles = StyleSheet.create({
     }),
   },
 });
-
-const choiceStyles = {
-  list: {
-    gap: 10,
-  },
-  card: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      transition: 'border-color 0.15s ease, background-color 0.15s ease',
-    }),
-  },
-  cardSelected: {
-    borderColor: MODAL_ACCENT,
-    backgroundColor: '#F0F9FF',
-  },
-  cardDefault: {
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-  },
-  iconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  iconWrapSelected: {
-    backgroundColor: '#E0F2FE',
-  },
-  iconWrapDefault: {
-    backgroundColor: '#F3F4F6',
-  },
-  textWrap: {
-    flex: 1,
-    paddingTop: 2,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: FG,
-    marginBottom: 2,
-  },
-  labelSelected: {
-    color: MODAL_ACCENT_TEXT,
-  },
-  subtitle: {
-    fontSize: 12,
-    color: MUTED,
-    lineHeight: 16,
-  },
-};

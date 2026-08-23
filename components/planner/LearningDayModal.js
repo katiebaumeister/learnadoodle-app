@@ -601,7 +601,7 @@ export default function LearningDayModal({
                   showEndTime={false}
                   showTimes
                   onOpenStartDatePicker={() => setDatePickerOpen(true)}
-                  matchEventModalDateWidth
+                  dateColumnStyle={styles.scheduleColumnLearningDayDate}
                   startDateError={errors.date || null}
                   timeError={errors.time || null}
                   timeColumnStyle={styles.scheduleColumnLearningDayTime}
