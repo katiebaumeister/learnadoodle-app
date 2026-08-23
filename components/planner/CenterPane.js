@@ -353,22 +353,49 @@ export default function CenterPane({
               />
             )
           )}
-          {mode === 'Year' && (
-            <AttendanceView
-              familyId={familyId}
-              children={children}
-              events={filtered}
-              onEventPress={onEventSelect}
-              onEditChild={readOnly ? undefined : onEditChild}
-              plannerInitialSnapshot={plannerAttendanceSnapshot}
-              mode="overview"
-              layoutMode="year-planner"
-              plannerYearAnchor={viewDate}
-              academicYears={academicYears}
-              plannerChildFilterIds={filters?.childIds || []}
-              onPlannerChildFilterChange={onChildFilterChange}
-              readOnly={readOnly}
-            />
+          {/* Web: keep Year view mounted so attendance grid state stays stable (no remount flash). */}
+          {Platform.OS === 'web' && !isMobile ? (
+            <View
+              style={{
+                flex: 1,
+                minHeight: 0,
+                ...(mode !== 'Year' ? { display: 'none' } : {}),
+              }}
+            >
+              <AttendanceView
+                familyId={familyId}
+                children={children}
+                events={filtered}
+                onEventPress={onEventSelect}
+                onEditChild={readOnly ? undefined : onEditChild}
+                plannerInitialSnapshot={plannerAttendanceSnapshot}
+                mode="overview"
+                layoutMode="year-planner"
+                plannerYearAnchor={viewDate}
+                academicYears={academicYears}
+                plannerChildFilterIds={filters?.childIds || []}
+                onPlannerChildFilterChange={onChildFilterChange}
+                readOnly={readOnly}
+              />
+            </View>
+          ) : (
+            mode === 'Year' && (
+              <AttendanceView
+                familyId={familyId}
+                children={children}
+                events={filtered}
+                onEventPress={onEventSelect}
+                onEditChild={readOnly ? undefined : onEditChild}
+                plannerInitialSnapshot={plannerAttendanceSnapshot}
+                mode="overview"
+                layoutMode="year-planner"
+                plannerYearAnchor={viewDate}
+                academicYears={academicYears}
+                plannerChildFilterIds={filters?.childIds || []}
+                onPlannerChildFilterChange={onChildFilterChange}
+                readOnly={readOnly}
+              />
+            )
           )}
           {/* Web: keep mounted while on other planner modes so prefetch hydrates before first open (no blank flash). */}
           {Platform.OS === 'web' && !isMobile ? (

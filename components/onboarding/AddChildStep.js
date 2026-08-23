@@ -11,11 +11,18 @@ import {
 } from '../../lib/constants/onboardingTheme';
 
 import { AVATAR_PICKER_CELL_SIZE, AVATAR_PICKER_IMAGE_SIZE, AVATAR_PICKER_LARGE_PREVIEW_SIZE } from '../../lib/onboardingProfAvatars';
+import {
+  CHILD_AGE_OPTIONS,
+  CHILD_GRADE_OPTIONS,
+  STUDENT_SELF_AGE_OPTIONS,
+  childAgeFromPickerValue,
+  isAgeChipSelected,
+} from '../../lib/childProfilePickers';
 
 const AVATAR_SIZE = AVATAR_PICKER_CELL_SIZE;
 const AVATAR_PREVIEW_SIZE = AVATAR_PICKER_LARGE_PREVIEW_SIZE;
 
-const GRADES = ['Pre-K', 'K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+const GRADES = CHILD_GRADE_OPTIONS;
 const STATES = ['None', 'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DC', 'DE', 'FL', 'GA', 'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ', 'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY'];
 const INTERESTS = ['STEM', 'Reading', 'Writing', 'Arts', 'Music', 'Sports', 'Outdoors', 'Languages', 'History', 'Coding', 'Woodworking', 'Other'];
 const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
@@ -122,7 +129,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
     return {
       name: name.trim(),
       nickname: null,
-      age: Number(age),
+      age: childAgeFromPickerValue(age),
       grade: grade,
       standardsState: standardsState === 'None' ? null : standardsState,
       avatar,
@@ -253,16 +260,15 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
         </View>
         <Text style={styles.label}>Age <Text style={styles.requiredAsterisk}>*</Text></Text>
         <View style={styles.chipsWrap}>
-          {(isStudentOnboarding ? Array.from({ length: 6 }, (_, i) => i + 13) : Array.from({ length: 16 }, (_, i) => i + 3)).map((n) => {
-            const val = String(n);
-            const selected = age === val;
+          {(isStudentOnboarding ? STUDENT_SELF_AGE_OPTIONS : CHILD_AGE_OPTIONS).map((option) => {
+            const selected = isAgeChipSelected(option, age);
             return (
               <TouchableOpacity
-                key={n}
+                key={option}
                 style={[styles.formChip, selected && styles.formChipSelected]}
-                onPress={() => { setAge(val); setError(null); }}
+                onPress={() => { setAge(option); setError(null); }}
               >
-                <Text style={[styles.formChipText, selected && styles.formChipTextSelected]}>{val}</Text>
+                <Text style={[styles.formChipText, selected && styles.formChipTextSelected]}>{option}</Text>
               </TouchableOpacity>
             );
           })}

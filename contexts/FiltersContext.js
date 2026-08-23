@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { writeAppSearchParams } from '../lib/url';
 
 const FiltersContext = createContext();
 
@@ -35,15 +36,14 @@ export function FiltersProvider({ children }) {
     
     // Update URL (web only)
     if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      Object.entries(newFilters).forEach(([key, value]) => {
-        if (value) {
-          params.set(key === 'childId' ? 'child' : key === 'subjectId' ? 'subject' : key, value);
-        } else {
-          params.delete(key === 'childId' ? 'child' : key === 'subjectId' ? 'subject' : key);
-        }
-      });
-      window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+      writeAppSearchParams(
+        Object.fromEntries(
+          Object.entries(newFilters).map(([key, value]) => {
+            const urlKey = key === 'childId' ? 'child' : key === 'subjectId' ? 'subject' : key;
+            return [urlKey, value || null];
+          })
+        )
+      );
     }
   };
 
@@ -57,7 +57,13 @@ export function FiltersProvider({ children }) {
     });
     
     if (typeof window !== 'undefined') {
-      window.history.replaceState({}, '', window.location.pathname);
+      writeAppSearchParams({
+        child: null,
+        subject: null,
+        date: null,
+        view: null,
+        weekStart: null,
+      });
     }
   };
 

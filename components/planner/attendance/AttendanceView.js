@@ -29,6 +29,14 @@ function notifyAttendanceUpdated(patchedAttendances = []) {
 }
 import { getAttendanceLogs, createAttendanceLog, updateAttendanceLog, deleteAttendanceLog } from '../../../lib/services/recordsClient';
 import { updateEventStatus } from '../../../lib/services/attendanceClient';
+import {
+  getAttendanceTargetChildIds,
+  childHasPresentAttendance,
+  isEventGloballyDone,
+  isSharedMultiChildEvent,
+  mergeAttendanceRecords,
+  syncEventDoneStatusAfterAttendanceWrites,
+} from '../../../lib/attendance/partialAttendance';
 import { getFamilyPlannerSettings, buildBulkTermOptionsFromPlannerSettings, pickCurrentTermStartFromPlannerSettings, getCachedPlannerTermOptions, setCachedPlannerTermOptions, deriveDefaultBulkTermOptions } from '../../../lib/services/plannerSettingsClient';
 import { getCachedYearAttendanceBundle, setCachedYearAttendanceBundle } from '../../../lib/services/plannerPrefetch';
 import { getAttendanceMode, isClassDayMode } from '../../../lib/attendanceMode';
@@ -154,14 +162,30 @@ function getEventChildIds(event, fallbackChildIds = []) {
   return (fallbackChildIds || []).map((id) => String(id)).filter(Boolean);
 }
 
-function isEventAttendancePresent(event) {
-  if (!event) return false;
-  const status = String(event.status || event.data?.status || '').trim().toLowerCase();
-  if (status === 'done' || status === 'completed') return true;
-  const instructional = String(
-    event.instructional_status || event.data?.instructional_status || ''
-  ).trim().toUpperCase();
-  return instructional === 'MANUAL_COUNTS';
+function resolveChildDayAttendanceStatus({ dayEvents = [], recordsForDay = [], isPastDay = false, familyChildren = [] }) {
+  const events = Array.isArray(dayEvents) ? dayEvents : [];
+  const records = Array.isArray(recordsForDay) ? recordsForDay : [];
+  const eventIds = new Set(events.map((e) => String(e.id)));
+  const hasEvent = (r) => r.event_id != null && eventIds.has(String(r.event_id));
+  const standalonePresent = records.some((r) => r.event_id == null && r.status === 'present');
+  const presentForEvents = records.filter((r) => r.status === 'present' && hasEvent(r));
+  const absentForEvents = records.filter((r) => r.status === 'absent' && hasEvent(r));
+  const eventMarkedPresent = events.some((event) => {
+    if (isSharedMultiChildEvent(event, familyChildren)) return false;
+    return isEventGloballyDone(event);
+  });
+
+  if (events.length === 0) {
+    return standalonePresent ? 'present' : 'noEvents';
+  }
+  const allEventsAbsent = events.every((e) =>
+    absentForEvents.some((r) => String(r.event_id) === String(e.id))
+  );
+  if (allEventsAbsent) return 'absent';
+  if (presentForEvents.length >= 1 || standalonePresent || eventMarkedPresent) {
+    return 'present';
+  }
+  return isPastDay ? 'absent' : 'unmarked';
 }
 
 function dateStringToDate(ymd) {
@@ -325,6 +349,10 @@ export default function AttendanceView({
   // Prevents a late-arriving prefetch snapshot (which only covers the narrower
   // academic-year range) from clobbering full calendar-year data.
   const liveDataLoadedFamilyRef = React.useRef(null);
+  // Tracks which calendar-year range has live fetch data (family|start|end).
+  const loadedYearRangeKeyRef = React.useRef('');
+  const [isYearDataRefreshing, setIsYearDataRefreshing] = useState(false);
+  const stableHeatmapStatusRef = React.useRef({});
 
   const toast = useToast();
   const familyIdResolved = familyId || eventsProp[0]?.family_id || eventsProp[0]?.familyId;
@@ -367,7 +395,9 @@ export default function AttendanceView({
       // Skip seeding from the snapshot once the live fetch has loaded the full
       // range — otherwise the (narrower) snapshot overwrites earlier-year data
       // and those days vanish until the next refetch.
-      if (liveDataLoadedFamilyRef.current !== familyIdResolved) {
+      // Year planner uses calendar-year cache + fetch; academic-year snapshot
+      // data is the wrong range and causes a visible color flash on the grid.
+      if (liveDataLoadedFamilyRef.current !== familyIdResolved && !isYearPlannerLayout) {
         setAttendanceRecords(snap.attendanceRecords ?? []);
         setYearEvents(snap.yearEvents ?? []);
       }
@@ -456,6 +486,14 @@ export default function AttendanceView({
   useEffect(() => {
     if (!isYearPlannerLayout || !plannerYearAnchor || !familyIdResolved) return;
     const { yearStart, yearEnd } = resolveCalendarYearRange(plannerYearAnchor);
+    const rangeKey = `${familyIdResolved}|${yearStart}|${yearEnd}`;
+    // Do not replace live data for the range already on screen (e.g. background refetch).
+    if (
+      loadedYearRangeKeyRef.current === rangeKey
+      && liveDataLoadedFamilyRef.current === familyIdResolved
+    ) {
+      return;
+    }
     const cached = getCachedYearAttendanceBundle(familyIdResolved, yearStart, yearEnd);
     if (cached) {
       setAttendanceRecords(cached.attendanceRecords);
@@ -506,6 +544,12 @@ export default function AttendanceView({
   useEffect(() => {
     if (!familyIdResolved || !rangeReady || !yearStartKey || !yearEndKey) return;
     let cancelled = false;
+    const rangeKey = `${familyIdResolved}|${yearStartKey}|${yearEndKey}`;
+    const isSameRangeRefresh = loadedYearRangeKeyRef.current === rangeKey
+      && liveDataLoadedFamilyRef.current === familyIdResolved;
+    if (isYearPlannerLayout && isSameRangeRefresh) {
+      setIsYearDataRefreshing(true);
+    }
     (async () => {
       try {
         const fetchStart = dateStringToDate(yearStartKey);
@@ -535,6 +579,7 @@ export default function AttendanceView({
         ]);
         if (!cancelled) {
           liveDataLoadedFamilyRef.current = familyIdResolved;
+          loadedYearRangeKeyRef.current = rangeKey;
           const nextRecords = logs || [];
           const nextEvents = Array.isArray(eventsData) ? eventsData : [];
           setAttendanceRecords(nextRecords);
@@ -550,7 +595,10 @@ export default function AttendanceView({
           setYearEvents((prev) => prev);
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          if (isYearPlannerLayout) setIsYearDataRefreshing(false);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -647,21 +695,12 @@ export default function AttendanceView({
           (r) => String(r.child_id) === String(c.id)
             && (r.day_date === key || (r.day_date && String(r.day_date).slice(0, 10) === key))
         );
-        const eventIds = new Set(dayEvents.map((e) => String(e.id)));
-        const hasEvent = (r) => r.event_id != null && eventIds.has(String(r.event_id));
-        const standalonePresent =
-          recordsForDay.some((r) => r.event_id == null && r.status === 'present');
-        const presentForEvents = new Set(
-          recordsForDay.filter((r) => r.status === 'present' && hasEvent(r)).map((r) => r.event_id)
-        );
-        const eventMarkedPresent = dayEvents.some(isEventAttendancePresent);
-        if (dayEvents.length === 0) {
-          byChild[c.id][key] = standalonePresent ? 'present' : 'noEvents';
-        } else if (presentForEvents.size >= 1 || standalonePresent || eventMarkedPresent) {
-          byChild[c.id][key] = 'present';
-        } else {
-          byChild[c.id][key] = isPastDay ? 'absent' : 'unmarked';
-        }
+        byChild[c.id][key] = resolveChildDayAttendanceStatus({
+          dayEvents,
+          recordsForDay,
+          isPastDay,
+          familyChildren: children,
+        });
       });
     }
     return byChild;
@@ -738,6 +777,29 @@ export default function AttendanceView({
     }
     return { [FAMILY_HEATMAP_CHILD_ID]: familyStatus };
   }, [dayStatusByChild, heatmapSelectedChildId, visibleHeatmapChildren, yearStartKey, yearEndKey]);
+
+  useEffect(() => {
+    if (!isYearDataRefreshing) {
+      stableHeatmapStatusRef.current = heatmapDayStatusByChild;
+    }
+  }, [heatmapDayStatusByChild, isYearDataRefreshing]);
+
+  const heatmapDayStatusForDisplay = useMemo(() => {
+    if (
+      isYearPlannerLayout
+      && isYearDataRefreshing
+      && stableHeatmapStatusRef.current
+      && Object.keys(stableHeatmapStatusRef.current).length > 0
+    ) {
+      return stableHeatmapStatusRef.current;
+    }
+    return heatmapDayStatusByChild;
+  }, [heatmapDayStatusByChild, isYearPlannerLayout, isYearDataRefreshing]);
+
+  useEffect(() => {
+    loadedYearRangeKeyRef.current = '';
+    liveDataLoadedFamilyRef.current = null;
+  }, [familyIdResolved]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
@@ -1123,18 +1185,32 @@ export default function AttendanceView({
         return;
       }
       const siblings = getSiblingEventsOnDay(normKey, event, events);
+      let nextRecords = [...attendanceRecords];
       for (const ev of siblings) {
-        const childIds = getChildIdsForEvent(ev);
+        const childIds = getAttendanceTargetChildIds(ev, {
+          contextChildId: normChildId,
+          viewingAllChildren,
+          familyChildren: children,
+        });
         if (childIds.length === 0) continue;
         const minutes = getEventMinutes(ev);
+        const patches = [];
         const upserts = childIds.map((cid) => {
           const cidStr = String(cid);
           const existing = attendanceRecords.find(
             (r) => r.event_id === ev.id && String(r.child_id) === cidStr && String(r.day_date).slice(0, 10) === normKey
           );
           if (existing) {
+            patches.push({ ...existing, status: 'present', minutes });
             return updateAttendanceLog(existing.id, { status: 'present', minutes });
           }
+          patches.push({
+            event_id: ev.id,
+            child_id: cidStr,
+            day_date: normKey,
+            status: 'present',
+            minutes,
+          });
           return createAttendanceLog({
             family_id: familyIdResolved,
             child_id: cidStr,
@@ -1145,9 +1221,18 @@ export default function AttendanceView({
           });
         });
         await Promise.all(upserts);
-        const res = await updateEventStatus(ev.id, 'done');
-        if (res.error) console.warn('[AttendanceView] Could not mark event complete:', res.error);
-        else patchedAttendances.push({ eventId: ev.id, status: 'done' });
+        nextRecords = mergeAttendanceRecords(nextRecords, patches);
+        const syncResult = await syncEventDoneStatusAfterAttendanceWrites(ev, normKey, nextRecords, children);
+        if (syncResult?.status) {
+          patchedAttendances.push({ eventId: ev.id, status: syncResult.status });
+        }
+      }
+      setAttendanceRecords(nextRecords);
+      if (isYearPlannerLayout && yearStartKey && yearEndKey) {
+        setCachedYearAttendanceBundle(familyIdResolved, yearStartKey, yearEndKey, {
+          attendanceRecords: nextRecords,
+          yearEvents,
+        });
       }
       setAttendanceRefreshKey((k) => k + 1);
       notifyAttendanceUpdated(patchedAttendances);
@@ -1159,7 +1244,7 @@ export default function AttendanceView({
     } catch (_) {
       setAttendanceRefreshKey((k) => k + 1);
     }
-  }, [familyIdResolved, selectedDay.childId, selectedDay.dateKey, attendanceRecordByEventId, attendanceRecords, selectedDayEvents, selectedDayAttendanceByEventId, events, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay, attendanceTrackingMode]);
+  }, [familyIdResolved, selectedDay.childId, selectedDay.dateKey, attendanceRecordByEventId, attendanceRecords, selectedDayEvents, selectedDayAttendanceByEventId, events, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay, attendanceTrackingMode, isYearPlannerLayout, yearStartKey, yearEndKey, yearEvents, children]);
 
   const handleMarkDayAttended = useCallback(async (dateKey, childId) => {
     if (!familyIdResolved || !childId) return;
@@ -1212,15 +1297,18 @@ export default function AttendanceView({
       return;
     }
 
-    // For "all present" check: this child must have at least one present record per their events that day
-    const allPresentForChild = preferredEventRows.every((e) => {
-      const rec = attendanceRecords.find(
-        (r) => r.event_id === e.id && String(r.child_id) === normChildId && String(r.day_date).slice(0, 10) === normKey
-      );
-      return rec?.status === 'present';
-    });
+    const recordsForDay = attendanceRecords.filter(
+      (r) => String(r.child_id) === normChildId && String(r.day_date).slice(0, 10) === normKey
+    );
+    const isDayPresent = resolveChildDayAttendanceStatus({
+      dayEvents: preferredEventRows,
+      recordsForDay,
+      isPastDay: normKey < toLocalYYYYMMDD(new Date()),
+      familyChildren: children,
+    }) === 'present';
+
     try {
-      if (allPresentForChild) {
+      if (isDayPresent) {
         // Clear manual day-only row if present (same click as unmarking scheduled lessons).
         if (standaloneDay?.id) {
           await deleteAttendanceLog(standaloneDay.id);
@@ -1272,7 +1360,7 @@ export default function AttendanceView({
       if (standaloneDay?.id) {
         await deleteAttendanceLog(standaloneDay.id);
       }
-      // Mark day attended: include sibling events so the lesson group shows complete; mark all assigned children present and set event done
+      // Mark day attended for the selected child (or all children when viewing all).
       const seenIds = new Set();
       const dayEvents = [];
       if (isClassDayMode(attendanceTrackingMode)) {
@@ -1292,17 +1380,31 @@ export default function AttendanceView({
           });
         });
       }
+      let nextRecords = [...attendanceRecords];
       for (const e of dayEvents) {
-        const childIds = getChildIdsForEvent(e);
+        const childIds = getAttendanceTargetChildIds(e, {
+          contextChildId: normChildId,
+          viewingAllChildren: false,
+          familyChildren: children,
+        });
         const minutes = getEventMinutes(e);
+        const patches = [];
         const upserts = childIds.map((cid) => {
           const cidStr = String(cid);
           const existing = attendanceRecords.find(
             (r) => r.event_id === e.id && String(r.child_id) === cidStr && String(r.day_date).slice(0, 10) === normKey
           );
           if (existing) {
+            patches.push({ ...existing, status: 'present', minutes });
             return updateAttendanceLog(existing.id, { status: 'present', minutes });
           }
+          patches.push({
+            event_id: e.id,
+            child_id: cidStr,
+            day_date: normKey,
+            status: 'present',
+            minutes,
+          });
           return createAttendanceLog({
             family_id: familyIdResolved,
             child_id: cidStr,
@@ -1313,9 +1415,18 @@ export default function AttendanceView({
           });
         });
         await Promise.all(upserts);
-        const res = await updateEventStatus(e.id, 'done');
-        if (res.error) console.warn('[AttendanceView] Could not mark event complete:', res.error);
-        else patchedAttendances.push({ eventId: e.id, status: 'done' });
+        nextRecords = mergeAttendanceRecords(nextRecords, patches);
+        const syncResult = await syncEventDoneStatusAfterAttendanceWrites(e, normKey, nextRecords, children);
+        if (syncResult?.status) {
+          patchedAttendances.push({ eventId: e.id, status: syncResult.status });
+        }
+      }
+      setAttendanceRecords(nextRecords);
+      if (isYearPlannerLayout && yearStartKey && yearEndKey) {
+        setCachedYearAttendanceBundle(familyIdResolved, yearStartKey, yearEndKey, {
+          attendanceRecords: nextRecords,
+          yearEvents,
+        });
       }
       setAttendanceRefreshKey((k) => k + 1);
       notifyAttendanceUpdated(patchedAttendances);
@@ -1327,7 +1438,7 @@ export default function AttendanceView({
     } catch (_) {
       setAttendanceRefreshKey((k) => k + 1);
     }
-  }, [familyIdResolved, eventsByDateChild, events, attendanceRecords, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay, toast, attendanceTrackingMode]);
+  }, [familyIdResolved, eventsByDateChild, events, attendanceRecords, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay, toast, attendanceTrackingMode, isYearPlannerLayout, yearStartKey, yearEndKey, yearEvents]);
 
   const handleHeatmapMarkDay = useCallback(async (dateKey, childId) => {
     // Days off (holidays/breaks/vacations) are not markable.
@@ -1392,6 +1503,8 @@ export default function AttendanceView({
       });
 
       const allOps = [];
+      const eventsToSync = [];
+      let projectedRecords = [...attendanceRecords];
       for (const dayKey of dateKeys) {
         const dayEventsByChild = eventsByDateChild[dayKey] || {};
         const uniqueDayEvents = new Map();
@@ -1431,7 +1544,7 @@ export default function AttendanceView({
           const assignedIds = getEventChildIds(event, children.map((c) => c.id))
             .filter((id) => childIdSet.has(String(id)));
           if (!assignedIds.length) continue;
-          if (isEventAttendancePresent(event)) continue;
+          if (assignedIds.every((cid) => childHasPresentAttendance(projectedRecords, event.id, cid, dayKey))) continue;
           const minutes = getEventMinutes(event);
           assignedIds.forEach((assignedId) => {
             const cid = String(assignedId);
@@ -1439,6 +1552,7 @@ export default function AttendanceView({
             const existing = existingByEventChildDay.get(recordKey);
             if (existing?.id) {
               allOps.push(updateAttendanceLog(existing.id, { status: 'present', minutes }));
+              projectedRecords = mergeAttendanceRecords(projectedRecords, [{ ...existing, status: 'present', minutes }]);
             } else {
               allOps.push(createAttendanceLog({
                 family_id: familyIdResolved,
@@ -1448,18 +1562,16 @@ export default function AttendanceView({
                 status: 'present',
                 minutes,
               }));
+              projectedRecords = mergeAttendanceRecords(projectedRecords, [{
+                event_id: event.id,
+                child_id: cid,
+                day_date: dayKey,
+                status: 'present',
+                minutes,
+              }]);
             }
           });
-          undoEvents.push({ eventId: String(event.id), prevStatus: String(event.status || 'scheduled') });
-          allOps.push(
-            updateEventStatus(event.id, 'done').then((res) => {
-              if (res?.error) {
-                console.warn('[AttendanceView] Could not mark event complete:', res.error);
-                return;
-              }
-              patchedAttendances.push({ eventId: event.id, status: 'done' });
-            })
-          );
+          eventsToSync.push({ event, dayKey });
         }
       }
 
@@ -1467,6 +1579,23 @@ export default function AttendanceView({
       const BATCH_SIZE = 20;
       for (let i = 0; i < allOps.length; i += BATCH_SIZE) {
         await Promise.all(allOps.slice(i, i + BATCH_SIZE));
+      }
+
+      const syncedEventIds = new Set();
+      for (const { event, dayKey } of eventsToSync) {
+        const eventKey = `${String(event.id)}|${dayKey}`;
+        if (syncedEventIds.has(eventKey)) continue;
+        syncedEventIds.add(eventKey);
+        undoEvents.push({ eventId: String(event.id), prevStatus: String(event.status || 'scheduled') });
+        const syncResult = await syncEventDoneStatusAfterAttendanceWrites(
+          event,
+          dayKey,
+          projectedRecords,
+          children
+        );
+        if (syncResult?.status) {
+          patchedAttendances.push({ eventId: event.id, status: syncResult.status });
+        }
       }
 
       setLastBulkUndo(undoEvents.length > 0 ? { events: undoEvents, at: Date.now() } : null);
@@ -1838,7 +1967,7 @@ export default function AttendanceView({
           yearStart={yearStartKey}
           yearEnd={yearEndKey}
           selectedChildId={heatmapSelectedChildId}
-          dayStatusByChild={heatmapDayStatusByChild}
+          dayStatusByChild={heatmapDayStatusForDisplay}
           offDayKeys={offDayKeys}
           showLegend={!isYearPlannerLayout}
         onMarkDayAttended={
@@ -1888,7 +2017,7 @@ export default function AttendanceView({
             <View style={[styles.drilldownSection, styles.drilldownSectionStandalone]}>
               <Text style={styles.drilldownTitle}>Month drill-down</Text>
               <Text style={styles.drilldownHelp}>
-                Click a day on the calendar to see that day’s events for all children. Toggle the circle next to an event to mark it attended or unattended. Please note that only events marked as instructional time (e.g. lessons from your plan) count. Use the year heatmap above to mark a day attended even when nothing is scheduled. Same rules as the heatmap: shared events are marked for all children when you mark attended; unmarking affects only the selected context.
+                Click a day on the calendar to see that day’s events for all children. Toggle the circle next to an event to mark it attended or unattended. Please note that only events marked as instructional time (e.g. lessons from your plan) count. Use the year heatmap above to mark a day attended even when nothing is scheduled. Shared events track attendance per child — marking attended applies to the selected child only.
               </Text>
               <View style={styles.drilldownGrid}>
                 <View style={styles.calendarWithDivider}>

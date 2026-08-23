@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, TextInput, ScrollView, Activi
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { getChildren } from '../lib/apiClient';
+import { isPlannerNavigationHref } from '../lib/url';
 
 export default function GlobalSearchModal({ onClose, onNavigate }) {
   const { user } = useAuth();
@@ -257,7 +258,7 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
             type: 'function',
             title: 'Go to Planner',
             subtitle: 'Open calendar view',
-            payload: { kind: 'navigate', href: '/planner' },
+            payload: { kind: 'navigate', href: '/?view=month' },
           },
           {
             id: 'cmd-home',
@@ -370,7 +371,7 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
           }));
         } else if (item.type === 'function') {
           const payload = item.payload || {};
-          if (payload.kind === 'navigate' && String(payload.href || '').includes('/planner')) {
+          if (payload.kind === 'navigate' && isPlannerNavigationHref(payload.href)) {
             window.dispatchEvent(new CustomEvent('navigateToPlanner', { detail: { view: 'month' } }));
           }
         }
@@ -409,7 +410,7 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
       if (payload.kind === 'navigate' && payload.href) {
         // Parse href and navigate
         const path = payload.href.replace(/^\//, '');
-        if (path === 'planner' || path.startsWith('planner')) {
+        if (path === 'planner' || path.startsWith('planner') || isPlannerNavigationHref(payload.href)) {
           navHandler('planner');
         // } else if (path === 'explore' || path.startsWith('explore')) { // Archived - explore page removed
         //   navHandler('explore');

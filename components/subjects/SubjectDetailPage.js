@@ -50,9 +50,15 @@ import { extractStudentHelpReason, formatDueShort } from '../tutor/tutorHelpUtil
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
 import { findAcademicYearPlanForSubject } from '../../lib/subjectPlanSlotLines';
 import { getSubjectProgressCache, mergeSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
+import { readCachedSubjectCurriculumUnits } from '../../lib/useSubjectCurriculumUnits';
 import { fetchSubjectCurriculumEventsStructure, invalidateSubjectCurriculumStructureCache } from '../../lib/services/curriculumClient';
 import { createAttendanceLog, updateAttendanceLog, deleteAttendanceLog } from '../../lib/services/recordsClient';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
+import {
+  getAttendanceTargetChildIds,
+  mergeAttendanceRecords,
+  syncEventDoneStatusAfterAttendanceWrites,
+} from '../../lib/attendance/partialAttendance';
 import {
   buildBulkTermOptionsFromPlannerSettings,
   deriveDefaultBulkTermOptions,
@@ -514,6 +520,13 @@ function buildLearningGoalsUnitsFromEvents(events) {
   }));
 }
 
+function curriculumUnitsStructureKey(units) {
+  return (Array.isArray(units) ? units : []).map((unit) => {
+    const lessonKeys = (unit?.lessons || []).map((lesson) => String(lesson?.id || lesson?.title || '')).join(',');
+    return `${String(unit?.id || unit?.title || '')}:${lessonKeys}`;
+  }).join('|');
+}
+
 export default function SubjectDetailPage({
   subjectId,
   familyId,
@@ -623,9 +636,15 @@ export default function SubjectDetailPage({
 
   const [showEditUnitsModal, setShowEditUnitsModal] = useState(false);
   const [editUnitsInitialDraft, setEditUnitsInitialDraft] = useState(null);
-  const [learningGoalsUnits, setLearningGoalsUnits] = useState(
-    Array.isArray(preloadedProgressCache?.curriculumUnits) ? preloadedProgressCache.curriculumUnits : []
-  );
+  const [learningGoalsUnits, setLearningGoalsUnits] = useState(() => {
+    if (Array.isArray(preloadedProgressCache?.curriculumUnits) && preloadedProgressCache.curriculumUnits.length > 0) {
+      return preloadedProgressCache.curriculumUnits;
+    }
+    if (familyId && initialSubjectIdForProgressCache) {
+      return readCachedSubjectCurriculumUnits(familyId, initialSubjectIdForProgressCache);
+    }
+    return [];
+  });
   const [learningGoalsSource, setLearningGoalsSource] = useState(
     preloadedProgressCache?.curriculumSavedContentSource || null
   );
@@ -646,17 +665,22 @@ export default function SubjectDetailPage({
   }, [learningGoalsUnits]);
 
   useLayoutEffect(() => {
-    if (!familyId || !subjectData?.subject?.id) return;
-    const cached = getSubjectProgressCache(familyId, subjectData.subject.id);
+    if (!familyId || !subjectId) return;
+    const cached = getSubjectProgressCache(familyId, subjectId);
     if (Array.isArray(cached?.curriculumUnits) && cached.curriculumUnits.length > 0) {
-      setLearningGoalsUnits(cached.curriculumUnits);
+      setLearningGoalsUnits((prev) => {
+        if (curriculumUnitsStructureKey(prev) === curriculumUnitsStructureKey(cached.curriculumUnits)) {
+          return prev;
+        }
+        return cached.curriculumUnits;
+      });
       setLearningGoalsSource(cached.curriculumSavedContentSource || null);
     }
-  }, [familyId, subjectData?.subject?.id]);
+  }, [familyId, subjectId]);
 
   const loadLearningGoalsStructure = useCallback(async (opts = {}) => {
     const force = opts.force === true;
-    const sid = subjectData?.subject?.id;
+    const sid = subjectId;
     if (!familyId || !sid) {
       setLearningGoalsUnits([]);
       setLearningGoalsSource(null);
@@ -679,7 +703,10 @@ export default function SubjectDetailPage({
         if (error) throw error;
         const nextUnits = Array.isArray(data?.units) ? data.units : [];
         const nextSource = data?.saved_content_source || null;
-        setLearningGoalsUnits(nextUnits);
+        setLearningGoalsUnits((prev) => {
+          if (curriculumUnitsStructureKey(prev) === curriculumUnitsStructureKey(nextUnits)) return prev;
+          return nextUnits;
+        });
         setLearningGoalsSource(nextSource);
         mergeSubjectProgressCache(familyId, sid, {
           curriculumUnits: nextUnits,
@@ -704,7 +731,7 @@ export default function SubjectDetailPage({
         learningGoalsFetchPromiseRef.current = null;
       }
     }
-  }, [familyId, subjectData?.subject?.id]);
+  }, [familyId, subjectId]);
   /** Parent often passes inline callbacks; keep loadSubjectDetail stable so mount effect does not loop. */
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -1108,10 +1135,11 @@ export default function SubjectDetailPage({
     [subjectEvents]
   );
   const cachedCurriculumUnits = useMemo(() => {
-    if (!familyId || !subject?.id) return [];
-    const cached = getSubjectProgressCache(familyId, subject.id);
+    const sid = subjectId || subject?.id;
+    if (!familyId || !sid) return [];
+    const cached = getSubjectProgressCache(familyId, sid);
     return Array.isArray(cached?.curriculumUnits) ? cached.curriculumUnits : [];
-  }, [familyId, subject?.id]);
+  }, [familyId, subjectId, subject?.id]);
   const effectiveLearningGoalsUnits = useMemo(() => {
     const fetched = Array.isArray(learningGoalsUnits) ? learningGoalsUnits : [];
     if (fetched.length > 0) return fetched;
@@ -1501,22 +1529,26 @@ export default function SubjectDetailPage({
   }, [handleDeleteMaterial, handleOpenInNewTab, handleCreateAssignmentFromMaterial]);
 
   useEffect(() => {
-    if (!familyId || !subject?.id) {
+    if (!familyId || !subjectId) {
       setSubjectPlanYearId(null);
       setSubjectPlanData(null);
       setLearningGoalsUnits([]);
       setLearningGoalsSource(null);
       return;
     }
-    const cached = getSubjectProgressCache(familyId, subject.id);
+    const cached = getSubjectProgressCache(familyId, subjectId);
     const nextPlanYearId = cached?.academicYearId || subjectPlanYearIdFromEvents || null;
     setSubjectPlanYearId(nextPlanYearId);
     setSubjectPlanData(cached?.planData || null);
-    if (Array.isArray(cached?.curriculumUnits)) {
-      setLearningGoalsUnits(cached.curriculumUnits);
+    const cachedUnits = Array.isArray(cached?.curriculumUnits) ? cached.curriculumUnits : [];
+    if (cachedUnits.length > 0) {
+      setLearningGoalsUnits((prev) => {
+        if (curriculumUnitsStructureKey(prev) === curriculumUnitsStructureKey(cachedUnits)) return prev;
+        return cachedUnits;
+      });
     }
     setLearningGoalsSource(cached?.curriculumSavedContentSource || null);
-  }, [familyId, subject?.id, subjectPlanYearIdFromEvents]);
+  }, [familyId, subjectId, subjectPlanYearIdFromEvents]);
 
   useEffect(() => {
     if (!familyId || !subject?.id) return;
@@ -3147,6 +3179,11 @@ export default function SubjectDetailPage({
     return [...new Set((assignedChildren || []).map((id) => String(id)).filter(Boolean))];
   }, [getChildIdsForEvent, assignedChildren]);
 
+  const subjectAttendanceContextChildId = useMemo(() => {
+    const ids = [...new Set((assignedChildren || []).map((id) => String(id)).filter(Boolean))];
+    return ids.length === 1 ? ids[0] : null;
+  }, [assignedChildren]);
+
   const runAttendanceMutation = useCallback(async (operation, label) => {
     const result = await operation;
     if (result?.error) {
@@ -3395,7 +3432,11 @@ export default function SubjectDetailPage({
       const assignedIds = resolveChildIdsForAttendanceEvent(event);
       const siblings = getSiblingEventsOnDay(normKey, event, subjectEvents || []);
       siblings.forEach((sibling) => {
-        const childIds = resolveChildIdsForAttendanceEvent(sibling);
+        const childIds = getAttendanceTargetChildIds(sibling, {
+          contextChildId: subjectAttendanceContextChildId,
+          viewingAllChildren: !subjectAttendanceContextChildId,
+          familyChildren: assignedChildren,
+        });
         childIds.forEach((childId) => {
           const existing = attendanceRecords.find(
             (r) => String(r?.event_id || '') === String(sibling?.id) && String(r?.child_id || '') === String(childId) && String(r?.day_date || '').slice(0, 10) === normKey
@@ -3470,10 +3511,16 @@ export default function SubjectDetailPage({
           minutesByEventId[String(sibling.id)] = getEventMinutes(sibling) || 60;
         });
         applyOptimisticProgressByEventIds(siblingIds, true, { dateKey: normKey, minutesByEventId });
+        let nextRecords = [...attendanceRecords];
         for (const sibling of siblings) {
-          const childIds = resolveChildIdsForAttendanceEvent(sibling);
+          const childIds = getAttendanceTargetChildIds(sibling, {
+            contextChildId: subjectAttendanceContextChildId,
+            viewingAllChildren: !subjectAttendanceContextChildId,
+            familyChildren: assignedChildren,
+          });
           if (!childIds.length) continue;
           const minutes = getEventMinutes(sibling);
+          const patches = [];
           const upserts = childIds.map((childId) => {
             const existing = attendanceRecords.find(
               (r) =>
@@ -3482,11 +3529,19 @@ export default function SubjectDetailPage({
                 && String(r?.day_date || '').slice(0, 10) === normKey
             );
             if (existing) {
+              patches.push({ ...existing, status: 'present', minutes });
               return runAttendanceMutation(
                 updateAttendanceLog(existing.id, { status: 'present', minutes }),
                 'update attendance'
               );
             }
+            patches.push({
+              event_id: sibling.id,
+              child_id: String(childId),
+              day_date: normKey,
+              status: 'present',
+              minutes,
+            });
             return runAttendanceMutation(
               createAttendanceLog({
                 family_id: familyId,
@@ -3500,9 +3555,17 @@ export default function SubjectDetailPage({
             );
           });
           await Promise.all(upserts);
-          await runEventStatusBestEffort(sibling.id, 'done');
+          nextRecords = mergeAttendanceRecords(nextRecords, patches);
+          const syncResult = await syncEventDoneStatusAfterAttendanceWrites(
+            sibling,
+            normKey,
+            nextRecords,
+            assignedChildren
+          );
+          if (syncResult?.status) {
+            plannerPatchedAttendances.push({ eventId: sibling.id, status: syncResult.status });
+          }
         }
-        plannerPatchedAttendances = siblingIds.map((id) => ({ eventId: id, status: 'done' }));
       }
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
@@ -3521,6 +3584,8 @@ export default function SubjectDetailPage({
     attendanceRecords,
     attendanceRecordsForUI,
     resolveChildIdsForAttendanceEvent,
+    subjectAttendanceContextChildId,
+    assignedChildren,
     getEventMinutes,
     getSiblingEventsOnDay,
     runAttendanceMutation,
@@ -3546,10 +3611,16 @@ export default function SubjectDetailPage({
         minutesByEventId[String(event.id)] = getEventMinutes(event) || 60;
       });
       applyOptimisticProgressByEventIds(dayEventIds, true, { dateKey: normKey, minutesByEventId });
+      let nextRecords = [...attendanceRecords];
       for (const event of dayEvents) {
-        const childIds = resolveChildIdsForAttendanceEvent(event);
+        const childIds = getAttendanceTargetChildIds(event, {
+          contextChildId: subjectAttendanceContextChildId,
+          viewingAllChildren: !subjectAttendanceContextChildId,
+          familyChildren: assignedChildren,
+        });
         if (!childIds.length) continue;
         const minutes = getEventMinutes(event);
+        const patches = [];
         const upserts = childIds.map((childId) => {
           const existing = attendanceRecords.find(
             (r) =>
@@ -3558,11 +3629,19 @@ export default function SubjectDetailPage({
               && String(r?.day_date || '').slice(0, 10) === normKey
           );
           if (existing) {
+            patches.push({ ...existing, status: 'present', minutes });
             return runAttendanceMutation(
               updateAttendanceLog(existing.id, { status: 'present', minutes }),
               'update attendance'
             );
           }
+          patches.push({
+            event_id: event.id,
+            child_id: String(childId),
+            day_date: normKey,
+            status: 'present',
+            minutes,
+          });
           return runAttendanceMutation(
             createAttendanceLog({
               family_id: familyId,
@@ -3576,12 +3655,17 @@ export default function SubjectDetailPage({
           );
         });
         await Promise.all(upserts);
-        await runEventStatusBestEffort(event.id, 'done');
+        nextRecords = mergeAttendanceRecords(nextRecords, patches);
+        const syncResult = await syncEventDoneStatusAfterAttendanceWrites(
+          event,
+          normKey,
+          nextRecords,
+          assignedChildren
+        );
+        if (syncResult?.status) {
+          plannerPatchedAttendances.push({ eventId: event.id, status: syncResult.status });
+        }
       }
-      plannerPatchedAttendances = dayEvents
-        .map((event) => event?.id)
-        .filter(Boolean)
-        .map((id) => ({ eventId: id, status: 'done' }));
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
@@ -3592,7 +3676,7 @@ export default function SubjectDetailPage({
       toast.push(err?.message || 'Could not mark day attended.', 'error');
       await loadSubjectDetail({ silent: true });
     }
-  }, [familyId, subjectEvents, getEventDateKey, resolveChildIdsForAttendanceEvent, getEventMinutes, attendanceRecords, runAttendanceMutation, runEventStatusBestEffort, applyOptimisticProgressByEventIds, emitPlannerAttendanceSync, loadSubjectDetail, toast]);
+  }, [familyId, subjectEvents, getEventDateKey, resolveChildIdsForAttendanceEvent, subjectAttendanceContextChildId, assignedChildren, getEventMinutes, attendanceRecords, runAttendanceMutation, applyOptimisticProgressByEventIds, emitPlannerAttendanceSync, loadSubjectDetail, toast]);
 
   const handleViewEventsDayPress = useCallback((dateKey) => {
     if (!dateKey) return;
@@ -3805,10 +3889,16 @@ export default function SubjectDetailPage({
           expandedEvents.forEach((event) => {
             if (event?.id) toggledEventIds.push(event.id);
           });
+          let nextRecords = [...attendanceRecords];
           for (const event of expandedEvents) {
-            const assignedIds = resolveChildIdsForAttendanceEvent(event);
+            const assignedIds = getAttendanceTargetChildIds(event, {
+              contextChildId: subjectAttendanceContextChildId,
+              viewingAllChildren: !subjectAttendanceContextChildId,
+              familyChildren: assignedChildren,
+            });
             if (!assignedIds.length) continue;
             const minutes = getEventMinutes(event);
+            const patches = [];
             const upserts = assignedIds.map((childId) => {
               const existing = attendanceRecords.find(
                 (r) =>
@@ -3817,11 +3907,19 @@ export default function SubjectDetailPage({
                   && String(r?.day_date || '').slice(0, 10) === normKey
               );
               if (existing) {
+                patches.push({ ...existing, status: 'present', minutes });
                 return runAttendanceMutation(
                   updateAttendanceLog(existing.id, { status: 'present', minutes }),
                   'update attendance'
                 );
               }
+              patches.push({
+                event_id: event.id,
+                child_id: String(childId),
+                day_date: normKey,
+                status: 'present',
+                minutes,
+              });
               return runAttendanceMutation(
                 createAttendanceLog({
                   family_id: familyId,
@@ -3835,7 +3933,16 @@ export default function SubjectDetailPage({
               );
             });
             await Promise.all(upserts);
-            await runEventStatusBestEffort(event.id, 'done');
+            nextRecords = mergeAttendanceRecords(nextRecords, patches);
+            const syncResult = await syncEventDoneStatusAfterAttendanceWrites(
+              event,
+              normKey,
+              nextRecords,
+              assignedChildren
+            );
+            if (syncResult?.status) {
+              plannerPatchedAttendances.push({ eventId: event.id, status: syncResult.status });
+            }
           }
         } else if (fallbackChildIds.length > 0) {
           const standaloneByChild = new Map(
@@ -3867,7 +3974,9 @@ export default function SubjectDetailPage({
           );
         }
         applyOptimisticProgressByEventIds(toggledEventIds, true);
-        plannerPatchedAttendances = toggledEventIds.map((id) => ({ eventId: id, status: 'done' }));
+        if (plannerPatchedAttendances.length === 0) {
+          plannerPatchedAttendances = toggledEventIds.map((id) => ({ eventId: id, status: 'done' }));
+        }
       }
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
@@ -4093,8 +4202,13 @@ export default function SubjectDetailPage({
         </View>
         ) : null}
 
-        {classroomTab === 'classwork' ? (
-          <View style={styles.bulletinBoardSection}>
+        {Platform.OS === 'web' ? (
+          <View
+            style={[
+              styles.bulletinBoardSection,
+              classroomTab !== 'classwork' && Platform.OS === 'web' ? { display: 'none' } : null,
+            ]}
+          >
             <SubjectClassworkSection
               units={effectiveLearningGoalsUnits}
               assignments={subjectAssignments}
@@ -4115,7 +4229,31 @@ export default function SubjectDetailPage({
               showScheduleAllLessons={showSmartActions}
             />
           </View>
-        ) : null}
+        ) : (
+          classroomTab === 'classwork' ? (
+            <View style={styles.bulletinBoardSection}>
+              <SubjectClassworkSection
+                units={effectiveLearningGoalsUnits}
+                assignments={subjectAssignments}
+                events={subjectEvents}
+                familyId={familyId}
+                subjectId={subject?.id}
+                subjectName={subject?.name}
+                isParentViewer={isParentViewer}
+                onOpenAssignment={openAssignedWorkItem}
+                onManageUnits={openUnitsEditor}
+                unitsActionLabel={unitsEditorLabel}
+                onCreateAssignment={handleCreateAssignment}
+                onAddLearningDay={handleAddLearningDay}
+                onEditSubject={isParentViewer ? () => openSubjectSettings('schedule') : undefined}
+                onPlacementChanged={handleClassworkPlacementChanged}
+                highlightLessonId={highlightLessonId}
+                highlightAssignmentId={highlightAssignmentId}
+                showScheduleAllLessons={showSmartActions}
+              />
+            </View>
+          ) : null
+        )}
 
         {classroomTab === 'materials' ? (
           <View style={styles.bulletinBoardSection}>

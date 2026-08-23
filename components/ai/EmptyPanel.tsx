@@ -54,7 +54,7 @@ const EmptyPanel: React.FC<EmptyPanelProps> = ({ zeroReason, onAction }) => {
       <View style={styles.helperBlock}>
         <Text style={styles.helperTitle}>What can I do?</Text>
         <View style={styles.helperActions}>
-          <TouchableOpacity style={styles.helperButton} onPress={() => openLink('/planner/backlog')}>
+          <TouchableOpacity style={styles.helperButton} onPress={() => openLink('/?view=board')}>
             <Text style={styles.helperText}>View Backlog</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.helperButton} onPress={() => openLink('/settings/subjects')}>

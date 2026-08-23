@@ -11,6 +11,7 @@ import { addMonths, addWeeks } from './utils/date';
 import { formatWeekRangeLabel } from './plannerSectionRouting';
 
 import { PLANNER_EVENT_CATEGORIES } from '../../lib/planner/plannerEventCategories';
+import { writeAppSearchParams } from '../../lib/url';
 
 const VIEW_OPTIONS = [
   { key: 'board', label: 'Week' },
@@ -63,9 +64,7 @@ export default function PlannerCalendarToolbar({
   const setView = (key) => {
     onViewChange?.(key);
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      url.searchParams.set('view', key);
-      window.history.pushState({}, '', url);
+      writeAppSearchParams({ view: key }, { push: true });
       window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: key }));
     }
   };

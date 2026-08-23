@@ -20,7 +20,7 @@ import {
 import MessagesPaneCloseButton from '../messages/MessagesPaneCloseButton';
 import DmParticipantAvatar from '../messages/DmParticipantAvatar';
 import { DOODLE_HELPER_PARTICIPANT } from '../../lib/doodleHelperParticipant';
-import { useDoodleCommandStore } from '../../app/state/useDoodleCommandStore';
+import { normalizeAppHref } from '../../lib/url';
 import { DOODLE_PANE_STATUS, DOODLE_RESPONSE_TYPES } from '../../lib/assistant/commands/types';
 import { trackDoodleEvent } from '../../lib/assistant/commands/analytics';
 import {
@@ -611,7 +611,8 @@ export default function DoodleCommandPane({
       return;
     }
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.history.pushState({}, '', link.href);
+      const normalized = normalizeAppHref(link.href);
+      window.history.pushState({}, '', normalized);
       window.dispatchEvent(new PopStateEvent('popstate'));
     }
   };

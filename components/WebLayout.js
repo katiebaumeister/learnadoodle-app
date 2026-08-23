@@ -61,7 +61,6 @@ import {
   isDayOffOrHolidayEvent,
   shouldUseLegacyEventModal,
 } from '../lib/create/eventOpenRouting';
-import { saveLesson } from '../lib/create/saveEventHelpers';
 import { linkedSummariesFromFamilyApiMembers } from '../lib/services/childInviteStatus';
 import { STRINGS } from '../lib/i18n/strings';
 import PackWeekModal from './ai/PackWeekModal';
@@ -134,88 +133,19 @@ import { defaultPlannerExportColumnSelection, PLANNER_EXPORT_OPTIONAL_COLUMN_DEF
 import { useHoverDropdown } from './ui/useHoverDropdown';
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
 import { AVATAR_KEYS } from '../assets/imageAssetMap';
+import {
+  canonicalizeShellUrlToRoot,
+  isShellDeepLinkPath,
+  normalizeAppHref,
+  normalizeAppPathname,
+  parseNavigationHref,
+  resolveShellRouteFromPathname,
+  writeAppSearchParams,
+} from '../lib/url';
 /**
  * Retired: parent explorer tour and Doodle chatbot setup checklist.
  * Post-onboarding guidance is a seeded Learnadoodle bulletin welcome post (see homeWelcomeBulletin.js).
  */
-
-/** Resolve shell tab/nav from a URL pathname for deep links (/planner, /learning, /library). */
-function resolveShellRouteFromPathname(pathnameRaw) {
-  const pathname = String(pathnameRaw || '/').replace(/\/+$/, '') || '/';
-  if (pathname.match(/^\/subjects\/[^/]+$/)) {
-    const subjectId = pathname.split('/')[2];
-    return { activeTab: `subject-${subjectId}`, activeTopNav: 'subjects', activeSubtab: null, messagesPaneOpen: false };
-  }
-  if (pathname === '/learning' || pathname === '/subject-catalog') {
-    return { activeTab: 'learning', activeTopNav: 'learning', activeSubtab: 'subjects', messagesPaneOpen: false };
-  }
-  if (pathname === '/subjects' || pathname === '/intelligence') {
-    return { activeTab: 'subjects', activeTopNav: 'subjects', activeSubtab: 'subjects', messagesPaneOpen: false };
-  }
-  if (pathname === '/planner/preferences') {
-    return { activeTab: 'settings', activeTopNav: 'planning-preferences', activeSubtab: 'planner-settings', messagesPaneOpen: false };
-  }
-  if (pathname === '/planner') {
-    return { activeTab: 'planner', activeTopNav: 'planner', activeSubtab: 'calendar', messagesPaneOpen: false };
-  }
-  if (pathname === '/messages') {
-    return { activeTab: 'home', activeTopNav: 'messages', activeSubtab: null, messagesPaneOpen: true };
-  }
-  if (pathname === '/materials' || pathname === '/library') {
-    return { activeTab: 'materials', activeTopNav: 'materials', activeSubtab: null, messagesPaneOpen: false };
-  }
-  if (pathname === '/records') {
-    return { activeTab: 'records', activeTopNav: 'records', activeSubtab: 'attendance', messagesPaneOpen: false };
-  }
-  if (pathname === '/family' || pathname === '/profile') {
-    return { activeTab: 'family', activeTopNav: 'family', activeSubtab: null, messagesPaneOpen: false };
-  }
-  if (pathname === '/students') {
-    return { activeTab: 'tutor-students', activeTopNav: 'tutor-students', activeSubtab: null, messagesPaneOpen: false };
-  }
-  if (pathname === '/review') {
-    return { activeTab: 'review', activeTopNav: 'review', activeSubtab: null, messagesPaneOpen: false };
-  }
-  return { activeTab: 'home', activeTopNav: 'home', activeSubtab: null, messagesPaneOpen: false };
-}
-
-/**
- * Shell tabs used to rewrite the URL to /planner, /learning, etc.
- * Expo web refresh on those paths often blanks the app — keep the address bar on `/`.
- */
-function isShellDeepLinkPath(pathnameRaw) {
-  const pathname = String(pathnameRaw || '/').replace(/\/+$/, '') || '/';
-  if (pathname === '/' || pathname === '/home') return false;
-  if (pathname.match(/^\/subjects\/[^/]+$/)) return true;
-  return [
-    '/planner',
-    '/planner/preferences',
-    '/learning',
-    '/subject-catalog',
-    '/subjects',
-    '/intelligence',
-    '/messages',
-    '/materials',
-    '/library',
-    '/records',
-    '/family',
-    '/profile',
-    '/students',
-    '/review',
-  ].includes(pathname);
-}
-
-function canonicalizeShellUrlToRoot() {
-  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-  const pathname = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
-  if (!isShellDeepLinkPath(pathname) && pathname === '/') return;
-  if (!isShellDeepLinkPath(pathname)) return;
-  const url = new URL(window.location.href);
-  url.pathname = '/';
-  // Drop planner view deep-link params; tab state is kept in React.
-  url.searchParams.delete('view');
-  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
-}
 
 function getInitialShellRoute() {
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -483,6 +413,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   const handlePlannerLearningDaySaved = useCallback(({ event: savedEvent } = {}) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('refreshCalendar', {
+      detail: { skipCacheClear: true },
+    }));
     window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
     const subjectId = resolveEventSubjectId(savedEvent);
     if (subjectId) {
@@ -1935,14 +1868,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         if (['month', 'board', 'tasks', 'year'].includes(newView)) {
           setActiveRightTool(null);
         }
-        const url = new URL(window.location.href);
         const normalizedView = String(newView || '').toLowerCase();
         if (normalizedView === 'board' || normalizedView === 'week') {
-          url.searchParams.delete('view');
+          writeAppSearchParams({ view: null });
         } else {
-          url.searchParams.set('view', newView);
+          writeAppSearchParams({ view: newView });
         }
-        window.history.replaceState({}, '', url.toString());
       };
       window.addEventListener('plannerViewChange', handleViewChange);
       
@@ -1974,14 +1905,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     // Note: setShowViewDropdown is now called in onPress to close immediately
     
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
       const normalizedView = String(view || '').toLowerCase();
       if (normalizedView === 'board' || normalizedView === 'week') {
-        url.searchParams.delete('view');
+        writeAppSearchParams({ view: null });
       } else {
-        url.searchParams.set('view', view);
+        writeAppSearchParams({ view });
       }
-      window.history.replaceState({}, '', url.toString());
       
       // Dispatch event to update WebContent
       console.log('[WebLayout] Dispatching plannerViewChange event with view:', view);
@@ -2619,8 +2548,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
 
     const checkUrlRoute = () => {
-      const pathnameRaw = window.location.pathname || '/';
-      const pathname = pathnameRaw.replace(/\/$/, '') || '/';
+      const pathname = normalizeAppPathname(window.location.pathname);
       const route = resolveShellRouteFromPathname(pathname);
 
       if (pathname === '/planner' || pathname === '/planner/preferences') {
@@ -2642,10 +2570,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       if (route.activeSubtab != null) setActiveSubtab(route.activeSubtab);
       setIsMessagesPaneOpen(!!route.messagesPaneOpen);
 
-      if (pathname === '/planner') {
-        const urlParams = new URLSearchParams(window.location.search);
-        const view = urlParams.get('view');
-        if (view) setCurrentView(sanitizeLegacyPlanYearView(view));
+      const plannerView = route.plannerView
+        || (pathname === '/planner' ? new URLSearchParams(window.location.search).get('view') : null);
+      if (plannerView) {
+        setCurrentView(sanitizeLegacyPlanYearView(plannerView));
       }
 
       if (isShellDeepLinkPath(pathname)) {
@@ -3327,15 +3255,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   const updateUrlParams = (updates) => {
     if (Platform.OS !== 'web') return;
-    const url = new URL(window.location.href);
-    Object.entries(updates).forEach(([key, value]) => {
-      if (value === null || value === undefined) {
-        url.searchParams.delete(key);
-      } else {
-        url.searchParams.set(key, value);
-      }
-    });
-    window.history.replaceState({}, '', url.toString());
+    writeAppSearchParams(updates);
   };
 
   const handleTabChange = useCallback((tab, subtab = null) => {
@@ -3364,7 +3284,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     handleTabChange('intelligence');
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const queryString = new URLSearchParams(params).toString();
-      window.history.replaceState({}, '', `?tab=intelligence&${queryString}`);
+      writeAppSearchParams({ tab: 'intelligence', ...Object.fromEntries(new URLSearchParams(queryString)) });
     }
   }, [handleTabChange]);
 
@@ -3461,9 +3381,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setCurrentView('year');
           setDefaultView('year');
           if (Platform.OS === 'web') {
-            const url = new URL(window.location);
-            url.searchParams.set('view', 'year');
-            window.history.pushState({}, '', url);
+            writeAppSearchParams({ view: 'year' }, { push: true });
             window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'year' }));
             window.setTimeout(() => {
               window.dispatchEvent(new CustomEvent('openPlannerBulkAttendance'));
@@ -3860,37 +3778,29 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return [...new Set(ids)];
   }, []);
 
-  const handleLearningDayOneOffEvent = useCallback(async () => {
+  const handleLearningDayOneOffEvent = useCallback(() => {
     const subject = learningDaySetupChoice.subject;
     if (!subject?.id || !familyId) return;
     const childIds = resolveSubjectChildIds(subject);
-    try {
-      const created = await saveLesson({
-        familyId,
-        title: subject.name || 'Learning day',
-        childIds,
-        subjectId: subject.id,
-        scheduleMode: 'unscheduled',
-        date: currentMonth,
-      });
-      if (created?.id) {
-        const enriched = await enrichLearningDayEvent({
-          supabase,
-          familyId,
-          event: created,
-        });
-        closeLearningDaySetupChoice();
-        setLearningDayModalState({ visible: true, event: enriched || created });
-      } else {
-        closeLearningDaySetupChoice();
-      }
-    } catch (err) {
-      console.warn('[LearningDayOneOff] creation error:', err?.message || err);
-      closeLearningDaySetupChoice();
-    }
+    const sessionStart = new Date();
+    sessionStart.setHours(12, 0, 0, 0);
+    const sessionEnd = new Date(sessionStart.getTime() + 60 * 60 * 1000);
+    const draftEvent = {
+      _pendingCreate: true,
+      subject_id: subject.id,
+      title: subject.name || 'Learning day',
+      child_ids: childIds,
+      child_id: childIds[0] || null,
+      start_ts: sessionStart.toISOString(),
+      end_ts: sessionEnd.toISOString(),
+      status: 'scheduled',
+      event_type: 'Lesson',
+      academic_year_id: subject.academic_year_id || subject.academicYearId || null,
+    };
+    closeLearningDaySetupChoice();
+    setLearningDayModalState({ visible: true, event: draftEvent });
   }, [
     closeLearningDaySetupChoice,
-    currentMonth,
     familyId,
     learningDaySetupChoice.subject,
     resolveSubjectChildIds,
@@ -4298,9 +4208,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         setCurrentView(sanitizedView);
         setDefaultView(sanitizedView);
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          const url = new URL(window.location);
-          url.searchParams.set('view', sanitizedView);
-          window.history.replaceState({}, '', url);
+          writeAppSearchParams({ view: sanitizedView });
           window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: sanitizedView }));
         }
       }
@@ -4614,23 +4522,25 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     }
                     return;
                   }
-                  let section = null;
-                  try {
-                    const parsed = new URL(href, 'https://learnadoodle.local');
-                    section = parsed.searchParams.get('section');
-                  } catch {
-                    section = null;
-                  }
+                  const nav = parseNavigationHref(href);
                   if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    // Never leave a shell deep path in the address bar (Expo web refresh blanks).
-                    window.history.replaceState({}, '', '/');
+                    window.history.replaceState({}, '', normalizeAppHref(href));
                   }
-                  if (href.includes('/planner')) handleTopSelect('planner');
-                  else if (href.includes('/learning') || href.includes('/subjects')) handleTopSelect('learning');
-                  else if (href.includes('materials')) handleTopSelect('materials');
-                  else if (href.includes('/settings') || href.includes('/family')) {
-                    // Settings sections: profile | preferences→appearance | notifications | planner-settings | …
+                  if (nav.target === 'planner') {
+                    handleTopSelect('planner');
+                    if (nav.view) {
+                      const nextView = sanitizeLegacyPlanYearView(nav.view);
+                      setCurrentView(nextView);
+                      writeAppSearchParams({ view: nextView });
+                      window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: nextView }));
+                    }
+                  } else if (nav.target === 'learning') {
+                    handleTopSelect('learning');
+                  } else if (nav.target === 'materials') {
+                    handleTopSelect('materials');
+                  } else if (nav.target === 'settings') {
                     let normalized = 'profile';
+                    const section = nav.section;
                     if (section === 'preferences' || section === 'appearance') normalized = 'appearance';
                     else if (
                       section === 'notifications'
@@ -4644,7 +4554,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       normalized = section;
                     }
                     handleTabChange('settings', normalized);
-                  } else handleTopSelect('home');
+                  } else if (nav.target === 'intelligence') {
+                    handleTabChange('intelligence');
+                  } else {
+                    handleTopSelect('home');
+                  }
                 }}
               />
             ) : isCreatePaneOpen ? (
@@ -4937,9 +4851,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                             setCurrentView(viewValue);
                             setContextMenuView(null);
                             if (Platform.OS === 'web') {
-                              const url = new URL(window.location);
-                              url.searchParams.set('view', viewValue);
-                              window.history.pushState({}, '', url);
+                              writeAppSearchParams({ view: viewValue }, { push: true });
                               window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: viewValue }));
                             }
                           }}

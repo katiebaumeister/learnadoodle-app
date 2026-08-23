@@ -4,8 +4,16 @@ import { ChevronLeft, ChevronRight, Check, BookOpen, Brain, FileText } from 'luc
 import { getChildColorFromAvatar, hexToRgba } from '../utils/avatarColors';
 import { ModalSectionCard } from './ui/ModalSectionCard';
 import { AVATAR_PICKER_CELL_SIZE, AVATAR_PICKER_IMAGE_SIZE } from '../lib/onboardingProfAvatars';
+import {
+  CHILD_AGE_OPTIONS,
+  CHILD_GRADE_OPTIONS,
+  childAgeFromPickerValue,
+  childAgeToPickerValue,
+  childGradeToPickerValue,
+  isAgeChipSelected,
+} from '../lib/childProfilePickers';
 
-const GRADES = ['Pre-K','K','1','2','3','4','5','6','7','8','9','10','11','12'];
+const GRADES = CHILD_GRADE_OPTIONS;
 const STATES = ['None','AL','AK','AZ','AR','CA','CO','CT','DC','DE','FL','GA','HI','IA','ID','IL','IN','KS','KY','LA','MA','MD','ME','MI','MN','MO','MS','MT','NC','ND','NE','NH','NJ','NM','NV','NY','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VA','VT','WA','WI','WV','WY'];
 const INTERESTS = ['STEM','Reading','Writing','Arts','Music','Sports','Outdoors','Languages','History','Coding','Woodworking','Other'];
 
@@ -82,8 +90,8 @@ const AddChildForm = forwardRef(
   ) => {
   const [name, setName] = useState(initial.name || '');
   const [nickname, setNickname] = useState(initial.nickname || '');
-  const [age, setAge] = useState(initial.age ? String(initial.age) : '');
-  const [grade, setGrade] = useState(initial.grade || initial.grade_label || '');
+  const [age, setAge] = useState(childAgeToPickerValue(initial.age));
+  const [grade, setGrade] = useState(childGradeToPickerValue(initial.grade || initial.grade_label));
   const [standardsState, setStandardsState] = useState(initial.standards_state || initial.standardsState || 'None');
   const [interests, setInterests] = useState(() => {
     const arr = Array.isArray(initial.interests) ? initial.interests : [];
@@ -164,9 +172,11 @@ const AddChildForm = forwardRef(
   useEffect(() => {
     if (initial.name !== undefined) setName(initial.name || '');
     if (initial.nickname !== undefined) setNickname(initial.nickname || '');
-    if (initial.age !== undefined) setAge(initial.age ? String(initial.age) : '');
+    if (initial.age !== undefined) {
+      setAge(childAgeToPickerValue(initial.age));
+    }
     if (initial.grade !== undefined || initial.grade_label !== undefined) {
-      setGrade(initial.grade || initial.grade_label || '');
+      setGrade(childGradeToPickerValue(initial.grade || initial.grade_label));
     }
     if (initial.standards_state !== undefined || initial.standardsState !== undefined) {
       setStandardsState(initial.standards_state || initial.standardsState || 'None');
@@ -232,8 +242,8 @@ const AddChildForm = forwardRef(
     const ini = initial || {};
     if ((name || '').trim() !== (ini.name || '').trim()) return true;
     if ((nickname || '').trim() !== (ini.nickname || '').trim()) return true;
-    if ((age || '') !== (ini.age != null && ini.age !== '' ? String(ini.age) : '')) return true;
-    const gIn = ini.grade || ini.grade_label || '';
+    if ((age || '') !== childAgeToPickerValue(ini.age)) return true;
+    const gIn = childGradeToPickerValue(ini.grade || ini.grade_label || '');
     if (String(grade || '') !== String(gIn || '')) return true;
     const aIn = ini.avatar || ini.avatar_url || 'prof1';
     if (String(avatar || '') !== String(aIn)) return true;
@@ -321,7 +331,7 @@ const AddChildForm = forwardRef(
     const payload = {
       name: name.trim(),
       nickname: nickname.trim() || null,
-      age: Number(age),
+      age: childAgeFromPickerValue(age),
       grade: grade || null,
       standardsState: standardsState === 'None' ? null : standardsState,
       interests: finalInterests,
@@ -360,13 +370,13 @@ const AddChildForm = forwardRef(
         <View style={styles.field}>
           <Text style={styles.label}>Age<Text style={styles.required}> *</Text></Text>
           <View style={styles.chipsWrap}>
-            {Array.from({ length: 18 }, (_, i) => i + 3).map(n => (
+            {CHILD_AGE_OPTIONS.map((option) => (
               <TouchableOpacity
-                key={n}
-                style={[styles.chip, Number(age) === n && styles.chipSelected]}
-                onPress={() => setAge(String(n))}
+                key={option}
+                style={[styles.chip, isAgeChipSelected(option, age) && styles.chipSelected]}
+                onPress={() => setAge(option)}
               >
-                <Text style={[styles.chipText, Number(age) === n && styles.chipTextSelected]}>{String(n)}</Text>
+                <Text style={[styles.chipText, isAgeChipSelected(option, age) && styles.chipTextSelected]}>{option}</Text>
               </TouchableOpacity>
             ))}
           </View>

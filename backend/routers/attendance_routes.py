@@ -77,6 +77,7 @@ def _is_missing_on_conflict_constraint_error(err: Exception) -> bool:
 class CompleteEventInput(BaseModel):
     minutes_override: Optional[int] = Field(None, description="Override calculated minutes")
     note: Optional[str] = Field(None, description="Optional note about completion")
+    child_id: Optional[str] = Field(None, description="Mark attendance for one assigned child only")
 
 
 class CompleteEventOut(BaseModel):
@@ -157,78 +158,42 @@ async def complete_event(
         minutes = body.minutes_override if body.minutes_override is not None else int(duration.total_seconds() / 60)
         
         conv_fields, did_convert = get_placeholder_conversion_fields(event)
-        status_candidates = ["done", "completed"]
-        updated_event = None
-        status_update_errors = []
-        status_persisted = False
-        for status_value in status_candidates:
-            status_update = {"status": status_value}
-            status_update.update(conv_fields)
-            try:
-                update_res = supabase.table("events").update(status_update).eq("id", event_id).execute()
-                updated_event = None
-                if update_res and isinstance(update_res.data, list) and len(update_res.data) > 0:
-                    updated_event = update_res.data[0]
-                elif update_res and isinstance(update_res.data, dict):
-                    updated_event = update_res.data
-                # Some local PostgREST modes return minimal payload for update. Re-fetch to confirm.
-                if updated_event is None:
-                    refetch_res = supabase.table("events").select("*").eq("id", event_id).single().execute()
-                    if refetch_res and refetch_res.data:
-                        refetched = refetch_res.data
-                        if refetched.get("status") == status_value:
-                            updated_event = refetched
-                if updated_event is not None:
-                    if did_convert:
-                        log_event("placeholder_converted", action="attendance_complete", event_id=event_id, academic_year_id=event.get("academic_year_id"), user_id=user["id"], old_batch_id=event.get("generation_batch_id"))
-                    status_persisted = True
-                    break
-            except Exception as status_err:
-                status_update_errors.append(status_err)
-                # Local DBs may have an event-status trigger that upserts attendance with
-                # an ON CONFLICT target not present in older schemas. In that case, try
-                # the alternate status value ("completed" vs "done") before failing.
-                if _is_invalid_status_value_error(status_err) or _is_missing_on_conflict_constraint_error(status_err):
-                    continue
-                raise
 
-        if updated_event is None:
-            # Compatibility fallback: if local schema blocks both "done" and "completed",
-            # keep completion flow moving by persisting attendance only.
-            # UI derives attended state from attendance records and event status where available.
-            updated_event = dict(event)
-            err_msgs = " | ".join(str(e) for e in status_update_errors[-2:]) if status_update_errors else "unknown update error"
-            log_event(
-                "event.complete.status_fallback_used",
-                event_id=event_id,
-                family_id=family_id,
-                error=err_msgs,
-                migration_hint="Run migration 20260234_attendance_trigger_event_child_conflict.sql",
-            )
-        
         # Extract day_date from start_ts (date only)
         day_date = start_ts.date().isoformat()
-        
+
         # Resolve which children this event applies to: event child_ids/child_id, or all family children (whole-family)
         child_ids_raw = event.get("child_ids") or []
         child_ids_valid = [c for c in child_ids_raw if c] if isinstance(child_ids_raw, list) else []
         if child_ids_valid:
-            child_ids_to_use = child_ids_valid
+            all_assigned_child_ids = child_ids_valid
         elif event.get("child_id"):
-            child_ids_to_use = [event["child_id"]]
+            all_assigned_child_ids = [event["child_id"]]
         else:
-            # Whole-family event: one attendance record per family child (e.g. Lilly, Max, Enzo)
             children_res = supabase.table("children").select("id").eq("family_id", family_id).execute()
-            child_ids_to_use = [r["id"] for r in (children_res.data or [])]
-            if not child_ids_to_use:
+            all_assigned_child_ids = [r["id"] for r in (children_res.data or [])]
+            if not all_assigned_child_ids:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Event has no children assigned and family has no children. Add children to the family or assign the event to specific children."
                 )
-        
-        # One attendance record per child. Use delete-then-insert so we don't depend on
-        # ON CONFLICT (avoids "no unique or exclusion constraint" if migration not applied or client mismatch).
-        supabase.table("attendance_records").delete().eq("event_id", event_id).execute()
+
+        assigned_set = {str(cid) for cid in all_assigned_child_ids}
+        if body.child_id:
+            requested_child_id = str(body.child_id)
+            if requested_child_id not in assigned_set:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="child_id is not assigned to this event",
+                )
+            target_child_ids = [body.child_id]
+        else:
+            target_child_ids = all_assigned_child_ids
+
+        # Upsert attendance for target children only (preserve other children's rows).
+        for cid in target_child_ids:
+            supabase.table("attendance_records").delete().eq("event_id", event_id).eq("child_id", cid).execute()
+
         attendance_payloads = [
             {
                 "family_id": family_id,
@@ -240,7 +205,7 @@ async def complete_event(
                 "note": body.note,
                 "created_by": user["id"]
             }
-            for cid in child_ids_to_use
+            for cid in target_child_ids
         ]
         attendance_res = None
         insert_errors = []
@@ -278,8 +243,6 @@ async def complete_event(
                 continue
 
         # Legacy compatibility: some local schemas enforce one attendance row per event_id.
-        # If this event has multiple children and insert fails with event unique conflict,
-        # retry with only the first child row so completion still persists.
         if attendance_res is None and len(attendance_payloads) > 1 and any(_is_event_unique_conflict(e) for e in insert_errors):
             single_row = [attendance_payloads[0]]
             single_attempts = [
@@ -305,7 +268,6 @@ async def complete_event(
                     continue
 
         if attendance_res is None or not attendance_res.data:
-            # Keep completion successful even if local attendance_records schema diverges.
             err_msgs = " | ".join(str(e) for e in insert_errors[-2:]) if insert_errors else "unknown insert error"
             log_event("event.complete.attendance_fallback_used", event_id=event_id, family_id=family_id, error=err_msgs)
             attendance = {
@@ -316,8 +278,73 @@ async def complete_event(
                 "source": "event_complete_fallback",
             }
         else:
-            # Return first record for API shape; all children have a row in DB
             attendance = attendance_res.data[0] if isinstance(attendance_res.data, list) else attendance_res.data
+
+        # Set global event status only when every assigned child is present.
+        present_child_ids = set()
+        try:
+            present_res = (
+                supabase.table("attendance_records")
+                .select("child_id, status")
+                .eq("event_id", event_id)
+                .execute()
+            )
+            for row in (present_res.data or []):
+                status_key = str(row.get("status") or "").strip().lower()
+                if status_key in ("present", "partial"):
+                    present_child_ids.add(str(row.get("child_id")))
+        except Exception:
+            present_child_ids = set(str(cid) for cid in target_child_ids)
+
+        all_present = assigned_set.issubset(present_child_ids)
+        desired_status = "done" if all_present else "scheduled"
+        status_candidates = [desired_status]
+        if desired_status == "done":
+            status_candidates.append("completed")
+        elif desired_status == "scheduled":
+            status_candidates.extend(["scheduled"])
+
+        updated_event = None
+        status_update_errors = []
+        status_persisted = False
+        for status_value in status_candidates:
+            status_update = {"status": status_value}
+            status_update.update(conv_fields)
+            try:
+                update_res = supabase.table("events").update(status_update).eq("id", event_id).execute()
+                updated_event = None
+                if update_res and isinstance(update_res.data, list) and len(update_res.data) > 0:
+                    updated_event = update_res.data[0]
+                elif update_res and isinstance(update_res.data, dict):
+                    updated_event = update_res.data
+                if updated_event is None:
+                    refetch_res = supabase.table("events").select("*").eq("id", event_id).single().execute()
+                    if refetch_res and refetch_res.data:
+                        refetched = refetch_res.data
+                        if refetched.get("status") == status_value:
+                            updated_event = refetched
+                if updated_event is not None:
+                    if did_convert:
+                        log_event("placeholder_converted", action="attendance_complete", event_id=event_id, academic_year_id=event.get("academic_year_id"), user_id=user["id"], old_batch_id=event.get("generation_batch_id"))
+                    status_persisted = True
+                    break
+            except Exception as status_err:
+                status_update_errors.append(status_err)
+                if _is_invalid_status_value_error(status_err) or _is_missing_on_conflict_constraint_error(status_err):
+                    continue
+                raise
+
+        if updated_event is None:
+            updated_event = dict(event)
+            updated_event["status"] = desired_status
+            err_msgs = " | ".join(str(e) for e in status_update_errors[-2:]) if status_update_errors else "unknown update error"
+            log_event(
+                "event.complete.status_fallback_used",
+                event_id=event_id,
+                family_id=family_id,
+                error=err_msgs,
+                migration_hint="Run migration 20260234_attendance_trigger_event_child_conflict.sql",
+            )
         
         log_event(
             "event.completed",

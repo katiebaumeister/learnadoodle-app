@@ -207,11 +207,12 @@ export default function ManualCurriculumBuilderModal({
   getUnitDropWebProps = null,
   getActiveLearningDayId = null,
   onLearningDayDropOnLesson = null,
+  stackZIndex = 10002,
 }) {
   const toast = useToast();
   const overlayRef = useRef(null);
   const editorScrollRef = useRef(null);
-  useModalStackElevation(overlayRef, visible && !embedded, 10002);
+  useModalStackElevation(overlayRef, visible && !embedded, stackZIndex);
 
   const [draft, setDraft] = useState({ title: null, units: [emptyUnit(1)] });
   const [saving, setSaving] = useState(false);

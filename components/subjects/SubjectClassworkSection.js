@@ -20,6 +20,7 @@ import {
   Plus,
   Trash2,
   X,
+  Sparkles,
 } from 'lucide-react';
 import {
   buildSubjectClassworkModel,
@@ -898,12 +899,15 @@ function ClassworkPanelHeader({
   unitsActionLabel,
   onUnitsAction,
   showUnitsAction = false,
+  showCreateFromMaterialAction = false,
+  createFromMaterialActionLabel = 'Create from material',
+  onCreateFromMaterialAction = null,
   showScheduleAllAction = false,
   scheduleAllActionLabel = 'Schedule all lessons',
   onScheduleAllAction = null,
   scheduleAllDisabled = false,
 }) {
-  const hasAny = showAction || showSecondaryAction || showTertiaryAction || showUnitsAction || showScheduleAllAction;
+  const hasAny = showAction || showSecondaryAction || showTertiaryAction || showUnitsAction || showCreateFromMaterialAction || showScheduleAllAction;
   return (
     <View style={styles.panelToolbar}>
       <Text style={styles.panelTitle}>Classwork</Text>
@@ -952,6 +956,17 @@ function ClassworkPanelHeader({
             >
               <CalendarCheck2 size={18} color="#334155" strokeWidth={2.25} />
               <Text style={styles.panelActionBtnText}>{scheduleAllActionLabel}</Text>
+            </TouchableOpacity>
+          ) : null}
+          {showCreateFromMaterialAction ? (
+            <TouchableOpacity
+              style={styles.panelActionBtn}
+              onPress={onCreateFromMaterialAction}
+              accessibilityLabel={createFromMaterialActionLabel}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Sparkles size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.panelActionBtnText}>{createFromMaterialActionLabel}</Text>
             </TouchableOpacity>
           ) : null}
           {showUnitsAction ? (
@@ -1100,6 +1115,44 @@ function AddUnitLink({ onPress }) {
   );
 }
 
+function CreateFromMaterialComingSoonModal({ visible, onClose }) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={comingSoonModalStyles.overlay}>
+        <View style={comingSoonModalStyles.content}>
+          <TouchableOpacity
+            style={comingSoonModalStyles.close}
+            onPress={onClose}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <X size={24} color="#64748b" />
+          </TouchableOpacity>
+          <Text style={comingSoonModalStyles.title}>Coming soon</Text>
+          <Text style={comingSoonModalStyles.body}>
+            Create from material is in development. Stay tuned for updates!
+          </Text>
+          <TouchableOpacity
+            style={comingSoonModalStyles.button}
+            onPress={onClose}
+            activeOpacity={0.8}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={comingSoonModalStyles.buttonText}>Got it</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function ScheduleAllComingSoonModal({ visible, onClose }) {
   return (
     <Modal
@@ -1167,6 +1220,7 @@ export default function SubjectClassworkSection({
   );
   const [schedulingAll, setSchedulingAll] = useState(false);
   const [showScheduleAllComingSoon, setShowScheduleAllComingSoon] = useState(false);
+  const [showCreateFromMaterialComingSoon, setShowCreateFromMaterialComingSoon] = useState(false);
 
   const [draggingAssignmentId, setDraggingAssignmentId] = useState(null);
   const [draggingLessonId, setDraggingLessonId] = useState(null);
@@ -1383,7 +1437,7 @@ export default function SubjectClassworkSection({
     [assignments, optimisticAssignmentPatches],
   );
 
-  const model = useMemo(
+  const rawModel = useMemo(
     () => buildSubjectClassworkModel({
       units: effectiveUnits,
       assignments: mergedAssignments,
@@ -1392,10 +1446,39 @@ export default function SubjectClassworkSection({
     [effectiveUnits, mergedAssignments, mergedEvents],
   );
 
+  const stableModelRef = useRef(rawModel);
+  const eventsSignatureRef = useRef('');
+  const assignmentsSignatureRef = useRef('');
+
+  const model = useMemo(() => {
+    const next = rawModel;
+    const hasContent = (next.units?.length || 0) > 0
+      || (next.unlinkedLearningDays?.length || 0) > 0
+      || (next.noUnitAssignments?.length || 0) > 0;
+    const prev = stableModelRef.current;
+    const prevHasContent = (prev?.units?.length || 0) > 0
+      || (prev?.unlinkedLearningDays?.length || 0) > 0
+      || (prev?.noUnitAssignments?.length || 0) > 0;
+    if (!hasContent && prevHasContent) {
+      return prev;
+    }
+    stableModelRef.current = next;
+    return next;
+  }, [rawModel]);
+
   useEffect(() => {
+    const sig = (events || []).map((event) => String(event?.id || '')).join('|');
+    if (sig === eventsSignatureRef.current) return;
+    eventsSignatureRef.current = sig;
     setOptimisticEventPatches({});
+  }, [events]);
+
+  useEffect(() => {
+    const sig = (assignments || []).map((item) => String(item?.id || '')).join('|');
+    if (sig === assignmentsSignatureRef.current) return;
+    assignmentsSignatureRef.current = sig;
     setOptimisticAssignmentPatches({});
-  }, [events, assignments]);
+  }, [assignments]);
 
   const handleOpenLearningDay = useCallback((event) => {
     if (!event?.id) return;
@@ -2297,6 +2380,8 @@ export default function SubjectClassworkSection({
           showUnitsAction={isParentViewer && !!onManageUnits}
           unitsActionLabel={unitsActionLabel}
           onUnitsAction={handleOpenUnitsEditor}
+          showCreateFromMaterialAction={isParentViewer}
+          onCreateFromMaterialAction={() => setShowCreateFromMaterialComingSoon(true)}
           showScheduleAllAction={isParentViewer && showScheduleAllLessons}
           scheduleAllActionLabel={schedulingAll ? 'Scheduling…' : 'Schedule all lessons'}
           onScheduleAllAction={handleScheduleClassDaysPress}
@@ -2329,6 +2414,10 @@ export default function SubjectClassworkSection({
         <ScheduleAllComingSoonModal
           visible={showScheduleAllComingSoon}
           onClose={() => setShowScheduleAllComingSoon(false)}
+        />
+        <CreateFromMaterialComingSoonModal
+          visible={showCreateFromMaterialComingSoon}
+          onClose={() => setShowCreateFromMaterialComingSoon(false)}
         />
         <ClassworkPlanningModal
           visible={scheduleModal.visible}
@@ -2415,6 +2504,8 @@ export default function SubjectClassworkSection({
         showUnitsAction={isParentViewer && !!onManageUnits}
         unitsActionLabel={unitsActionLabel}
         onUnitsAction={handleOpenUnitsEditor}
+        showCreateFromMaterialAction={isParentViewer}
+        onCreateFromMaterialAction={() => setShowCreateFromMaterialComingSoon(true)}
         showScheduleAllAction={isParentViewer && showScheduleAllLessons}
         scheduleAllActionLabel={schedulingAll ? 'Scheduling…' : 'Schedule all lessons'}
         onScheduleAllAction={handleScheduleClassDaysPress}
@@ -2643,6 +2734,10 @@ export default function SubjectClassworkSection({
       <ScheduleAllComingSoonModal
         visible={showScheduleAllComingSoon}
         onClose={() => setShowScheduleAllComingSoon(false)}
+      />
+      <CreateFromMaterialComingSoonModal
+        visible={showCreateFromMaterialComingSoon}
+        onClose={() => setShowCreateFromMaterialComingSoon(false)}
       />
       <ClassworkPlanningModal
         visible={scheduleModal.visible}

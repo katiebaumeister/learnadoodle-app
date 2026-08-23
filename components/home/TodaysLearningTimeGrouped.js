@@ -5,6 +5,7 @@ import { colors, shadows, getCategoryColor } from '../../theme/colors';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
 import { safeImageUri } from '../../lib/safeImageUri';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
+import { writeAppSearchParams } from '../../lib/url';
 
 // Avatar sources
 const avatarSources = {
@@ -222,18 +223,10 @@ export default function TodaysLearningTimeGrouped({
   const handleLog = (event) => {
     // Navigate to Intelligence Hub with this event highlighted
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      // Keep any existing params, but ensure we land in Intelligence Hub
-      params.set('tab', 'planner-ai');
-      params.set('eventId', event.id);
-      const newUrl = `${window.location.pathname}?${params.toString()}`;
-      window.history.pushState({}, '', newUrl);
+      writeAppSearchParams({ tab: 'planner-ai', eventId: event.id }, { push: true });
       // Tell WebLayout / WebContent to switch to Intelligence tab
       if (window.__ldSearchNavigate) {
         window.__ldSearchNavigate('intelligence', null, { eventId: event.id });
-      } else {
-        // Fallback: full navigation via hash or location
-        window.location.href = newUrl;
       }
     }
   };

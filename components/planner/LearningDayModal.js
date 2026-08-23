@@ -40,9 +40,15 @@ import {
 } from '../../lib/learningDaySessionHelpers';
 import { dispatchOpenSubjectSettings } from '../../lib/subjectClassworkNavigation';
 import { resolveEventSubjectId } from '../../lib/planner/plannerEventSubject';
+import { saveLesson } from '../../lib/create/saveEventHelpers';
 import { formatSubjectScheduleSummaryLine } from '../subjects/subjectScheduleOverview';
-
-const SCHEDULE_EDIT_SUFFIX = 'Edit subject name, children, and recurring schedule from Subject settings.';
+import EditSubjectUnitsModal from '../subjects/EditSubjectUnitsModal';
+import { NESTED_OVER_PARENT_MODAL_Z } from '../hooks/useModalStackElevation';
+import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
+import {
+  curriculumStructureHasContent,
+  draftFromCurriculumStructure,
+} from '../../lib/subjectUnitsEditorDraft';
 
 export default function LearningDayModal({
   visible,
@@ -70,16 +76,18 @@ export default function LearningDayModal({
   const [notes, setNotes] = useState('');
   const [materialId, setMaterialId] = useState(null);
   const [showAddMaterial, setShowAddMaterial] = useState(false);
+  const [showUnitsEditor, setShowUnitsEditor] = useState(false);
   const [formDirty, setFormDirty] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [validationBanner, setValidationBanner] = useState('');
   const [errors, setErrors] = useState({});
 
   const activeEvent = sessionEvent || event;
+  const isCreateMode = !activeEvent?.id || activeEvent?._pendingCreate === true;
   const subjectId = resolveEventSubjectId(activeEvent);
   const subjectName = resolveLearningDaySubjectName(activeEvent, subjects);
   const isSkipped = isLearningDaySessionSkipped(activeEvent);
-  const eventId = activeEvent?.id;
+  const eventId = isCreateMode ? null : activeEvent?.id;
   const disabled = isSkipped || saving;
 
   const sessionChildIds = useMemo(() => {
@@ -107,16 +115,15 @@ export default function LearningDayModal({
 
   const scheduleHint = useMemo(() => {
     const yearId = activeEvent?.academic_year_id;
-    let summary = null;
     if (familyId && yearId && subjectId) {
       const planData = getPlanYearFullDataFromCache(familyId, yearId);
-      summary = formatSubjectScheduleSummaryLine(planData, subjectId);
+      const summary = formatSubjectScheduleSummaryLine(planData, subjectId);
+      if (summary) return summary;
     }
-    if (!summary && subjectRow?.cadenceText) {
-      summary = String(subjectRow.cadenceText).trim();
+    if (subjectRow?.cadenceText) {
+      return String(subjectRow.cadenceText).trim();
     }
-    if (summary) return `${summary}. ${SCHEDULE_EDIT_SUFFIX}`;
-    return SCHEDULE_EDIT_SUFFIX;
+    return null;
   }, [activeEvent?.academic_year_id, familyId, subjectId, subjectRow?.cadenceText]);
 
   const resetSessionFields = useCallback((row) => {
@@ -179,7 +186,7 @@ export default function LearningDayModal({
     } else if (durationNum < 15) {
       next.duration = 'Duration must be at least 15 minutes.';
     }
-    if (!eventId || !familyId) {
+    if (!isCreateMode && (!eventId || !familyId)) {
       next.form = 'This learning day could not be loaded. Close and try again.';
     }
     if (isSkipped) {
@@ -202,6 +209,7 @@ export default function LearningDayModal({
     eventId,
     familyId,
     isSkipped,
+    isCreateMode,
   ]);
 
   const buildPendingChanges = useCallback(() => {
@@ -268,7 +276,7 @@ export default function LearningDayModal({
   const finishSaveSuccess = useCallback((patch = {}) => {
     setFormDirty(false);
     setValidationBanner('');
-    toast.push('Learning day updated', 'success');
+    toast.push(isCreateMode ? 'Learning day added' : 'Learning day updated', 'success');
     try {
       notifySaved(patch);
     } catch (err) {
@@ -276,7 +284,7 @@ export default function LearningDayModal({
     }
     // Always close from the modal so a parent handler error cannot leave it open.
     onClose?.();
-  }, [toast, notifySaved, onClose]);
+  }, [toast, notifySaved, onClose, isCreateMode]);
 
   const handleBlockedSave = useCallback(() => {
     if (!validate()) return;
@@ -284,6 +292,42 @@ export default function LearningDayModal({
 
   const handleSave = async () => {
     if (!validate()) return;
+
+    if (isCreateMode) {
+      if (!familyId || !subjectId) {
+        setValidationBanner('This learning day could not be saved. Close and try again.');
+        return;
+      }
+      setSaving(true);
+      setValidationBanner('');
+      try {
+        const durationNum = parseInt(String(durationInput || '').trim(), 10) || 60;
+        const created = await saveLesson({
+          familyId,
+          title: subjectName,
+          childIds: sessionChildIds,
+          subjectId,
+          unitTitle: unitTitle || '',
+          curriculumLessonId: curriculumLessonId || null,
+          lessonLabel: lessonLabel || '',
+          description: notes,
+          materialIds: materialId ? [materialId] : [],
+          durationMinutes: durationNum,
+          scheduleMode: 'schedule_now',
+          date: sessionDate,
+          startTime: maskedStartTime,
+        });
+        finishSaveSuccess(created || {});
+      } catch (err) {
+        const message = err?.message || 'Failed to create learning day';
+        setValidationBanner(message);
+        toast.push(message, 'error');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     const pending = buildPendingChanges();
     // No outstanding diffs (or already persisted): toast + close like other modals.
     if (!pending.timeChanged && !pending.lessonChanged
@@ -433,6 +477,25 @@ export default function LearningDayModal({
     });
   };
 
+  const unitsEditorInitialDraft = useMemo(() => {
+    if (!familyId || !subjectId) return null;
+    const cached = getSubjectProgressCache(familyId, subjectId);
+    const units = Array.isArray(cached?.curriculumUnits) ? cached.curriculumUnits : [];
+    return units.length ? draftFromCurriculumStructure({ units }) : null;
+  }, [familyId, subjectId, showUnitsEditor]);
+
+  const unitsEditorHasContent = useMemo(() => {
+    if (unitsEditorInitialDraft?.units?.length) return true;
+    if (!familyId || !subjectId) return false;
+    const cached = getSubjectProgressCache(familyId, subjectId);
+    return curriculumStructureHasContent({ units: cached?.curriculumUnits || [] });
+  }, [familyId, subjectId, unitsEditorInitialDraft]);
+
+  const handleOpenUnitsEditor = useCallback(() => {
+    if (!subjectId) return;
+    setShowUnitsEditor(true);
+  }, [subjectId]);
+
   const handleDeleteLearningDay = useCallback(async () => {
     if (!eventId || deleting || isSkipped) return;
     setDeleting(true);
@@ -463,16 +526,16 @@ export default function LearningDayModal({
     <>
       <Modal visible transparent animationType="fade" onRequestClose={onClose}>
         <CreateModalShell
-          title="Learning day"
+          title={isCreateMode ? 'Add learning day' : 'Learning day'}
           onClose={onClose}
           saving={saving || deleting}
           saveDisabled={isSkipped}
           validationBanner={validationBanner}
           footer={(
             <ModalFooter
-              mode="edit"
-              primaryLabel={saving ? 'Saving…' : 'Save'}
-              destructiveLabel="Delete learning day"
+              mode={isCreateMode ? 'create' : 'edit'}
+              primaryLabel={saving ? (isCreateMode ? 'Adding…' : 'Saving…') : (isCreateMode ? 'Add' : 'Save')}
+              destructiveLabel={isCreateMode ? null : 'Delete learning day'}
               onCancel={onClose}
               onDelete={() => {
                 if (!eventId || deleting || isSkipped) return;
@@ -504,7 +567,9 @@ export default function LearningDayModal({
             ) : (
               <Text style={[styles.fieldHint, { marginTop: 6 }]}>No children assigned</Text>
             )}
-            <Text style={styles.fieldHint}>{scheduleHint}</Text>
+            {scheduleHint ? (
+              <Text style={styles.fieldHint}>{scheduleHint}</Text>
+            ) : null}
           </View>
 
           <View pointerEvents={disabled ? 'none' : 'auto'} style={disabled && !isSkipped ? { opacity: 0.92 } : null}>
@@ -589,6 +654,8 @@ export default function LearningDayModal({
                     setFormDirty(true);
                     setValidationBanner('');
                   }}
+                  onAddUnitNew={subjectId ? handleOpenUnitsEditor : null}
+                  onAddLessonNew={subjectId ? handleOpenUnitsEditor : null}
                 />
 
                 <AdditionalNotesSection
@@ -620,6 +687,22 @@ export default function LearningDayModal({
           </View>
         </CreateModalShell>
       </Modal>
+
+      {showUnitsEditor && subjectId ? (
+        <EditSubjectUnitsModal
+          visible
+          onClose={() => setShowUnitsEditor(false)}
+          onSaved={() => {
+            setShowUnitsEditor(false);
+          }}
+          familyId={familyId}
+          subject={{ id: subjectId, name: subjectName || subjectRow?.name || 'Subject' }}
+          hasExistingContent={unitsEditorHasContent}
+          initialDraft={unitsEditorInitialDraft}
+          academicYearId={activeEvent?.academic_year_id || null}
+          stackZIndex={NESTED_OVER_PARENT_MODAL_Z}
+        />
+      ) : null}
 
       {showAddMaterial ? (
         <AddMaterialModal

@@ -7,6 +7,7 @@ import { View, Text, ScrollView, StyleSheet, Platform, ActivityIndicator } from 
 import { supabase } from '../../lib/supabase';
 import { getRecordsSummary, getComplianceStatus } from '../../lib/services/recordsClient';
 import { colors } from '../../theme/colors';
+import { buildPlannerLink, isPlannerNavigationHref } from '../../lib/url';
 import UnifiedRecordsTopBar from './UnifiedRecordsTopBar';
 import AppContainer from '../ui/AppContainer';
 import Card from '../ui/Card';
@@ -184,7 +185,7 @@ export default function WebRecordsScreen({ familyId, navigation }) {
       // Keep address bar on `/` — Expo web refresh blanks on shell deep paths.
       window.history.replaceState({}, '', '/');
       const href = String(path || '');
-      if (href.includes('/planner')) {
+      if (isPlannerNavigationHref(href)) {
         let view = 'month';
         try {
           view = new URL(href, 'https://learnadoodle.local').searchParams.get('view') || 'month';
@@ -195,7 +196,7 @@ export default function WebRecordsScreen({ familyId, navigation }) {
   };
 
   const handleOpenPlanner = (childId) => {
-    handleNavigate(`/planner?view=week&child=${childId}`);
+    handleNavigate(buildPlannerLink({ view: 'week', childId }));
   };
 
   const handleOpenAnalytics = (childId) => {

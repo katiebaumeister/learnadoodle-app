@@ -6,7 +6,14 @@ import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
+import {
+  isSharedMultiChildEvent,
+  resolveEventDoneStatusForPlanner,
+  syncEventDoneStatusAfterAttendanceWrites,
+} from '../../lib/attendance/partialAttendance';
+import { createAttendanceLog } from '../../lib/services/recordsClient';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
+import { writeAppSearchParams } from '../../lib/url';
 
 const ATTENDANCE_RING_SIZE = 20;
 
@@ -233,10 +240,17 @@ export default function TodayScheduleCard({
       const cleanEventId = cleanPlannerEventId(String(ev.id || ''));
       if (!cleanEventId) return;
 
-      const wasDone = isEventDone(ev);
+      const eventChildIds = getEventChildIdsForDisplay(ev, children);
+      const contextChildId = eventChildIds.length === 1 ? String(eventChildIds[0]) : null;
+      const isShared = isSharedMultiChildEvent(ev, children);
+      const wasDone = attendanceOptimistic[ev.id] !== undefined
+        ? attendanceOptimistic[ev.id]
+        : resolveEventDoneStatusForPlanner(ev, [], children, contextChildId) === 'done';
       const nextDone = !wasDone;
+      const dayKey = String(ev.date_local || ev.start_ts || '').slice(0, 10);
       setAttendanceOptimistic((p) => ({ ...p, [ev.id]: nextDone }));
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const shouldBroadcastGlobalPatch = !isShared || Boolean(contextChildId);
+      if (shouldBroadcastGlobalPatch && Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('eventAttendancePatched', {
             detail: { eventId: cleanEventId, status: nextDone ? 'done' : 'scheduled' },
@@ -246,10 +260,25 @@ export default function TodayScheduleCard({
 
       try {
         if (wasDone) {
-          const { error } = await updateEventStatus(cleanEventId, 'scheduled');
-          if (error) throw error;
+          if (isShared && contextChildId) {
+            const result = await createAttendanceLog({
+              family_id: ev.family_id,
+              child_id: contextChildId,
+              event_id: cleanEventId,
+              day_date: dayKey,
+              status: 'absent',
+              minutes: 60,
+            });
+            if (result?.error) throw result.error;
+            await syncEventDoneStatusAfterAttendanceWrites(ev, dayKey, [], children);
+          } else {
+            const { error } = await updateEventStatus(cleanEventId, 'scheduled');
+            if (error) throw error;
+          }
         } else {
-          const { error } = await completeEvent(cleanEventId);
+          const { error } = await completeEvent(cleanEventId, null, {
+            childId: contextChildId || undefined,
+          });
           if (error) throw error;
         }
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -266,7 +295,7 @@ export default function TodayScheduleCard({
           delete n[ev.id];
           return n;
         });
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        if (shouldBroadcastGlobalPatch && Platform.OS === 'web' && typeof window !== 'undefined') {
           window.dispatchEvent(
             new CustomEvent('eventAttendancePatched', {
               detail: { eventId: cleanEventId, status: wasDone ? 'done' : 'scheduled' },
@@ -278,7 +307,7 @@ export default function TodayScheduleCard({
         }
       }
     },
-    [showAttendanceToggle, isEventDone]
+    [showAttendanceToggle, children]
   );
   const handleEventContextMenu = useCallback((event, nativeEvent) => {
     if (!event?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -363,12 +392,12 @@ export default function TodayScheduleCard({
                   if (Platform.OS === 'web' && typeof window !== 'undefined') {
                     const today = new Date();
                     const todayStr = today.toISOString().split('T')[0];
-                    const url = new URL(window.location.href);
-                    url.searchParams.set('tab', 'planner');
-                    url.searchParams.set('view', 'tasks');
-                    url.searchParams.set('section', 'today');
-                    url.searchParams.set('date', todayStr);
-                    window.history.replaceState({}, '', url.toString());
+                    writeAppSearchParams({
+                      tab: 'planner',
+                      view: 'tasks',
+                      section: 'today',
+                      date: todayStr,
+                    });
                     window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
                     window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'today' } }));
                   }

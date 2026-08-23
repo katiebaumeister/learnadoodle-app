@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Plus } from 'lucide-react';
 import Dropdown from '../../ui/Dropdown';
 import { createModalStyles as styles, MUTED, ACCENT_TEXT, FG } from './createModalStyles';
 import { useSubjectCurriculumUnits } from '../../../lib/useSubjectCurriculumUnits';
@@ -32,35 +32,51 @@ function SelectField({
   displayValue,
   placeholder,
   disabled = false,
+  selectDisabled = null,
   options = [],
   onSelect,
+  onAddNew = null,
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef(null);
   const showPlaceholder = !value;
+  const pickerDisabled = selectDisabled != null ? selectDisabled : disabled;
 
   useEffect(() => {
     setOpen(false);
-  }, [value, disabled]);
+  }, [value, pickerDisabled]);
 
   return (
     <View style={styles.formGroup}>
       <Text style={styles.fieldLabel}>{label}</Text>
-      <TouchableOpacity
-        ref={triggerRef}
-        style={[styles.select, disabled && { opacity: 0.6 }]}
-        onPress={() => !disabled && setOpen((v) => !v)}
-        disabled={disabled}
-        {...(Platform.OS === 'web' && { cursor: disabled ? 'not-allowed' : 'pointer' })}
-      >
-        <Text style={[styles.selectText, showPlaceholder && styles.selectPlaceholder]}>
-          {displayValue || placeholder}
-        </Text>
-        <ChevronDown size={16} color={MUTED} />
-      </TouchableOpacity>
+      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+        <TouchableOpacity
+          ref={triggerRef}
+          style={[styles.select, { flex: 1 }, pickerDisabled && { opacity: 0.6 }]}
+          onPress={() => !pickerDisabled && setOpen((v) => !v)}
+          disabled={pickerDisabled}
+          {...(Platform.OS === 'web' && { cursor: pickerDisabled ? 'not-allowed' : 'pointer' })}
+        >
+          <Text style={[styles.selectText, showPlaceholder && styles.selectPlaceholder]}>
+            {displayValue || placeholder}
+          </Text>
+          <ChevronDown size={16} color={MUTED} />
+        </TouchableOpacity>
+        {onAddNew ? (
+          <TouchableOpacity
+            onPress={onAddNew}
+            disabled={disabled}
+            style={[styles.dropdownOption, styles.addNewButton, disabled && { opacity: 0.6 }]}
+            {...(Platform.OS === 'web' && { cursor: disabled ? 'not-allowed' : 'pointer' })}
+          >
+            <Plus size={14} color={ACCENT_TEXT} />
+            <Text style={styles.addNewButtonText}>Add New</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
 
       <Dropdown
-        visible={open && !disabled}
+        visible={open && !pickerDisabled}
         triggerRef={triggerRef}
         onClose={() => setOpen(false)}
         matchTriggerWidth
@@ -111,6 +127,8 @@ export default function ClassworkPlacementFields({
   lessonLabel,
   onUnitChange,
   onLessonChange,
+  onAddUnitNew = null,
+  onAddLessonNew = null,
 }) {
   const units = useSubjectCurriculumUnits(familyId, subjectId);
 
@@ -175,6 +193,7 @@ export default function ClassworkPlacementFields({
         placeholder="No unit"
         disabled={disabled}
         options={unitOptions}
+        onAddNew={onAddUnitNew}
         onSelect={(option) => {
           if (!option?.value) {
             onUnitChange?.({ unitId: null, unitTitle: '' });
@@ -194,8 +213,10 @@ export default function ClassworkPlacementFields({
         value={curriculumLessonId || ''}
         displayValue={lessonDisplay}
         placeholder={!selectedUnit ? 'Select a unit first' : 'No lesson'}
-        disabled={disabled || !selectedUnit}
+        disabled={disabled}
+        selectDisabled={disabled || !selectedUnit}
         options={lessonOptions}
+        onAddNew={onAddLessonNew}
         onSelect={(option) => {
           if (!option?.value) {
             onLessonChange?.({ curriculumLessonId: null, lessonLabel: '' });

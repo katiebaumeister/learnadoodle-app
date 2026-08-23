@@ -242,8 +242,8 @@ export default function CoursesSyllabiTab({
         onNavigateToPlanner={({ courseId, unitId }) => {
           // Navigate to planner with course/unit filters
           const url = unitId
-            ? `/planner?view=board&course=${courseId}&unit=${unitId}`
-            : `/planner?view=board&course=${courseId}`;
+            ? `/?view=board&course=${courseId}&unit=${unitId}`
+            : `/?view=board&course=${courseId}`;
           
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             if (window.__ldSearchNavigate) {

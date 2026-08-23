@@ -457,7 +457,7 @@ export default function NoteEditorModal({
                         const eventDate = linkedEvent.start_ts 
                           ? new Date(linkedEvent.start_ts).toISOString().split('T')[0]
                           : new Date().toISOString().split('T')[0];
-                        const url = `/planner?date=${eventDate}&child=${linkedEvent.child_id || selectedChildId || ''}`;
+                        const url = `/?date=${eventDate}&child=${linkedEvent.child_id || selectedChildId || ''}`;
                         if (window.__ldSearchNavigate) {
                           window.__ldSearchNavigate('planner', null, { date: eventDate, child: linkedEvent.child_id || selectedChildId });
                         } else {

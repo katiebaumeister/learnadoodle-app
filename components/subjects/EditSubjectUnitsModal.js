@@ -14,6 +14,7 @@ export default function EditSubjectUnitsModal({
   hasExistingContent = false,
   academicYearId = null,
   initialDraft = null,
+  stackZIndex = 10002,
 }) {
   const subjectId = subject?.id || null;
   const subjectName = subject?.name?.trim() || 'Subject';
@@ -55,6 +56,7 @@ export default function EditSubjectUnitsModal({
           ? `Edit units — ${subjectName}`
           : 'Add units'
       }
+      stackZIndex={stackZIndex}
     />
   );
 }

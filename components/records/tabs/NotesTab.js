@@ -611,7 +611,7 @@ export default function NotesTab({
                     <TouchableOpacity
                       onPress={() => {
                         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                          const url = `/planner?child=${note.child_id || ''}`;
+                          const url = `/?child=${note.child_id || ''}`;
                           if (window.__ldSearchNavigate) {
                             window.__ldSearchNavigate('planner', null, { child: note.child_id });
                           } else {

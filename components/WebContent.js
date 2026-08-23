@@ -17,11 +17,18 @@ import {
   upsertDismissedConflict,
   removeDismissedConflictByEventId,
 } from '../lib/plannerDismissedConflicts'
+import { canonicalizeShellUrlToRoot, writeAppSearchParams } from '../lib/url'
 import { AVATAR_ASSETS, AVATAR_KEYS } from '../assets/imageAssetMap';
 import { getSubjectsWithOverview, getSubjectDetail } from '../lib/services/subjectsClient'
 import { prefetchAllSubjectProgressPlans, prefetchSubjectProgressPlanEntry } from '../lib/prefetchSubjectProgressPlan'
 import { getHolidaysForRange, getEventForPlanSlot, invalidateHolidaysForRangeCache } from '../lib/services/academicYearClient'
 import { completeEvent, updateEventStatus } from '../lib/services/attendanceClient'
+import {
+  isSharedMultiChildEvent,
+  resolveEventDoneStatusForPlanner,
+  syncEventDoneStatusAfterAttendanceWrites,
+} from '../lib/attendance/partialAttendance'
+import { createAttendanceLog, updateAttendanceLog, deleteAttendanceLog } from '../lib/services/recordsClient'
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext'
 import { canViewerMarkEventsComplete } from '../lib/permissions/userPermissionProfiles'
 import { isSchoolWorkEventType } from './child/childHomeRailHelpers'
@@ -3205,6 +3212,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     }
 
     const run = (async () => {
+      const familyChildren = Array.isArray(propChildren) ? propChildren : [];
       if (dropStartTime != null && typeof performance !== 'undefined') {
         console.log('[WebContent] [drag-timing] t+' + (performance.now() - dropStartTime).toFixed(0) + 'ms refreshCalendarData started');
       }
@@ -3257,6 +3265,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         const uniqueMonthEventIds = [...new Set(monthEventIds)];
         let attendedEventIds = new Set(attendanceMarkedDoneEventIdsRef.current || []);
         const attendanceStateByEventId = new Map();
+        let monthAttendanceRecords = [];
         const shouldQueryAttendanceRecords =
           uniqueMonthEventIds.length > 0 && (!background || attendedEventIds.size === 0);
         if (shouldQueryAttendanceRecords) {
@@ -3264,6 +3273,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             let attendanceRows = null;
             let attendanceError = null;
             const attendanceSelectAttempts = [
+              'event_id, child_id, status, minutes',
+              'event_id, child_id, status, minutes_present',
               'event_id, status, minutes',
               'event_id, status, minutes_present',
               'event_id, status',
@@ -3278,9 +3289,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               if (!attendanceError) break;
             }
             if (!attendanceError) {
+              monthAttendanceRecords = [];
               (attendanceRows || []).forEach((row) => {
                 const normalizedEventId = cleanPlannerEventId(String(row?.event_id || ''));
                 if (!normalizedEventId) return;
+                monthAttendanceRecords.push(row);
                 const existing = attendanceStateByEventId.get(normalizedEventId) || { hasRows: false, hasPresent: false };
                 existing.hasRows = true;
                 const statusKey = String(row?.status || '').trim().toLowerCase();
@@ -3290,16 +3303,30 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                 }
                 attendanceStateByEventId.set(normalizedEventId, existing);
               });
-              const fetchedAttendedEventIds = new Set(
-                (attendanceRows || [])
-                  .filter((row) => {
-                    const statusKey = String(row?.status || '').trim().toLowerCase();
-                    const minutes = Number(row?.minutes ?? row?.minutes_present ?? 0);
-                    return statusKey === 'present' || statusKey === 'partial' || minutes > 0;
-                  })
-                  .map((row) => cleanPlannerEventId(String(row?.event_id || '')))
-                  .filter(Boolean)
-              );
+              const contextChildId = Array.isArray(propSelectedCalendarChildren)
+                && propSelectedCalendarChildren.length === 1
+                ? String(propSelectedCalendarChildren[0])
+                : null;
+              const fetchedAttendedEventIds = new Set();
+              uniqueMonthEventIds
+                .map((id) => cleanPlannerEventId(String(id || '')))
+                .filter(Boolean)
+                .forEach((eventId) => {
+                  const rawEvent = Object.values(eventsByDate)
+                    .flatMap((dayEvents) => {
+                      const list = Array.isArray(dayEvents) ? dayEvents : (dayEvents?.events || []);
+                      return list || [];
+                    })
+                    .find((candidate) => cleanPlannerEventId(String(candidate?.id || '')) === eventId);
+                  if (!rawEvent) return;
+                  const resolvedStatus = resolveEventDoneStatusForPlanner(
+                    rawEvent,
+                    monthAttendanceRecords,
+                    familyChildren,
+                    contextChildId
+                  );
+                  if (resolvedStatus === 'done') fetchedAttendedEventIds.add(eventId);
+                });
               // Replace attendance truth for events in this month instead of only unioning,
               // so events toggled to unattended are removed from "done" hints.
               uniqueMonthEventIds
@@ -3339,9 +3366,18 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             status: (() => {
               const normalizedStatus = normalizeEventStatus(e.status);
               const eventId = cleanPlannerEventId(String(e?.id || ''));
+              const contextChildId = Array.isArray(propSelectedCalendarChildren)
+                && propSelectedCalendarChildren.length === 1
+                ? String(propSelectedCalendarChildren[0])
+                : null;
               const attendanceState = eventId ? attendanceStateByEventId.get(eventId) : null;
               if (attendanceState?.hasRows) {
-                return attendanceState.hasPresent ? 'done' : 'scheduled';
+                return resolveEventDoneStatusForPlanner(
+                  { ...e, date_local: dateKey },
+                  monthAttendanceRecords || [],
+                  familyChildren,
+                  contextChildId
+                );
               }
               return (
                 normalizedStatus === 'done' ||
@@ -3493,7 +3529,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       }
     });
     return run;
-  }, [familyId, propSelectedCalendarChildren, normalizeEventStatus]);
+  }, [familyId, propSelectedCalendarChildren, normalizeEventStatus, propChildren]);
 
   useEffect(() => {
     refreshCalendarDataRef.current = refreshCalendarData;
@@ -4171,10 +4207,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const detail = event?.detail || {};
       if (onTabChange) onTabChange('planner', 'calendar');
       const view = detail.view || 'month';
-      // Keep the address bar on `/` — Expo web refresh blanks on /planner deep paths.
-      if (window.location.pathname !== '/' && window.location.pathname !== '') {
-        window.history.replaceState({}, '', '/');
-      }
+      canonicalizeShellUrlToRoot();
+      writeAppSearchParams({ view });
       const syncView = () => {
         window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: view }));
       };
@@ -5253,28 +5287,24 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       : [];
     if (snapshotRecords.length === 0) return;
 
-    const doneEventIds = new Set(
-      snapshotRecords
-        .filter((row) => {
-          const statusKey = String(row?.status || '').trim().toLowerCase();
-          const minutes = Number(row?.minutes ?? row?.minutes_present ?? 0);
-          return statusKey === 'present' || statusKey === 'partial' || minutes > 0;
-        })
-        .map((row) => cleanPlannerEventId(String(row?.event_id || '')))
-        .filter(Boolean)
-    );
-    attendanceMarkedDoneEventIdsRef.current = doneEventIds;
-    if (doneEventIds.size === 0) return;
+    const contextChildId = Array.isArray(propSelectedCalendarChildren)
+      && propSelectedCalendarChildren.length === 1
+      ? String(propSelectedCalendarChildren[0])
+      : null;
 
     const applyAttendanceDoneStatus = (eventList) => {
       if (!Array.isArray(eventList) || eventList.length === 0) return eventList;
       let changed = false;
       const nextList = eventList.map((ev) => {
-        const cleanId = cleanPlannerEventId(String(ev?.id || ''));
-        if (!cleanId || !doneEventIds.has(cleanId)) return ev;
-        if (normalizeEventStatus(ev?.status) === 'done') return ev;
+        const nextStatus = resolveEventDoneStatusForPlanner(
+          ev,
+          snapshotRecords,
+          children,
+          contextChildId
+        );
+        if (normalizeEventStatus(ev?.status) === nextStatus) return ev;
         changed = true;
-        return { ...ev, status: 'done' };
+        return { ...ev, status: nextStatus };
       });
       return changed ? nextList : eventList;
     };
@@ -5310,7 +5340,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       }
       return changed ? next : prev;
     });
-  }, [plannerAttendanceSnapshot, normalizeEventStatus]);
+  }, [plannerAttendanceSnapshot, normalizeEventStatus, children, propSelectedCalendarChildren]);
 
   // Fast-path spillover fetch for visible month grid edges (previous/next month cells).
   // This avoids waiting on full adjacent-month RPC payloads to populate the 30th/1st cells.
@@ -10409,22 +10439,92 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           const rawEventId = String(event.id);
           const cleanEventId = cleanPlannerEventId(rawEventId);
           if (!cleanEventId) return;
-          const isCurrentlyDone = normalizeEventStatus(event.status) === 'done';
+          const contextChildId = Array.isArray(propSelectedCalendarChildren)
+            && propSelectedCalendarChildren.length === 1
+            ? String(propSelectedCalendarChildren[0])
+            : null;
+          const snapshotRecords = Array.isArray(plannerAttendanceSnapshot?.attendanceRecords)
+            ? plannerAttendanceSnapshot.attendanceRecords
+            : [];
+          const isShared = isSharedMultiChildEvent(event, children);
+          const isCurrentlyDone = resolveEventDoneStatusForPlanner(
+            event,
+            snapshotRecords,
+            children,
+            contextChildId
+          ) === 'done';
           const newStatus = isCurrentlyDone ? 'scheduled' : 'done';
           const dateKey = event.date_local || (event.start_ts && event.start_ts.split('T')[0]);
           const monthKey = `${plannerDate.getFullYear()}-${plannerDate.getMonth()}`;
           const cacheMonth = calendarDataCache[monthKey] || {};
-          const listForDate = calendarEvents[dateKey] || cacheMonth[dateKey] || [];
-          const optimisticList = listForDate.map((ev) =>
-            (
-              String(ev?.id || '') === rawEventId ||
-              cleanPlannerEventId(String(ev?.id || '')) === cleanEventId
-            )
-              ? { ...ev, status: newStatus }
-              : ev
-          );
-          setCalendarEvents((prev) => ({ ...prev, [dateKey]: optimisticList }));
-          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          const shouldBroadcastGlobalPatch = !isShared || !contextChildId;
+
+          const eventMatchesCompletion = (ev) => {
+            if (!ev) return false;
+            const evRaw = String(ev.id || '');
+            const evClean = cleanPlannerEventId(evRaw);
+            if (evRaw === rawEventId || evClean === cleanEventId) return true;
+            const orig = ev._originalId ? cleanPlannerEventId(String(ev._originalId)) : '';
+            return Boolean(orig && orig === cleanEventId);
+          };
+
+          const patchEventListStatus = (list) => {
+            if (!Array.isArray(list) || list.length === 0) return { list, matched: false };
+            let matched = false;
+            const next = list.map((ev) => {
+              if (!eventMatchesCompletion(ev)) return ev;
+              matched = true;
+              const patchedStatus = isShared && contextChildId
+                ? newStatus
+                : newStatus;
+              return {
+                ...ev,
+                status: patchedStatus,
+                data: { ...(ev?.data || {}), status: patchedStatus },
+              };
+            });
+            return { list: next, matched };
+          };
+
+          let rollbackCalendarEvents = null;
+          setCalendarEvents((prev) => {
+            let changed = false;
+            const next = { ...prev };
+            const rollback = {};
+
+            for (const [dk, dayEvents] of Object.entries(prev)) {
+              if (!Array.isArray(dayEvents)) continue;
+              const patched = patchEventListStatus(dayEvents);
+              if (patched.matched) {
+                rollback[dk] = dayEvents;
+                next[dk] = patched.list;
+                changed = true;
+              }
+            }
+
+            if (!changed && dateKey) {
+              const fallbackSources = [
+                cacheMonth[dateKey],
+                plannerSpilloverEventsByDate?.[dateKey],
+              ].filter((source) => Array.isArray(source) && source.length > 0);
+              for (const source of fallbackSources) {
+                const patched = patchEventListStatus(source);
+                if (patched.matched) {
+                  rollback[dateKey] = Object.prototype.hasOwnProperty.call(prev, dateKey)
+                    ? prev[dateKey]
+                    : undefined;
+                  next[dateKey] = patched.list;
+                  changed = true;
+                  break;
+                }
+              }
+            }
+
+            if (changed) rollbackCalendarEvents = rollback;
+            return changed ? next : prev;
+          });
+
+          if (shouldBroadcastGlobalPatch && Platform.OS === 'web' && typeof window !== 'undefined') {
             window.dispatchEvent(
               new CustomEvent('eventAttendancePatched', {
                 detail: { eventId: cleanEventId, status: newStatus },
@@ -10434,16 +10534,46 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           try {
             let operationResult = null;
             if (isCurrentlyDone) {
-              const result = await updateEventStatus(cleanEventId, 'scheduled');
-              if (result.error) throw result.error;
-              operationResult = result.data;
+              if (isShared && contextChildId && familyId && dateKey) {
+                const existing = snapshotRecords.find(
+                  (r) =>
+                    String(r?.event_id || '') === cleanEventId
+                    && String(r?.child_id || '') === contextChildId
+                    && String(r?.day_date || '').slice(0, 10) === String(dateKey).slice(0, 10)
+                );
+                if (existing?.id) {
+                  const result = await updateAttendanceLog(existing.id, { status: 'absent' });
+                  if (result?.error) throw result.error;
+                } else {
+                  const result = await createAttendanceLog({
+                    family_id: familyId,
+                    child_id: contextChildId,
+                    event_id: cleanEventId,
+                    day_date: String(dateKey).slice(0, 10),
+                    status: 'absent',
+                    minutes: 60,
+                  });
+                  if (result?.error) throw result.error;
+                }
+                const syncResult = await syncEventDoneStatusAfterAttendanceWrites(
+                  event,
+                  dateKey,
+                  snapshotRecords,
+                  children
+                );
+                operationResult = syncResult?.data;
+              } else {
+                const result = await updateEventStatus(cleanEventId, 'scheduled');
+                if (result.error) throw result.error;
+                operationResult = result.data;
+              }
             } else {
-              const result = await completeEvent(cleanEventId);
+              const result = await completeEvent(cleanEventId, null, {
+                childId: contextChildId || undefined,
+              });
               if (result.error) throw result.error;
               operationResult = result.data;
             }
-            // If backend sync is known to be pending (local mismatch fallback),
-            // keep optimistic UI state and avoid immediate refresh that would revert it.
             if (operationResult?.syncPending) {
               return;
             }
@@ -10458,8 +10588,17 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               window.dispatchEvent(new CustomEvent('refreshSubjects'));
             }
           } catch (err) {
-            setCalendarEvents((prev) => ({ ...prev, [dateKey]: listForDate }));
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            if (rollbackCalendarEvents) {
+              setCalendarEvents((prev) => {
+                const next = { ...prev };
+                Object.entries(rollbackCalendarEvents).forEach(([dk, snap]) => {
+                  if (snap === undefined) delete next[dk];
+                  else next[dk] = snap;
+                });
+                return next;
+              });
+            }
+            if (shouldBroadcastGlobalPatch && Platform.OS === 'web' && typeof window !== 'undefined') {
               window.dispatchEvent(
                 new CustomEvent('eventAttendancePatched', {
                   detail: {
