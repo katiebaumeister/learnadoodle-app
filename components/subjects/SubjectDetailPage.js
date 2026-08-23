@@ -5731,7 +5731,7 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     backgroundColor: '#FFFFFF',
     flexShrink: 0,
-    minWidth: 132,
+    minWidth: 148,
     ...(Platform.OS === 'web' && {
       boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
     }),
@@ -5749,7 +5749,8 @@ const styles = StyleSheet.create({
     borderTopColor: 'rgba(15, 23, 42, 0.08)',
   },
   attendanceTermCountLabel: {
-    fontSize: 12,
+    fontSize: 14,
+    lineHeight: 18,
     fontWeight: '600',
     color: 'rgba(15, 23, 42, 0.5)',
     ...(Platform.OS === 'web' && {
@@ -5757,7 +5758,8 @@ const styles = StyleSheet.create({
     }),
   },
   attendanceTermCountValue: {
-    fontSize: 12,
+    fontSize: 14,
+    lineHeight: 18,
     fontWeight: '700',
     color: 'rgba(15, 23, 42, 0.8)',
     ...(Platform.OS === 'web' && {

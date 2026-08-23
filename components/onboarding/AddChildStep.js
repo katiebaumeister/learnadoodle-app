@@ -215,7 +215,6 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
                   onPress={() => onRemoveChild(c.id, c.name)}
                   style={styles.chipRemoveBtn}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  disabled={isSaving || adding}
                 >
                   <X size={14} color="#6B7280" />
                 </TouchableOpacity>
@@ -588,7 +587,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           >
             {isSaving || adding
               ? 'Saving…'
-              : 'FINISH SETUP'}
+              : 'Continue'}
           </Text>
         </TouchableOpacity>
       </View>

@@ -2548,50 +2548,61 @@ export default function PlannerSettingsContent({
     }),
   });
 
+  const onboardingDateColumnStyle = {
+    flex: 1,
+    minWidth: 0,
+  };
+  const onboardingDateTimeRowStyle = {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 12,
+    width: '100%',
+  };
+  const onboardingScheduleDateFieldStyle = {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    minHeight: 40,
+    width: '100%',
+    fontSize: 14,
+  };
+
   const renderDateRangeField = (label, startValue, onStartChange, endValue, onEndChange) => {
     if (onboardingStep) {
       return (
         <View style={fieldWrapStyle}>
-          <Text style={modalFieldLabelStyle}>{label}</Text>
-          <Text style={onboardingSubLabelStyle}>Start date</Text>
-          <PlannerPreferenceDateField
-            value={startValue}
-            onChange={onStartChange}
-            placeholder="Start"
-            borderColor="#e5e7eb"
-            textColor={TEXT_BLACK}
-            mutedColor="rgba(15,23,42,0.4)"
-            style={{
-              borderWidth: 1,
-              borderColor: '#E5E7EB',
-              borderRadius: 10,
-              backgroundColor: '#FFFFFF',
-              paddingVertical: 12,
-              paddingHorizontal: 14,
-              marginBottom: 12,
-            }}
-            minDate={yearRangeMinYmd}
-            maxDate={yearRangeMaxYmd}
-          />
-          <Text style={onboardingSubLabelStyle}>End date</Text>
-          <PlannerPreferenceDateField
-            value={endValue}
-            onChange={onEndChange}
-            placeholder="End"
-            borderColor="#e5e7eb"
-            textColor={TEXT_BLACK}
-            mutedColor="rgba(15,23,42,0.4)"
-            style={{
-              borderWidth: 1,
-              borderColor: '#E5E7EB',
-              borderRadius: 10,
-              backgroundColor: '#FFFFFF',
-              paddingVertical: 12,
-              paddingHorizontal: 14,
-            }}
-            minDate={yearRangeMinYmd}
-            maxDate={yearRangeMaxYmd}
-          />
+          <Text style={modalFieldLabelStyle}>{`${label} start/end`}</Text>
+          <View style={onboardingDateTimeRowStyle}>
+            <View style={onboardingDateColumnStyle}>
+              <PlannerPreferenceDateField
+                value={startValue}
+                onChange={onStartChange}
+                placeholder="Start"
+                borderColor="#e5e7eb"
+                textColor={TEXT_BLACK}
+                mutedColor="rgba(15,23,42,0.4)"
+                style={onboardingScheduleDateFieldStyle}
+                minDate={yearRangeMinYmd}
+                maxDate={yearRangeMaxYmd}
+              />
+            </View>
+            <View style={onboardingDateColumnStyle}>
+              <PlannerPreferenceDateField
+                value={endValue}
+                onChange={onEndChange}
+                placeholder="End"
+                borderColor="#e5e7eb"
+                textColor={TEXT_BLACK}
+                mutedColor="rgba(15,23,42,0.4)"
+                style={onboardingScheduleDateFieldStyle}
+                minDate={yearRangeMinYmd}
+                maxDate={yearRangeMaxYmd}
+              />
+            </View>
+          </View>
         </View>
       );
     }

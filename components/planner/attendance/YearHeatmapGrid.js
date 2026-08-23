@@ -323,10 +323,19 @@ export default function YearHeatmapGrid({
   showLegend = true,
   compact = false,
   columnsPerRow = null,
+  plannerLayout = false,
 }) {
   const [hoveredCellKey, setHoveredCellKey] = useState(null);
-  const cellSize = compact ? TOKENS.hmCellCompact : TOKENS.hmCell;
-  const gap = compact ? TOKENS.hmGapCompact : TOKENS.hmGap;
+  const cellSize = compact
+    ? TOKENS.hmCellCompact
+    : plannerLayout
+      ? TOKENS.hmCellPlanner
+      : TOKENS.hmCell;
+  const gap = compact
+    ? TOKENS.hmGapCompact
+    : plannerLayout
+      ? TOKENS.hmGapPlanner
+      : TOKENS.hmGap;
   const isWeb = Platform.OS === 'web';
 
   const months = useMemo(() => buildMonthsInRange(yearStart, yearEnd), [yearStart, yearEnd]);
@@ -362,9 +371,9 @@ export default function YearHeatmapGrid({
   return (
     <>
       {monthRows ? (
-        <View style={[styles.monthGridEven, compact && styles.monthGridCompact]}>
+        <View style={[styles.monthGridEven, compact && styles.monthGridCompact, plannerLayout && styles.monthGridPlanner]}>
           {monthRows.map((row, rowIndex) => (
-            <View key={`month-row-${rowIndex}`} style={[styles.monthGridRow, compact && styles.monthGridRowCompact]}>
+            <View key={`month-row-${rowIndex}`} style={[styles.monthGridRow, compact && styles.monthGridRowCompact, plannerLayout && styles.monthGridRowPlanner]}>
               {row.map(renderMonth)}
             </View>
           ))}
@@ -395,11 +404,18 @@ const styles = StyleSheet.create({
     gap: TOKENS.s5,
     paddingVertical: TOKENS.s2,
   },
+  monthGridPlanner: {
+    gap: TOKENS.s6,
+    paddingVertical: TOKENS.s3,
+  },
   monthGridRow: {
     flexDirection: 'row',
     flexWrap: 'nowrap',
     gap: TOKENS.s5,
     justifyContent: 'flex-start',
+  },
+  monthGridRowPlanner: {
+    gap: TOKENS.s6,
   },
   monthGridRowCompact: {
     gap: TOKENS.s3,

@@ -359,13 +359,23 @@ export default function OnboardingModal({
   };
 
   const removeOneChild = async (childId, childName) => {
-    const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
-    if (!fid) {
-      setError('We couldn’t set up your family yet. Please refresh the page or contact contact@learnadoodle.com.');
-      return;
-    }
+    let removedChild = null;
+    setCreatedChildren((prev) => {
+      removedChild = prev.find((c) => c.id === childId) ?? null;
+      return prev.filter((c) => c.id !== childId);
+    });
+    if (!removedChild) return;
+
     setError(null);
+
+    const isPending = String(childId).startsWith('pending-child-');
+    if (isPending) return;
+
     try {
+      const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
+      if (!fid) {
+        throw new Error('We couldn’t set up your family yet. Please refresh the page or contact contact@learnadoodle.com.');
+      }
       const { data: delData, error: delErr } = await permanentDeleteChild({
         childId,
         confirmName: (childName || '').trim(),
@@ -377,10 +387,11 @@ export default function OnboardingModal({
           r === 'name_mismatch' ? 'Name does not match.' : 'Failed to delete child.'
         );
       }
-      setCreatedChildren((prev) => {
-        return prev.filter((c) => c.id !== childId);
-      });
     } catch (e) {
+      setCreatedChildren((prev) => {
+        if (prev.some((c) => c.id === childId)) return prev;
+        return [...prev, removedChild];
+      });
       setError(e?.message ?? 'Failed to delete child.');
     }
   };

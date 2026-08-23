@@ -35,6 +35,9 @@ export const TOKENS = {
   hmCell: 26,
   hmGap: 6,
   hmRadius: 7,
+  /** Larger year grid for Planner Year view (more vertical space than Learning subject tab). */
+  hmCellPlanner: 30,
+  hmGapPlanner: 7,
   /** Smaller year grid for Learning subject attendance (not Planner Year view). */
   hmCellCompact: 20,
   hmGapCompact: 4,

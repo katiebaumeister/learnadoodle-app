@@ -69,7 +69,7 @@ export default function SchoolYearSetupStep({
         activeOpacity={0.9}
       >
         <Text style={styles.continueBtnText}>
-          {busy ? 'Saving…' : 'Continue'}
+          {busy ? 'Finishing…' : 'Finish setup'}
         </Text>
       </TouchableOpacity>
     </View>
