@@ -100,6 +100,7 @@ Use the source text and pre-parse hints to identify:
 
 If something is ambiguous, include it in unassigned_items with a reason, or set a low confidence.
 Preserve sequence and original wording as much as possible.
+When a source heading is numbered (e.g. "Unit 2: Geography of Our State"), keep that full title including the Unit/Week/Chapter number — do not drop the number from some units and keep it on others.
 When instructed to ignore policy text, do not include it in units/lessons; list it in ignored_items with reason.
 Do not expand or elaborate; only extract what is there."""
 
@@ -174,6 +175,7 @@ def _build_user_prompt(
         expand_rules = """
 - Only include units/lessons clearly present. unassigned_items for uncertain lines; ignored_items for policy/admin when ignore_policy is true.
 - Only add objective/notes/minutes_est/modality/confidence/inferred_from if the source explicitly gives them (otherwise omit).
+- Keep numbered unit headings verbatim (e.g. title "Unit 2: Geography of Our State", not just "Geography of Our State").
 """
 
     schema = f"""
@@ -184,7 +186,7 @@ Required shape:
   "summary": "short one-line summary of this text (optional)",
   "units": [
     {{
-      "title": "unit title",
+      "title": "Unit 1: example title (include Unit N: when present in source)",
       "sequence_index": 1,
       "source_label": "optional heading from source",
       "lessons": [
@@ -489,6 +491,33 @@ async def _extract_parallel_chunks(
     )
 
 
+_UNIT_NUMBER_PREFIX_RE = re.compile(
+    r"^(unit|week|chapter|module|part|section)\s+(\d+)\s*([:.\-—–)]\s*)?(.*)$",
+    re.I,
+)
+
+
+def _ensure_numbered_unit_title(title: str, index: int) -> str:
+    """
+    Ensure syllabus unit titles keep a stable Unit N: prefix.
+    Source often has 'Unit 2: Geography…'; models sometimes drop the number inconsistently.
+    """
+    n = index + 1
+    raw = (title or "").strip()
+    if not raw:
+        return f"Unit {n}"
+    m = _UNIT_NUMBER_PREFIX_RE.match(raw)
+    if m:
+        kind = m.group(1).strip().title()
+        rest = (m.group(4) or "").strip()
+        if kind.lower() != "unit":
+            # Preserve Week/Chapter/etc. numbering from source; only renumber Unit titles.
+            src_n = m.group(2)
+            return f"{kind} {src_n}: {rest}" if rest else f"{kind} {src_n}"
+        return f"Unit {n}: {rest}" if rest else f"Unit {n}"
+    return f"Unit {n}: {raw}"
+
+
 def _validate_and_normalize_parsed(
     raw: Dict[str, Any],
     subject_id: str,
@@ -515,6 +544,7 @@ def _validate_and_normalize_parsed(
         if not title:
             title = f"Unit {ui + 1}"
             warnings.append(f"Unit at index {ui} had no title; set to '{title}'")
+        title = _ensure_numbered_unit_title(title, ui)
         lessons_in = u.get("lessons") or []
         if not isinstance(lessons_in, list):
             lessons_in = []

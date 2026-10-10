@@ -20,6 +20,7 @@ import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { createMaterial, linkMaterialToChild, updateMaterial, updateMaterialChildStatus } from '../../lib/services/materialsClient';
 import { parseChildIds } from '../../lib/services/subjectsClient';
+import { buildSubjectDisplayLabels } from '../../lib/subjectDisplayLabel';
 import {
   useModalStackElevation,
   NESTED_MODAL_STACK_Z,
@@ -167,6 +168,8 @@ export default function AddMaterialModal({
   const loadingSubjectsRef = useRef(false);
   /** Once per edit open: fill Children from subject when material_children is empty */
   const hydratedSubjectChildrenRef = useRef(null);
+  /** Only reset add-mode form when the modal opens, not when parent defaults re-render mid-session. */
+  const wasAddModalVisibleRef = useRef(false);
   const overlayRef = useRef(null);
   useModalStackElevation(overlayRef, visible, stackZIndex);
 
@@ -186,35 +189,23 @@ export default function AddMaterialModal({
 
   // Pure computation: filter subjects by selected children. subject.child_id is semicolon-separated (e.g. "id1;id2").
   // When children are selected: show only subjects assigned to ALL selected children (or family-wide).
+  // Keep every matching subject id so same names across years/children stay distinguishable.
   const filteredSubjects = useMemo(() => {
     const subjectsToFilter = allSubjects;
     const childIds = selectedChildIds;
     const norm = (id) => String(id ?? '').trim();
     if (!subjectsToFilter.length) return [];
-    if (!childIds || childIds.length === 0) {
-      const subjectMap = new Map();
-      subjectsToFilter.forEach((subject) => {
-        const existing = subjectMap.get(subject.name);
+    let list = subjectsToFilter;
+    if (childIds && childIds.length > 0) {
+      list = subjectsToFilter.filter((subject) => {
         const subjectChildIds = parseChildIds(subject.child_id ?? '');
         const isFamilyWide = subjectChildIds.length === 0;
-        if (!existing) subjectMap.set(subject.name, subject);
-        else if (parseChildIds(existing.child_id ?? '').length === 0 && !isFamilyWide) subjectMap.set(subject.name, subject);
+        if (isFamilyWide) return true;
+        const subjectIdSet = new Set(subjectChildIds.map(norm).filter(Boolean));
+        return childIds.every((cid) => subjectIdSet.has(norm(cid)));
       });
-      return Array.from(subjectMap.values()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     }
-    const subjectMap = new Map();
-    subjectsToFilter.forEach((subject) => {
-      const subjectChildIds = parseChildIds(subject.child_id ?? '');
-      const isFamilyWide = subjectChildIds.length === 0;
-      const subjectIdSet = new Set(subjectChildIds.map(norm).filter(Boolean));
-      const isForAllSelectedChildren = childIds.every((cid) => subjectIdSet.has(norm(cid)));
-      if (!isFamilyWide && !isForAllSelectedChildren) return;
-      const existing = subjectMap.get(subject.name);
-      if (!existing) subjectMap.set(subject.name, subject);
-      else if (parseChildIds(existing.child_id ?? '').length === 0 && !isFamilyWide) subjectMap.set(subject.name, subject);
-      else if (isForAllSelectedChildren && !childIds.every((cid) => parseChildIds(existing.child_id ?? '').map(norm).includes(norm(cid)))) subjectMap.set(subject.name, subject);
-    });
-    return Array.from(subjectMap.values()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }, [allSubjects, selectedChildIds.join(',')]);
 
   const draftSubjectNameTrim = (draftSubjectForMaterial?.name || '').trim();
@@ -234,6 +225,7 @@ export default function AddMaterialModal({
       id: DRAFT_SUBJECT_MATERIAL_ID,
       name: draftSubjectNameTrim,
       child_id: draftChildIdStr,
+      school_year: draftSubjectForMaterial?.school_year ?? draftSubjectForMaterial?.schoolYear ?? null,
     };
 
     const childIds = selectedChildIds;
@@ -252,7 +244,12 @@ export default function AddMaterialModal({
     if (!isFamilyWide && !isForAllSelectedChildren) return base;
 
     return [...base, draftRow].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }, [material, postUploadMaterial, filteredSubjects, draftSubjectNameTrim, draftChildIdsKey, selectedChildIds.join(',')]);
+  }, [material, postUploadMaterial, filteredSubjects, draftSubjectNameTrim, draftChildIdsKey, selectedChildIds.join(','), draftSubjectForMaterial]);
+
+  const subjectDisplayLabels = useMemo(
+    () => buildSubjectDisplayLabels(subjectsForPicker, { children }),
+    [subjectsForPicker, children],
+  );
 
   // If DB gains a real subject with the same name, move selection off the draft sentinel
   useEffect(() => {
@@ -330,41 +327,22 @@ export default function AddMaterialModal({
       // Filtering by selected children is done in useMemo via parseChildIds.
       const { data, error } = await supabase
         .from('subject')
-        .select('id, name, child_id')
+        .select('id, name, child_id, school_year')
         .eq('family_id', familyId)
         .order('name');
 
       if (!error && data) {
-        // Deduplicate by name: prefer row that matches selected children, then non-empty child_id over family-wide
-        const subjectMap = new Map();
-        const firstChildId = childIds.length > 0 ? String(childIds[0]).trim() : null;
+        // Keep every subject row so same names across years/children stay selectable.
+        let uniqueSubjects = Array.isArray(data) ? [...data] : [];
 
-        data.forEach((subject) => {
-          const existing = subjectMap.get(subject.name);
-          const subIds = parseChildIds(subject.child_id ?? '');
-          const isFamilyWide = subIds.length === 0;
-          const matchesFirst = firstChildId && subIds.some((id) => String(id).trim() === firstChildId);
-
-          if (!existing) {
-            subjectMap.set(subject.name, subject);
-          } else {
-            const exIds = parseChildIds(existing.child_id ?? '');
-            const exFamilyWide = exIds.length === 0;
-            const exMatchesFirst = firstChildId && exIds.some((id) => String(id).trim() === firstChildId);
-            if (exFamilyWide && !isFamilyWide) subjectMap.set(subject.name, subject);
-            else if (matchesFirst && !exMatchesFirst) subjectMap.set(subject.name, subject);
-          }
-        });
-
-        let uniqueSubjects = Array.from(subjectMap.values());
-
-        // Ensure defaultSubjectId is present even if filters/dedup skipped it
+        // Ensure defaultSubjectId is present even if filters skipped it
         if (defaultSubjectId && !uniqueSubjects.some(s => s.id === defaultSubjectId)) {
           const fallbackName = defaultSubjectName || 'Selected subject';
           uniqueSubjects.push({
             id: defaultSubjectId,
             name: fallbackName,
             child_id: null,
+            school_year: null,
           });
         }
 
@@ -475,63 +453,54 @@ export default function AddMaterialModal({
     setRole(defaultRole ? String(defaultRole) : '');
   }, [visible, material, postUploadMaterial, defaultRole]);
 
-  // Separate effect for resetting form in add mode (stable deps: no array refs to avoid loop when parent passes defaultChildIds=[] or omits it)
-  const defaultChildIdsKey = Array.isArray(defaultChildIds) ? defaultChildIds.join(',') : '';
+  // Reset add-mode form only when the modal opens (not when parent defaults re-sync after upload).
   const defaultProviderUrlTrimmed = defaultProviderUrl ? String(defaultProviderUrl).trim() : '';
   useEffect(() => {
-    if (visible && !material && !postUploadMaterial) {
-      setTitle('');
-      setRole(defaultRole ? String(defaultRole) : '');
-      const useDraft =
-        !defaultSubjectId && Boolean((draftSubjectForMaterial?.name || '').trim());
-      setSelectedSubjectId(useDraft ? DRAFT_SUBJECT_MATERIAL_ID : defaultSubjectId || null);
-      const initialChildIds =
-        Array.isArray(defaultChildIds) && defaultChildIds.length > 0
-          ? defaultChildIds
-          : (defaultChildId ? [defaultChildId] : []);
-      if (initialChildIds.length) {
-        setSelectedChildIds(initialChildIds);
-      } else if (useDraft) {
-        const draftIds = normalizeDraftChildIds(draftSubjectForMaterial);
-        setSelectedChildIds(draftIds.length ? draftIds : []);
-      } else if (defaultSubjectId) {
-        const subject =
-          (propAllSubjects.length ? propAllSubjects : allSubjects).find(
-            (s) => String(s.id) === String(defaultSubjectId)
-          ) || null;
-        setSelectedChildIds(childIdsConnectedToSubject(subject, children));
-      } else {
-        setSelectedChildIds([]);
-      }
-      setProviderName('');
-      setProviderUrl(defaultProviderUrlTrimmed);
-      setPurchaseDate(null);
-      setPurchasePrice('');
-      setIsSubscription(false);
-      setSubscriptionFrequency('monthly');
-      setUploadedFile(null);
-      setUploadedFileUrl('');
-      setShowPurchaseInfo(false);
-      setShowReviewInfo(false);
-      setReviewChildId(null);
-      setReviewRating(null);
-      setReviewEmotion(null);
-      setReviewPacingFit(null);
-      setReviewDifficulty(null);
-      setReviewNotes('');
+    const justOpened = visible && !wasAddModalVisibleRef.current;
+    wasAddModalVisibleRef.current = visible;
+    if (!justOpened || material || postUploadMaterial) return;
+
+    setTitle('');
+    setRole(defaultRole ? String(defaultRole) : '');
+    const useDraft =
+      !defaultSubjectId && Boolean((draftSubjectForMaterial?.name || '').trim());
+    setSelectedSubjectId(useDraft ? DRAFT_SUBJECT_MATERIAL_ID : defaultSubjectId || null);
+    const initialChildIds =
+      Array.isArray(defaultChildIds) && defaultChildIds.length > 0
+        ? defaultChildIds
+        : (defaultChildId ? [defaultChildId] : []);
+    if (initialChildIds.length) {
+      setSelectedChildIds(initialChildIds);
+    } else if (useDraft) {
+      const draftIds = normalizeDraftChildIds(draftSubjectForMaterial);
+      setSelectedChildIds(draftIds.length ? draftIds : []);
+    } else if (defaultSubjectId) {
+      const subject =
+        (propAllSubjects.length ? propAllSubjects : allSubjects).find(
+          (s) => String(s.id) === String(defaultSubjectId)
+        ) || null;
+      setSelectedChildIds(childIdsConnectedToSubject(subject, children));
+    } else {
+      setSelectedChildIds([]);
     }
+    setProviderName('');
+    setProviderUrl(defaultProviderUrlTrimmed);
+    setPurchaseDate(null);
+    setPurchasePrice('');
+    setIsSubscription(false);
+    setSubscriptionFrequency('monthly');
+    setUploadedFile(null);
+    setUploadedFileUrl('');
+    setShowPurchaseInfo(false);
+    setShowReviewInfo(false);
+    setReviewChildId(null);
+    setReviewRating(null);
+    setReviewEmotion(null);
+    setReviewPacingFit(null);
+    setReviewDifficulty(null);
+    setReviewNotes('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    visible,
-    !!material,
-    !!postUploadMaterial,
-    defaultRole,
-    defaultSubjectId,
-    defaultChildId,
-    defaultChildIdsKey,
-    (draftSubjectForMaterial?.name || '').trim(),
-    defaultProviderUrlTrimmed,
-  ]);
+  }, [visible, !!material, !!postUploadMaterial]);
 
   const handleFileSelect = () => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') {
@@ -639,6 +608,11 @@ export default function AddMaterialModal({
     });
 
     setUploading(true);
+    // Show title immediately from the filename; user can edit while upload finishes.
+    const defaultTitle = titleFromUploadedFilename(file.name);
+    if (defaultTitle) {
+      setTitle((prev) => (prev.trim() ? prev : defaultTitle));
+    }
     try {
       // Generate unique filename
       // Extract extension from filename (handle cases where filename might contain URL-like patterns)
@@ -720,8 +694,6 @@ export default function AddMaterialModal({
         type: file.type,
         path: finalPath,
       });
-
-      const defaultTitle = titleFromUploadedFilename(file.name);
       if (defaultTitle) {
         setTitle((prev) => (prev.trim() ? prev : defaultTitle));
       }
@@ -783,7 +755,8 @@ export default function AddMaterialModal({
     setValidationError(getBlockedSaveMessage());
   }, [getBlockedSaveMessage]);
 
-  const showTitleField = !!effectiveMaterial || !!uploadedFile;
+  // Title appears once a file is chosen/uploaded (add) or when editing an existing material.
+  const showTitleField = !!effectiveMaterial || !!uploadedFile || (uploading && !!title.trim());
 
   const handleDismiss = useCallback(() => {
     setValidationError('');
@@ -1238,7 +1211,7 @@ export default function AddMaterialModal({
                         }}
                       >
                         <Text style={[styles.optionChipText, isSelected && styles.optionChipTextSelected]}>
-                          {subject.name}
+                          {subjectDisplayLabels.get(String(subject.id)) || subject.name}
                         </Text>
                       </TouchableOpacity>
                     );
@@ -1258,7 +1231,6 @@ export default function AddMaterialModal({
             <ModalSectionCard
               Icon={Star}
               title="Rate and review material"
-              subtitle="Difficulty, usefulness, and notes"
               expanded={showReviewInfo}
               onPress={() => setShowReviewInfo(!showReviewInfo)}
               accent="#9ECFFB"

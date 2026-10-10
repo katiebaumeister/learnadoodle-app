@@ -266,7 +266,7 @@ export default function MarkAllAttendedModal({
               <Text style={styles.subtitle}>
                 {showSelectStep
                   ? 'Choose which subjects to include. Only past, unattended lessons will be updated.'
-                  : `Mark ${eventCount} past lesson${eventCount === 1 ? '' : 's'} as attended for ${selectedSubjectLabels || 'the selected subjects'}?`}
+                  : `Mark all past ${eventCount} lesson${eventCount === 1 ? '' : 's'} as attended for ${selectedSubjectLabels || 'the selected subjects'}?`}
               </Text>
             </View>
             <TouchableOpacity

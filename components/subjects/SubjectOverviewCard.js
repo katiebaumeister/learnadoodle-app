@@ -18,6 +18,7 @@ function formatNaturalList(items = []) {
 
 export default function SubjectOverviewCard({
   subject,
+  displayName = null,
   children = [],
   selectedChildFilter = null, // Optional: filter to show only this child's dot (filtering happens at page level)
   onCardClick,
@@ -44,6 +45,7 @@ export default function SubjectOverviewCard({
   const session = useSession();
   const [needsHelpHovered, setNeedsHelpHovered] = useState(false);
   const [addAssignmentHovered, setAddAssignmentHovered] = useState(false);
+  const subjectTitle = String(displayName || subject?.name || 'Subject').trim() || 'Subject';
 
   const getChildName = (childId) => {
     const child = children.find(c => String(c.id) === String(childId));
@@ -416,7 +418,7 @@ export default function SubjectOverviewCard({
       <CompactOuter {...compactProps}>
         <View style={styles.searchCompactHeader}>
           <Text style={styles.searchCompactSubjectName} numberOfLines={2}>
-            {subject.name}
+            {subjectTitle}
           </Text>
         </View>
         {searchPreviewContent}
@@ -443,7 +445,7 @@ export default function SubjectOverviewCard({
     <CardOuter {...cardOuterProps}>
       {/* Header */}
       <SubjectCardHeader
-        subjectName={subject.name}
+        subjectName={subjectTitle}
         subject={subject}
         assignedChildIds={assignedChildren}
         familyChildren={children}

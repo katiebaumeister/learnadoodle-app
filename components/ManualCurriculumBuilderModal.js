@@ -25,7 +25,9 @@ import {
   Sparkles,
   MoreVertical,
   GripVertical,
+  CalendarCheck2,
 } from 'lucide-react';
+import { modalButtonStyles } from './ui/modalButtonStyles';
 import { STRINGS } from '../lib/i18n/strings';
 import { WebDragHandle, WebDropView, writeWebDragPayload, readWebDragPayload, isWebDragOfType, LEARNING_DAY_PLACEMENT_DRAG_MIME } from './ui/webDragDrop';
 import {
@@ -156,6 +158,22 @@ function readDraftLessonDragPayload(ev) {
   }
 }
 
+function ensureNumberedUnitTitle(title, index = 0) {
+  const n = index + 1;
+  const raw = String(title || '').trim();
+  if (!raw) return `Unit ${n}`;
+  const m = raw.match(/^(unit|week|chapter|module|part|section)\s+(\d+)\s*([:.\-—–)]\s*)?(.*)$/i);
+  if (m) {
+    const kind = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+    const rest = String(m[4] || '').trim();
+    if (kind.toLowerCase() !== 'unit') {
+      return rest ? `${kind} ${m[2]}: ${rest}` : `${kind} ${m[2]}`;
+    }
+    return rest ? `Unit ${n}: ${rest}` : `Unit ${n}`;
+  }
+  return `Unit ${n}: ${raw}`;
+}
+
 function normalizeImportedDraft(source) {
   if (!source?.units?.length) {
     return { title: source?.title ?? null, units: [emptyUnit(1)] };
@@ -164,7 +182,7 @@ function normalizeImportedDraft(source) {
     title: source?.title ?? null,
     units: source.units.map((u, ui) => ({
       temp_id: u.temp_id || tempId(),
-      title: u.title || `Unit ${ui + 1}`,
+      title: ensureNumberedUnitTitle(u.title || `Unit ${ui + 1}`, ui),
       description: null,
       sequence_index: ui + 1,
       inferred: !!u.inferred,
@@ -208,6 +226,14 @@ export default function ManualCurriculumBuilderModal({
   getActiveLearningDayId = null,
   onLearningDayDropOnLesson = null,
   stackZIndex = 10002,
+  /** Secondary footer actions (edit flow). */
+  showCreateUnitsAction = false,
+  createUnitsActionLabel = 'Create units and lessons',
+  onCreateUnitsAction = null,
+  showScheduleAllAction = false,
+  scheduleAllActionLabel = 'Schedule all lessons',
+  onScheduleAllAction = null,
+  scheduleAllDisabled = false,
 }) {
   const toast = useToast();
   const overlayRef = useRef(null);
@@ -1314,21 +1340,59 @@ export default function ManualCurriculumBuilderModal({
           >
             <Text style={styles.cancelText}>{s('global.actions.cancel')}</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.saveButton, (saving || validationError) && styles.saveButtonDisabled]}
-            onPress={() => handleSave({ closeOnSuccess: true })}
-            disabled={saving || Boolean(validationError)}
-            {...(Platform.OS === 'web' && { cursor: saving || validationError ? 'not-allowed' : 'pointer' })}
-          >
-            {saving ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <View style={styles.saveInner}>
-                <Sparkles size={14} color="#FFFFFF" />
-                <Text style={styles.saveText}>Save</Text>
-              </View>
-            )}
-          </TouchableOpacity>
+          <View style={styles.footerActions}>
+            {showCreateUnitsAction && typeof onCreateUnitsAction === 'function' ? (
+              <TouchableOpacity
+                style={[
+                  modalButtonStyles.secondaryButton,
+                  saving && modalButtonStyles.buttonDisabled,
+                ]}
+                onPress={onCreateUnitsAction}
+                disabled={saving}
+                accessibilityRole="button"
+                accessibilityLabel={createUnitsActionLabel}
+                {...(Platform.OS === 'web' && {
+                  cursor: saving ? 'not-allowed' : 'pointer',
+                })}
+              >
+                <Sparkles size={16} color="#6BB3E8" strokeWidth={2.25} />
+                <Text style={modalButtonStyles.secondaryButtonText}>{createUnitsActionLabel}</Text>
+              </TouchableOpacity>
+            ) : null}
+            {showScheduleAllAction && typeof onScheduleAllAction === 'function' ? (
+              <TouchableOpacity
+                style={[
+                  modalButtonStyles.secondaryButton,
+                  (saving || scheduleAllDisabled) && modalButtonStyles.buttonDisabled,
+                ]}
+                onPress={onScheduleAllAction}
+                disabled={saving || scheduleAllDisabled}
+                accessibilityRole="button"
+                accessibilityLabel={scheduleAllActionLabel}
+                {...(Platform.OS === 'web' && {
+                  cursor: saving || scheduleAllDisabled ? 'not-allowed' : 'pointer',
+                })}
+              >
+                <CalendarCheck2 size={16} color="#6BB3E8" strokeWidth={2.25} />
+                <Text style={modalButtonStyles.secondaryButtonText}>{scheduleAllActionLabel}</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              style={[styles.saveButton, (saving || validationError) && styles.saveButtonDisabled]}
+              onPress={() => handleSave({ closeOnSuccess: true })}
+              disabled={saving || Boolean(validationError)}
+              {...(Platform.OS === 'web' && { cursor: saving || validationError ? 'not-allowed' : 'pointer' })}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <View style={styles.saveInner}>
+                  <Sparkles size={14} color="#FFFFFF" />
+                  <Text style={styles.saveText}>Save</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       )}
     </>
@@ -1689,6 +1753,14 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: BORDER,
     backgroundColor: BG,
+  },
+  footerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap',
+    gap: 10,
+    flexShrink: 1,
   },
   cancelButton: {
     paddingVertical: 12,

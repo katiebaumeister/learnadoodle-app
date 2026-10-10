@@ -122,7 +122,7 @@ export default function EventAttachmentsField({
       ) : null}
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
         {canOpenSelected ? (
-          <View ref={triggerRef} style={[styles.select, localStyles.selectedSelectRow, { flex: 1 }]}>
+          <View ref={triggerRef} style={[styles.select, localStyles.selectMatchAddNew, localStyles.selectedSelectRow, { flex: 1 }]}>
             <TouchableOpacity
               style={localStyles.openSelectedHit}
               onPress={openSelectedMaterial}
@@ -154,7 +154,7 @@ export default function EventAttachmentsField({
         ) : (
           <TouchableOpacity
             ref={triggerRef}
-            style={[styles.select, { flex: 1 }]}
+            style={[styles.select, localStyles.selectMatchAddNew, { flex: 1 }]}
             onPress={() => setOpen((v) => !v)}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
@@ -259,6 +259,14 @@ export function materialIdsFromSelection(selectedMaterialId) {
 }
 
 const localStyles = StyleSheet.create({
+  // Match Create modal "+ Add New" chip (dropdownOption): pill + 36px height.
+  selectMatchAddNew: {
+    minHeight: 36,
+    height: 36,
+    borderRadius: 9999,
+    paddingVertical: 0,
+    paddingHorizontal: 12,
+  },
   selectedSelectRow: {
     paddingRight: 4,
     gap: 4,
@@ -269,7 +277,8 @@ const localStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     minWidth: 0,
-    paddingVertical: 2,
+    height: '100%',
+    paddingVertical: 0,
   },
   openSelectedText: {
     flex: 1,
@@ -277,10 +286,10 @@ const localStyles = StyleSheet.create({
     color: FG,
   },
   chevronHit: {
-    width: 32,
-    height: 32,
+    width: 28,
+    height: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 8,
+    borderRadius: 9999,
   },
 });

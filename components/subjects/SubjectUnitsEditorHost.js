@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Platform } from 'react-native';
 import EditSubjectUnitsModal from './EditSubjectUnitsModal';
 import SubjectCurriculumImportModal from './SubjectCurriculumImportModal';
+import SubjectMagicCreateWizard from './SubjectMagicCreateWizard';
 import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
 import {
   curriculumStructureHasContent,
@@ -23,6 +24,7 @@ export default function SubjectUnitsEditorHost({ familyId }) {
   const [autoContinueOnOpen, setAutoContinueOnOpen] = useState(false);
   const [headerTitle, setHeaderTitle] = useState(null);
   const [childIds, setChildIds] = useState([]);
+  const [withDates, setWithDates] = useState(false);
 
   const subject = useMemo(
     () => (subjectId ? { id: subjectId, name: subjectName || 'Subject' } : null),
@@ -37,6 +39,7 @@ export default function SubjectUnitsEditorHost({ familyId }) {
     setAutoContinueOnOpen(false);
     setHeaderTitle(null);
     setChildIds([]);
+    setWithDates(false);
   }, []);
 
   const handleSaved = useCallback(() => {
@@ -46,6 +49,29 @@ export default function SubjectUnitsEditorHost({ familyId }) {
     }
     handleClose();
   }, [handleClose, subjectId]);
+
+  const handleMagicContinue = useCallback((choice) => {
+    const purpose = choice?.purpose || 'subject_plan';
+    const nextWithDates = choice?.withDates === true;
+    const sourceMethod = normalizeSubjectUnitsEditorMethod(choice?.sourceMethod || 'upload');
+
+    // Assignment / lesson stay in the wizard chat step (handled inside SubjectMagicCreateWizard).
+    if (purpose === 'assignment' || purpose === 'lesson') {
+      return;
+    }
+
+    // Full subject plan → curriculum import modal for the chosen source.
+    setWithDates(nextWithDates);
+    setAutoContinueOnOpen(false);
+    setHeaderTitle(
+      sourceMethod === 'generate'
+        ? 'Generate curriculum'
+        : sourceMethod === 'paste_plain'
+          ? 'Paste plain text'
+          : 'Create from doc',
+    );
+    setMethod(IMPORT_METHODS.has(sourceMethod) ? sourceMethod : 'upload');
+  }, []);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
@@ -62,6 +88,7 @@ export default function SubjectUnitsEditorHost({ familyId }) {
       setAutoContinueOnOpen(detail.autoContinueOnOpen === true);
       setHeaderTitle(detail.headerTitle != null ? String(detail.headerTitle).trim() || null : null);
       setChildIds(Array.isArray(detail.childIds) ? detail.childIds.map(String) : []);
+      setWithDates(detail.withDates === true);
 
       const nextMethod = detail.method
         ? normalizeSubjectUnitsEditorMethod(detail.method)
@@ -84,6 +111,28 @@ export default function SubjectUnitsEditorHost({ familyId }) {
 
   if (!familyId || !subject || !visible) return null;
 
+  if (method === 'magic') {
+    return (
+      <SubjectMagicCreateWizard
+        visible
+        onClose={handleClose}
+        onContinue={handleMagicContinue}
+        onChatCompleted={() => {
+          if (Platform.OS === 'web' && typeof window !== 'undefined' && subjectId) {
+            window.dispatchEvent(new CustomEvent('refreshSubjects'));
+            window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId } }));
+            window.dispatchEvent(new CustomEvent('refreshPlanner'));
+          }
+        }}
+        subjectName={subject.name}
+        familyId={familyId}
+        subjectId={subject.id}
+        academicYearId={academicYearId}
+        childIds={childIds}
+      />
+    );
+  }
+
   if (method && IMPORT_METHODS.has(method)) {
     return (
       <SubjectCurriculumImportModal
@@ -100,6 +149,7 @@ export default function SubjectUnitsEditorHost({ familyId }) {
         initialMaterialId={initialMaterialId}
         autoContinueOnOpen={autoContinueOnOpen}
         headerTitle={headerTitle}
+        detectDates={withDates}
       />
     );
   }
@@ -114,6 +164,7 @@ export default function SubjectUnitsEditorHost({ familyId }) {
       hasExistingContent={hasExistingContent || Boolean(initialDraft?.units?.length)}
       initialDraft={initialDraft}
       academicYearId={academicYearId}
+      childIds={childIds}
     />
   );
 }

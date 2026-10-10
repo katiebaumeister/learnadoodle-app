@@ -16,6 +16,7 @@ const BRAND_SKY_BLUE_TEXT = '#5AAEF2';
 export default function LearningSubjectsListView({
   subjects = [],
   children = [],
+  subjectDisplayLabels = null,
   searchQuery = '',
   onSearchChange,
   onSearchSubmit,
@@ -232,6 +233,11 @@ export default function LearningSubjectsListView({
             <SubjectOverviewCard
               key={subject.id}
               subject={subject}
+              displayName={
+                subjectDisplayLabels?.get?.(String(subject.id))
+                || subjectDisplayLabels?.[String(subject.id)]
+                || null
+              }
               children={children}
               selectedChildFilter={selectedChildFilter}
               onCardClick={onSubjectPress}

@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import {
   BookOpen,
-  CalendarCheck2,
   ChevronDown,
   ChevronUp,
   FileText,
@@ -36,7 +35,7 @@ import {
 } from '../../lib/subjectLessonLinking';
 import { formatDueShort } from '../tutor/tutorHelpUtils';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
-import { openDoodleWithPrompt, openBuildFromMaterialEditor } from '../../lib/doodleLaunch';
+import { openMagicCreateWizard } from '../../lib/doodleLaunch';
 import { updateAssignmentPlacement } from '../../lib/services/assignmentPlacementClient';
 import {
   deleteAssignmentAndEvent,
@@ -901,19 +900,26 @@ function ClassworkPanelHeader({
   onUnitsAction,
   showUnitsAction = false,
   showCreateFromMaterialAction = false,
-  createFromMaterialActionLabel = 'Create from syllabus',
+  createFromMaterialActionLabel = 'Create classwork',
   onCreateFromMaterialAction = null,
-  showScheduleAllAction = false,
-  scheduleAllActionLabel = 'Schedule all lessons',
-  onScheduleAllAction = null,
-  scheduleAllDisabled = false,
 }) {
-  const hasAny = showAction || showSecondaryAction || showTertiaryAction || showUnitsAction || showCreateFromMaterialAction || showScheduleAllAction;
+  const hasAny = showAction || showSecondaryAction || showTertiaryAction || showUnitsAction || showCreateFromMaterialAction;
   return (
     <View style={styles.panelToolbar}>
       <Text style={styles.panelTitle}>Classwork</Text>
       {hasAny ? (
         <View style={styles.panelActions}>
+          {showCreateFromMaterialAction ? (
+            <TouchableOpacity
+              style={styles.panelActionBtn}
+              onPress={onCreateFromMaterialAction}
+              accessibilityLabel={createFromMaterialActionLabel}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Sparkles size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.panelActionBtnText}>{createFromMaterialActionLabel}</Text>
+            </TouchableOpacity>
+          ) : null}
           {showTertiaryAction ? (
             <TouchableOpacity
               style={styles.panelActionBtn}
@@ -945,29 +951,6 @@ function ClassworkPanelHeader({
             >
               <Plus size={18} color="#334155" strokeWidth={2.25} />
               <Text style={styles.panelActionBtnText}>{secondaryActionLabel}</Text>
-            </TouchableOpacity>
-          ) : null}
-          {showScheduleAllAction ? (
-            <TouchableOpacity
-              style={[styles.panelActionBtn, scheduleAllDisabled && styles.panelActionBtnDisabled]}
-              onPress={onScheduleAllAction}
-              disabled={scheduleAllDisabled}
-              accessibilityLabel={scheduleAllActionLabel}
-              {...(Platform.OS === 'web' && { cursor: scheduleAllDisabled ? 'default' : 'pointer' })}
-            >
-              <CalendarCheck2 size={18} color="#334155" strokeWidth={2.25} />
-              <Text style={styles.panelActionBtnText}>{scheduleAllActionLabel}</Text>
-            </TouchableOpacity>
-          ) : null}
-          {showCreateFromMaterialAction ? (
-            <TouchableOpacity
-              style={styles.panelActionBtn}
-              onPress={onCreateFromMaterialAction}
-              accessibilityLabel={createFromMaterialActionLabel}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Sparkles size={18} color="#334155" strokeWidth={2.25} />
-              <Text style={styles.panelActionBtnText}>{createFromMaterialActionLabel}</Text>
             </TouchableOpacity>
           ) : null}
           {showUnitsAction ? (
@@ -1563,7 +1546,7 @@ export default function SubjectClassworkSection({
         setScheduleModal({
           visible: true,
           title: 'Schedule all lessons',
-          message: 'All curriculum lessons are already linked to learning days on your planner.',
+          message: 'All units and lessons already have a scheduled date',
           scheduleLines: [],
           showConfirm: false,
           confirmLabel: 'OK',
@@ -1630,8 +1613,8 @@ export default function SubjectClassworkSection({
   ]);
 
   const handleScheduleClassDaysPress = useCallback(() => {
-    setShowScheduleAllComingSoon(true);
-  }, []);
+    openScheduleAllModal();
+  }, [openScheduleAllModal]);
 
   const confirmScheduleAllModal = useCallback(async () => {
     if (scheduleModal.mode === 'done' || scheduleModal.mode === 'info' || !scheduleModal.showConfirm) {
@@ -2384,28 +2367,16 @@ export default function SubjectClassworkSection({
           unitsActionLabel={unitsActionLabel}
           onUnitsAction={handleOpenUnitsEditor}
           showCreateFromMaterialAction={isParentViewer}
-          createFromMaterialActionLabel="Create from syllabus"
+          createFromMaterialActionLabel="Create classwork"
           onCreateFromMaterialAction={() => {
             if (!subjectId) return;
-            openBuildFromMaterialEditor({
+            openMagicCreateWizard({
               subjectId,
               subjectName: subjectName || null,
               academicYearId,
               childIds: assignedChildIds,
-              method: 'upload',
-              headerTitle: 'Create from syllabus',
             });
           }}
-          showScheduleAllAction={isParentViewer && showScheduleAllLessons}
-          scheduleAllActionLabel={schedulingAll ? 'Scheduling…' : 'Schedule all lessons'}
-          onScheduleAllAction={() => {
-            openDoodleWithPrompt({
-              prompt: `Create next ${subjectName || 'subject'} lesson`,
-              autoSubmit: true,
-              context: 'learning',
-            });
-          }}
-          scheduleAllDisabled={schedulingAll}
         />
         <ScrollView
           ref={panelScrollRef}
@@ -2525,22 +2496,16 @@ export default function SubjectClassworkSection({
         unitsActionLabel={unitsActionLabel}
         onUnitsAction={handleOpenUnitsEditor}
         showCreateFromMaterialAction={isParentViewer}
-        createFromMaterialActionLabel="Create from syllabus"
-        onCreateFromMaterialAction={() => {
-          if (!subjectId) return;
-          openBuildFromMaterialEditor({
-            subjectId,
-            subjectName: subjectName || null,
-            academicYearId,
-            childIds: assignedChildIds,
-            method: 'upload',
-            headerTitle: 'Create from syllabus',
-          });
-        }}
-        showScheduleAllAction={isParentViewer && showScheduleAllLessons}
-        scheduleAllActionLabel={schedulingAll ? 'Scheduling…' : 'Schedule all lessons'}
-        onScheduleAllAction={handleScheduleClassDaysPress}
-        scheduleAllDisabled={schedulingAll}
+        createFromMaterialActionLabel="Create classwork"
+          onCreateFromMaterialAction={() => {
+            if (!subjectId) return;
+            openMagicCreateWizard({
+              subjectId,
+              subjectName: subjectName || null,
+              academicYearId,
+              childIds: assignedChildIds,
+            });
+          }}
       />
       <ScrollView
         ref={panelScrollRef}

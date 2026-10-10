@@ -24,10 +24,18 @@ _DAILY_DEFAULT = int(os.environ.get("AI_DAILY_UNITS_DEFAULT", "20"))
 _DAILY_NEW_FAMILY = int(os.environ.get("AI_DAILY_UNITS_NEW_FAMILY", "8"))
 _NEW_FAMILY_DAYS = int(os.environ.get("AI_NEW_FAMILY_DAYS", "7"))
 
-_QUOTA_DISABLED = os.environ.get("AI_QUOTA_DISABLED", "").strip().lower() in (
-    "1",
-    "true",
-    "yes",
+def _env_flag(name: str, default: str = "") -> bool:
+    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes")
+
+
+# Lift quotas in local/dev for now. Production keeps enforcement unless AI_QUOTA_DISABLED=true.
+_IS_DEV = os.environ.get("ENVIRONMENT", "development").strip().lower() in (
+    "development",
+    "dev",
+    "local",
+)
+_QUOTA_DISABLED = _env_flag("AI_QUOTA_DISABLED") or (
+    _IS_DEV and not _env_flag("AI_QUOTA_FORCE_ENABLE")
 )
 
 

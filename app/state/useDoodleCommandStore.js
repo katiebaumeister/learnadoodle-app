@@ -171,17 +171,24 @@ export function DoodleCommandProvider({ children }) {
     }
   }, []);
 
+  const conversationCreateOptsRef = useRef({
+    conversationType: DOODLE_COMMAND_TYPE,
+    title: 'Doodle',
+    metadata: { channel: 'doodle_pane' },
+  });
+
   const ensureConversationId = useCallback(async () => {
     const current = stateRef.current;
     if (current.conversationId) return current.conversationId;
     const familyId = current.context?.householdId;
     if (!familyId) return null;
+    const opts = conversationCreateOptsRef.current || {};
     try {
       const id = await AIConversationService.createConversation(
         familyId,
-        DOODLE_COMMAND_TYPE,
-        'Doodle',
-        { channel: 'doodle_pane' },
+        opts.conversationType || DOODLE_COMMAND_TYPE,
+        opts.title || 'Doodle',
+        opts.metadata || { channel: 'doodle_pane' },
       );
       if (id) {
         dispatch({ type: 'SET_CONVERSATION_ID', conversationId: String(id) });
@@ -191,6 +198,43 @@ export function DoodleCommandProvider({ children }) {
       // ignore
     }
     return null;
+  }, []);
+
+  /**
+   * Start an isolated thread (e.g. subject magic Create modal) without hydrating
+   * the left-pane Doodle history.
+   */
+  const beginFreshConversation = useCallback(async ({
+    familyId,
+    title = 'Create',
+    conversationType = 'subject_magic',
+    metadata = {},
+  } = {}) => {
+    if (!familyId) return null;
+    conversationCreateOptsRef.current = {
+      conversationType,
+      title,
+      metadata: { channel: 'subject_magic', ...metadata },
+    };
+    dispatch({ type: 'CLEAR_HISTORY' });
+    try {
+      const id = await AIConversationService.createConversation(
+        familyId,
+        conversationType,
+        title,
+        { channel: 'subject_magic', ...metadata },
+      );
+      const conversationId = id ? String(id) : null;
+      dispatch({
+        type: 'HYDRATE',
+        conversationId,
+        messages: [],
+      });
+      return conversationId;
+    } catch (_) {
+      dispatch({ type: 'HYDRATE', conversationId: null, messages: [] });
+      return null;
+    }
   }, []);
 
   useEffect(() => {
@@ -545,6 +589,7 @@ export function DoodleCommandProvider({ children }) {
     ...state,
     setContextFromShell,
     hydrateConversation,
+    beginFreshConversation,
     submitMessage,
     confirmPending,
     undoLastAction,
@@ -556,6 +601,7 @@ export function DoodleCommandProvider({ children }) {
     state,
     setContextFromShell,
     hydrateConversation,
+    beginFreshConversation,
     submitMessage,
     confirmPending,
     undoLastAction,

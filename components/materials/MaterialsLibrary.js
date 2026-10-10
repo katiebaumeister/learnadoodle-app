@@ -15,7 +15,7 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { Search, X, ExternalLink, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload, Plus, FileText } from 'lucide-react';
+import { Search, X, ExternalLink, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload, Plus } from 'lucide-react';
 import {
   openBuildFromMaterialEditor,
   openDoodleWithPrompt,
@@ -38,18 +38,23 @@ import { shouldSuppressError } from '../../lib/apiClient';
 import { normalizeMaterial, normalizeUpload, compareLibraryMaterialItems } from '../../lib/docs/roles';
 import { useToast } from '../Toast';
 import { parseChildIds } from '../../lib/services/subjectsClient';
+import { buildSubjectDisplayLabels, getSubjectDisplayLabel } from '../../lib/subjectDisplayLabel';
 import ConfirmDialog from '../ConfirmDialog';
 import MaterialDocViewerModal, { resolveMaterialDocViewerUrl } from './MaterialDocViewerModal';
 import { getSubjectIdsAffectedByMaterial } from '../../lib/materialsSubjectLinkUtils';
 import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
 
-function resolveMaterialSubjectLabel(material, subjects = []) {
-  const key = String(material?.subject_key || '').trim();
-  if (key) return key;
+function resolveMaterialSubjectLabel(material, subjects = [], children = []) {
   const subjectId = material?.subject_id != null ? String(material.subject_id) : '';
-  if (!subjectId) return null;
-  const match = subjects.find((s) => String(s.id) === subjectId);
-  return match?.name || null;
+  if (subjectId) {
+    const match = subjects.find((s) => String(s.id) === subjectId);
+    if (match) return getSubjectDisplayLabel(match, subjects, { children });
+  }
+  const key = String(material?.subject_key || '').trim();
+  if (!key) return null;
+  const byName = subjects.filter((s) => String(s.name || '').trim() === key);
+  if (byName.length === 1) return getSubjectDisplayLabel(byName[0], subjects, { children });
+  return key;
 }
 
 /**
@@ -346,6 +351,11 @@ export default function MaterialsLibrary({
     return base.filter((child) => child?.id != null && scopedChildIdSet.has(String(child.id)));
   }, [localChildren, children, scopedChildIdSet]);
 
+  const subjectDisplayLabels = useMemo(
+    () => buildSubjectDisplayLabels(subjects, { children: effectiveChildren }),
+    [subjects, effectiveChildren],
+  );
+
   // Load subjects
   useEffect(() => {
     if (!familyId) return;
@@ -380,27 +390,15 @@ export default function MaterialsLibrary({
     try {
       const { data, error } = await supabase
         .from('subject')
-        .select('id, name, child_id')
+        .select('id, name, child_id, school_year')
         .eq('family_id', familyId)
         .order('name');
       
       if (!error && data) {
-        // Store full list for AddMaterialModal
-        setAllSubjectsForModal(data);
-        
-        // Deduplicate by name for filter display (prefer family-wide, then first occurrence)
-        const subjectMap = new Map();
-        data.forEach(subject => {
-          const existing = subjectMap.get(subject.name);
-          if (!existing) {
-            subjectMap.set(subject.name, subject);
-          } else if (existing.child_id !== null && subject.child_id === null) {
-            // Prefer family-wide over child-specific
-            subjectMap.set(subject.name, subject);
-          }
-        });
-        const uniqueSubjects = Array.from(subjectMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-        setSubjects(uniqueSubjects);
+        const sorted = [...data].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+        // Keep every subject row so cross-year / cross-child names can be disambiguated.
+        setAllSubjectsForModal(sorted);
+        setSubjects(sorted);
       }
     } catch (error) {
       console.warn('[MaterialsLibrary] Error loading subjects:', error);
@@ -817,8 +815,7 @@ export default function MaterialsLibrary({
     const menuItems = [
       { text: 'Edit Material', action: () => handleEditAttachment(item), icon: Edit2 },
       { text: 'Open in new tab', action: () => handleOpenInNewTab(item), icon: ExternalLink },
-      { text: 'Build units & lessons', action: () => handleBuildUnitsFromMaterial(item), icon: Sparkles },
-      { text: 'Make quiz from this', action: () => handleQuizFromMaterial(item), icon: FileText },
+      { text: 'Create assignment', action: () => handleQuizFromMaterial(item), icon: Sparkles },
       { text: 'Delete', action: () => handleDeleteItem(item), isDelete: true, icon: Trash2 }
     ];
     
@@ -1207,7 +1204,7 @@ export default function MaterialsLibrary({
                     }}
                   >
                     <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
-                      {subject.name}
+                      {subjectDisplayLabels.get(String(subject.id)) || subject.name}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -1566,7 +1563,9 @@ export default function MaterialsLibrary({
                             <View style={[styles.dropdownCheckbox, isSelected && styles.dropdownCheckboxActive]}>
                               {isSelected && <Check size={10} color="#FFFFFF" />}
                             </View>
-                            <Text style={styles.dropdownOptionText}>{subject.name}</Text>
+                            <Text style={styles.dropdownOptionText}>
+                              {subjectDisplayLabels.get(String(subject.id)) || subject.name}
+                            </Text>
                           </TouchableOpacity>
                         );
                       })}
@@ -1657,6 +1656,7 @@ export default function MaterialsLibrary({
                             const subjectLabel = resolveMaterialSubjectLabel(
                               data,
                               mergedSubjectsForMaterialLookup,
+                              effectiveChildren,
                             );
 
                             if (!hasChildren && !subjectLabel) return null;

@@ -4,6 +4,8 @@
  */
 import React, { useCallback, useMemo } from 'react';
 import ManualCurriculumBuilderModal from '../ManualCurriculumBuilderModal';
+import { dispatchOpenSubjectClassworkScheduleAll } from '../../lib/subjectClassworkActions';
+import { openMagicCreateWizard } from '../../lib/doodleLaunch';
 
 export default function EditSubjectUnitsModal({
   visible,
@@ -14,6 +16,7 @@ export default function EditSubjectUnitsModal({
   hasExistingContent = false,
   academicYearId = null,
   initialDraft = null,
+  childIds = [],
   stackZIndex = 10002,
 }) {
   const subjectId = subject?.id || null;
@@ -36,6 +39,21 @@ export default function EditSubjectUnitsModal({
     handleClose();
   }, [onSaved, handleClose]);
 
+  const handleScheduleAllLessons = useCallback(() => {
+    if (!subjectId) return;
+    dispatchOpenSubjectClassworkScheduleAll(subjectId);
+  }, [subjectId]);
+
+  const handleCreateUnitsAndLessons = useCallback(() => {
+    if (!subjectId) return;
+    openMagicCreateWizard({
+      subjectId,
+      subjectName,
+      academicYearId,
+      childIds: Array.isArray(childIds) ? childIds : [],
+    });
+  }, [subjectId, subjectName, academicYearId, childIds]);
+
   if (!visible) return null;
 
   return (
@@ -57,6 +75,12 @@ export default function EditSubjectUnitsModal({
           : 'Add units'
       }
       stackZIndex={stackZIndex}
+      showCreateUnitsAction={loadExisting}
+      createUnitsActionLabel="Create units and lessons"
+      onCreateUnitsAction={handleCreateUnitsAndLessons}
+      showScheduleAllAction={loadExisting}
+      scheduleAllActionLabel="Schedule all lessons"
+      onScheduleAllAction={handleScheduleAllLessons}
     />
   );
 }

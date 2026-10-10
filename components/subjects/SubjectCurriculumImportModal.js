@@ -50,6 +50,7 @@ export default function SubjectCurriculumImportModal({
   initialMaterialId = null,
   autoContinueOnOpen = false,
   headerTitle = null,
+  detectDates = false,
 }) {
   const toast = useToast();
   const overlayRef = React.useRef(null);
@@ -126,7 +127,7 @@ export default function SubjectCurriculumImportModal({
       ? ` Fits your subject schedule: ${scheduleSummary}.`
       : '';
     const persistBit = (hasExistingContent || replaceExisting)
-      ? ' Note that once saved, the saved units and lessons will be overridden. Review before saving!'
+      ? ' Review before saving, previously saved units and lessons will be overridden.'
       : ' This creates a draft only. Nothing is saved until you review and press Save. Your subject has no saved units yet, so this won’t overwrite anything.';
 
     if (method === 'generate') {
@@ -135,7 +136,7 @@ export default function SubjectCurriculumImportModal({
     if (method === 'paste_plain') {
       return `Paste a plain-text outline of units and lessons. Structured outlines keep their units and nested lessons; looser text is expanded into a multi-unit draft sized to your lesson days and times.${scheduleBit}${persistBit}`;
     }
-    return `Select or upload a syllabus/doc.${persistBit}`;
+    return `Select or upload a syllabus to generate.${persistBit}`;
   }, [method, scheduleSummary, hasExistingContent, replaceExisting]);
 
   const openDraftEditor = useCallback((draft) => {
@@ -154,7 +155,10 @@ export default function SubjectCurriculumImportModal({
   // must stay extractive from the material — do not invent a subject-themed outline.
   const parsePayloadExtras = useCallback(async ({ expandStructure = false } = {}) => {
     if (!expandStructure) {
-      return { allow_structure_expansion: false };
+      return {
+        allow_structure_expansion: false,
+        detect_dates: detectDates === true,
+      };
     }
     const ctx = planningCtx || await loadPlanningContext();
     return {
@@ -163,8 +167,9 @@ export default function SubjectCurriculumImportModal({
       typical_lesson_minutes: ctx?.typical_lesson_minutes || null,
       special_instructions: ctx?.special_instructions || null,
       allow_structure_expansion: true,
+      detect_dates: detectDates === true,
     };
-  }, [planningCtx, loadPlanningContext]);
+  }, [planningCtx, loadPlanningContext, detectDates]);
 
   const handleParse = async () => {
     if (!familyId || !subjectId || !rawText.trim()) return;

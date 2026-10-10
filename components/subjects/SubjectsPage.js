@@ -63,6 +63,7 @@ import {
   getSubjectsYearHeaderLabel,
   shouldShowSubjectsYearTargets,
 } from '../../lib/subjectsModeCopy';
+import { buildSubjectDisplayLabels } from '../../lib/subjectDisplayLabel';
 import SchoolYearSettingsModal from '../settings/SchoolYearSettingsModal';
 import FamilyPanel from '../settings/FamilyPanel';
 import AppModalShell from '../ui/AppModalShell';
@@ -964,6 +965,12 @@ export default function SubjectsPage({
     selectedYearFilter,
   ]);
 
+  // Labels from the full subject set so cross-year duplicates get year (then child) context.
+  const subjectDisplayLabels = useMemo(
+    () => buildSubjectDisplayLabels(subjects || [], { children: safeChildren }),
+    [subjects, safeChildren],
+  );
+
   const selectAllChildrenFilter = useCallback(() => {
     setAllChildrenFilterActive(true);
     setSelectedCourseChildIds([]);
@@ -1824,7 +1831,7 @@ export default function SubjectsPage({
                       ]}
                       numberOfLines={1}
                     >
-                      {subject.name || 'Subject'}
+                      {subjectDisplayLabels.get(String(subject.id)) || subject.name || 'Subject'}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -1847,6 +1854,7 @@ export default function SubjectsPage({
     registeredTerms,
     selectedTermFilter,
     subjectsForSubjectFilterChips,
+    subjectDisplayLabels,
     allCourseSubjectIds,
     allSubjectsFilterActive,
     effectiveCoursesSubjectIds,
@@ -3110,6 +3118,7 @@ export default function SubjectsPage({
         <LearningSubjectsListView
           subjects={filteredSubjects || []}
           children={safeChildren}
+          subjectDisplayLabels={subjectDisplayLabels}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           onSearchSubmit={handleSearchSubmit}

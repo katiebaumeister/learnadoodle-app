@@ -15,7 +15,15 @@ _RATE_LIMIT_MAX = 60  # requests per window
 
 _RATE_LIMIT_RELAXED_MAX = 300  # higher ceiling for read-heavy GET endpoints
 # Tight ceiling for LLM / AI spend paths (bots + burst abuse).
-_AI_RATE_LIMIT_MAX = int(os.environ.get("AI_RATE_LIMIT_MAX", "8"))
+# Dev gets a higher default so local testing isn't constantly 429'd.
+_IS_DEV = os.environ.get("ENVIRONMENT", "development").strip().lower() in (
+    "development",
+    "dev",
+    "local",
+)
+_AI_RATE_LIMIT_MAX = int(
+    os.environ.get("AI_RATE_LIMIT_MAX", "120" if _IS_DEV else "8")
+)
 
 
 def _rate_limit_key(request: Request) -> str:

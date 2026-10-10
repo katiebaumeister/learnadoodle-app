@@ -543,6 +543,15 @@ export default function DoodleCommandPane({
   seedPrompt = null,
   seedAutoSubmit = false,
   onSeedConsumed = null,
+  /** Hide left-rail chrome; use inside subject Create modal. */
+  embedded = false,
+  /** Do not load the left-pane Doodle history. */
+  skipHydrate = false,
+  /** Create a fresh persisted conversation (subject magic Create). */
+  freshConversation = null,
+  headerTitleOverride = null,
+  headerSubtitleOverride = null,
+  onActionCompleted = null,
 }) {
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
@@ -551,6 +560,7 @@ export default function DoodleCommandPane({
   const addFilesRef = useRef(null);
   const runSubmitRef = useRef(null);
   const seedConsumedRef = useRef(null);
+  const freshStartedRef = useRef(false);
   const [query, setQuery] = useState('');
   const [inputHeight, setInputHeight] = useState(COMPOSER_MIN_HEIGHT);
   const [draftAttachments, setDraftAttachments] = useState([]);
@@ -566,6 +576,7 @@ export default function DoodleCommandPane({
     hydrated,
     setContextFromShell,
     hydrateConversation,
+    beginFreshConversation,
     submitMessage,
     confirmPending,
     undoLastAction,
@@ -580,10 +591,25 @@ export default function DoodleCommandPane({
     if (shellContextInput) setContextFromShell(shellContextInput);
   }, [shellContextInput, setContextFromShell]);
 
+  useEffect(() => {
+    if (!freshConversation?.familyId || freshStartedRef.current) return undefined;
+    freshStartedRef.current = true;
+    beginFreshConversation({
+      familyId: freshConversation.familyId,
+      title: freshConversation.title || 'Create',
+      conversationType: freshConversation.conversationType || 'subject_magic',
+      metadata: freshConversation.metadata || {},
+    });
+    return undefined;
+  }, [freshConversation, beginFreshConversation]);
+
   // Prefill / auto-submit from app CTAs (Build from material, Pack week, etc.)
   useEffect(() => {
     const prompt = typeof seedPrompt === 'string' ? seedPrompt.trim() : '';
     if (!prompt || seedConsumedRef.current === prompt) return undefined;
+    // Wait until context + (optional) fresh conversation are ready.
+    if (!context?.householdId) return undefined;
+    if (freshConversation && !hydrated) return undefined;
     seedConsumedRef.current = prompt;
     setQuery(prompt);
     onSeedConsumed?.();
@@ -592,18 +618,20 @@ export default function DoodleCommandPane({
       runSubmitRef.current?.(prompt);
     }, 80);
     return () => clearTimeout(t);
-  }, [seedPrompt, seedAutoSubmit, onSeedConsumed]);
+  }, [seedPrompt, seedAutoSubmit, onSeedConsumed, context?.householdId, freshConversation, hydrated]);
 
   useEffect(() => {
+    if (skipHydrate || freshConversation) return undefined;
     const familyId = shellContextInput?.familyId || context?.householdId;
     if (familyId && !hydrated) {
       hydrateConversation(familyId);
     }
-  }, [shellContextInput?.familyId, context?.householdId, hydrated, hydrateConversation]);
+    return undefined;
+  }, [shellContextInput?.familyId, context?.householdId, hydrated, hydrateConversation, skipHydrate, freshConversation]);
 
   useEffect(() => {
-    trackDoodleEvent('doodle_opened', { area: contextArea });
-  }, [contextArea]);
+    trackDoodleEvent('doodle_opened', { area: contextArea, embedded: !!embedded });
+  }, [contextArea, embedded]);
 
   const scrollToBottom = useCallback((animated = false) => {
     scrollRef.current?.scrollToEnd?.({ animated });
@@ -849,10 +877,22 @@ export default function DoodleCommandPane({
   const canSend = Boolean(query.trim() || draftAttachments.length) && !busy;
   const firstMessageAt = messages[0]?.createdAt || null;
 
+  const handleConfirmPending = useCallback(async () => {
+    const result = await confirmPending({ capabilities });
+    if (result?.type === DOODLE_RESPONSE_TYPES.RESULT) {
+      onActionCompleted?.(result);
+    }
+    return result;
+  }, [confirmPending, capabilities, onActionCompleted]);
+
   return (
     <View
       ref={paneRef}
-      style={[styles.container, isDragging && styles.containerDragging]}
+      style={[
+        styles.container,
+        embedded && styles.containerEmbedded,
+        isDragging && styles.containerDragging,
+      ]}
     >
       {Platform.OS === 'web' && isDragging ? (
         <View style={styles.dropOverlay} pointerEvents="none">
@@ -862,6 +902,7 @@ export default function DoodleCommandPane({
           </View>
         </View>
       ) : null}
+      {embedded ? null : (
       <View style={styles.header}>
         {typeof onBack === 'function' ? (
           <TouchableOpacity
@@ -881,8 +922,12 @@ export default function DoodleCommandPane({
           style={styles.headerAvatar}
         />
         <View style={styles.headerTextCol}>
-          <Text style={styles.headerTitle} numberOfLines={1}>Doodle</Text>
-          <Text style={styles.headerSubtitle} numberOfLines={1}>Your learning assistant</Text>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {headerTitleOverride || 'Doodle'}
+          </Text>
+          <Text style={styles.headerSubtitle} numberOfLines={1}>
+            {headerSubtitleOverride || 'Your learning assistant'}
+          </Text>
         </View>
         {typeof onClosePane === 'function' ? (
           <MessagesPaneCloseButton
@@ -891,6 +936,7 @@ export default function DoodleCommandPane({
           />
         ) : null}
       </View>
+      )}
 
       <ScrollView
         ref={scrollRef}
@@ -941,7 +987,7 @@ export default function DoodleCommandPane({
           busy={status === DOODLE_PANE_STATUS.EXECUTING}
           roster={roster}
           context={context}
-          onConfirm={() => confirmPending({ capabilities })}
+          onConfirm={handleConfirmPending}
           onCancel={cancelPending}
           onUpdateCommand={(patch) => updatePendingCommand(patch, { roster })}
         />
@@ -1075,6 +1121,10 @@ const styles = StyleSheet.create({
     minHeight: 0,
     backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' ? { position: 'relative' } : null),
+  },
+  containerEmbedded: {
+    minHeight: 420,
+    ...(Platform.OS === 'web' ? { maxHeight: '62vh' } : null),
   },
   containerDragging: {
     ...(Platform.OS === 'web' ? {
