@@ -84,6 +84,7 @@ import { useFamilyPlanningMode } from '../lib/useFamilyPlanningMode';
 import { getWorkspaceCapabilities, isSelfManagedStudentWithoutParent } from '../lib/planningMode';
 import { PlannerDiffProvider } from '../app/state/usePlannerDiffStore';
 import { DoodleCommandProvider } from '../app/state/useDoodleCommandStore';
+import { filterSubjectsForSchoolYear } from '../lib/assistant/commands/rosterHelpers';
 import PlannerDiffModal from '../app/components/schedule/PlannerDiffModal';
 import { PlannerHealthProvider } from '../app/state/usePlannerHealthStore';
 import { ConstraintsProvider } from '../app/state/useConstraintsStore';
@@ -286,6 +287,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   /** Optional prefilled prompt when opening Doodle from header search (or other callers). */
   const [doodleSearchInitialPrompt, setDoodleSearchInitialPrompt] = useState(null);
   const [doodleSearchAutoSubmit, setDoodleSearchAutoSubmit] = useState(false);
+  const [doodlePaneSeedPrompt, setDoodlePaneSeedPrompt] = useState(null);
+  const [doodlePaneSeedAutoSubmit, setDoodlePaneSeedAutoSubmit] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showAddChildModal, setShowAddChildModal] = useState(false);
   const [showInviteChildModal, setShowInviteChildModal] = useState(false);
@@ -805,11 +808,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [preloadedAcademicYears, setPreloadedAcademicYears] = useState(null);
   /** null = not loaded yet; rows seed EventModal help/submission strips without a blocking fetch */
   const [preloadedFamilyAssignments, setPreloadedFamilyAssignments] = useState(null);
-  // Derived: must come after session/state used below (avoid TDZ)
+  // Derived: must come after session/state used below (avoid TDZ).
+  // Wait for the status check, and only block on explicit false — never on
+  // missing/undefined family fields (that flash caused the welcome modal on refresh).
   const onboardingBlocked = !!(
     session &&
+    onboardingCheckDone &&
     !onboardingJustCompleted &&
-    (initialOnboardingBlocked || (family && !family.onboarding_completed))
+    (
+      initialOnboardingBlocked
+      || family?.onboarding_completed === false
+    )
   );
   // Only parent home uses ParentHomeScreen's initial-data ready callback.
   // Using resolvedShellUserRole avoids false "parent-like" matches during
@@ -2320,12 +2329,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         const res = await getOnboardingStatus();
         const data = res?.data ?? res;
         if (cancelled) return;
+        // Only block when the API explicitly says incomplete (not on null/404).
+        setInitialOnboardingBlocked(data?.onboarding_completed === false);
         setOnboardingCheckDone(true);
-        setInitialOnboardingBlocked(!data?.onboarding_completed);
       } catch (_) {
         if (!cancelled) {
-          setOnboardingCheckDone(true);
           setInitialOnboardingBlocked(false);
+          setOnboardingCheckDone(true);
         }
       }
     })();
@@ -3836,8 +3846,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }
         return;
       }
-      // Doodle lives under Messages as a helper contact (left-rail tab removed).
-      if (key === 'doodle') {
+      // Search / Doodle left-rail item — same left pane as Messages pattern.
+      if (key === 'search' || key === 'doodle') {
+        if (childDoodleBotDisabled) return;
         if (isDoodlePaneOpen) {
           setIsDoodlePaneOpen(false);
           setDoodlePaneContext(null);
@@ -3847,7 +3858,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setIsCreatePaneOpen(false);
           setDoodlePaneContext(null);
           setIsDoodlePaneOpen(true);
-          setActiveTopNav('messages');
+          setActiveTopNav('search');
         }
         return;
       }
@@ -3957,6 +3968,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     },
     [
       activeChildId,
+      childDoodleBotDisabled,
       handleTabChange,
       isCreatePaneOpen,
       isDoodlePaneOpen,
@@ -3992,15 +4004,20 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
-    const openPane = (context = null) => {
+    const openPane = (detail = {}) => {
       if (childDoodleBotDisabled) return;
       setIsMessagesPaneOpen(false);
       setIsCreatePaneOpen(false);
-      setDoodlePaneContext(context || null);
+      setDoodlePaneContext(detail?.context || null);
+      const prompt = typeof detail?.initialPrompt === 'string' && detail.initialPrompt.trim()
+        ? detail.initialPrompt.trim()
+        : null;
+      setDoodlePaneSeedPrompt(prompt);
+      setDoodlePaneSeedAutoSubmit(!!detail?.autoSubmit && !!prompt);
       setIsDoodlePaneOpen(true);
-      setActiveTopNav('messages');
+      setActiveTopNav('search');
     };
-    const handleOpen = (event) => openPane(event?.detail?.context || null);
+    const handleOpen = (event) => openPane(event?.detail || {});
     const handleKeyDown = (event) => {
       if ((event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === 'k') {
         event.preventDefault();
@@ -4240,6 +4257,22 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     currentMonth || new Date(),
     preloadedAcademicYears
   );
+  const doodleContextSchoolYearId = useMemo(() => {
+    const anchor = currentMonth instanceof Date && !Number.isNaN(currentMonth.getTime())
+      ? currentMonth
+      : new Date();
+    const y = anchor.getFullYear();
+    const m = String(anchor.getMonth() + 1).padStart(2, '0');
+    const d = String(anchor.getDate()).padStart(2, '0');
+    const ymd = `${y}-${m}-${d}`;
+    const years = Array.isArray(preloadedAcademicYears) ? preloadedAcademicYears : [];
+    const match = years.find((year) => {
+      const start = String(year?.start_date || '').slice(0, 10);
+      const end = String(year?.end_date || '').slice(0, 10);
+      return start && end && ymd >= start && ymd <= end;
+    });
+    return match?.id ? String(match.id) : null;
+  }, [currentMonth, preloadedAcademicYears]);
   const doodleEnabledFeatures = useMemo(() => {
     const features = [];
     if (workspaceCapabilities?.showLearning) features.push('learningAreas');
@@ -4269,6 +4302,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       activeTab,
       messagesPaneOpen: false,
       familyId,
+      schoolYearId: doodleContextSchoolYearId,
       schoolYearLabel: doodleContextSchoolYear,
       selectedChildIds: activeChildId
         ? [String(activeChildId)]
@@ -4289,6 +4323,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [
     activeTab,
     familyId,
+    doodleContextSchoolYearId,
     doodleContextSchoolYear,
     activeChildId,
     selectedCalendarChildren,
@@ -4305,9 +4340,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       : (subjects || []);
     return {
       children: children || [],
-      subjects: subjectRows,
+      subjects: filterSubjectsForSchoolYear(subjectRows, doodleContextSchoolYear),
     };
-  }, [children, subjects, fullSubjects]);
+  }, [children, subjects, fullSubjects, doodleContextSchoolYear]);
   const doodleCapabilities = useMemo(() => {
     const perms = familyUserControls.effectivePermissions || {};
     const canMarkAttendance = resolvedShellUserRole === 'parent'
@@ -4488,16 +4523,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 shellContextInput={doodleShellContextInput}
                 roster={doodleRoster}
                 capabilities={doodleCapabilities}
-                onBack={() => {
-                  setIsDoodlePaneOpen(false);
-                  setDoodlePaneContext(null);
-                  setIsCreatePaneOpen(false);
-                  setIsMessagesPaneOpen(true);
-                  setActiveTopNav('messages');
+                seedPrompt={doodlePaneSeedPrompt}
+                seedAutoSubmit={doodlePaneSeedAutoSubmit}
+                onSeedConsumed={() => {
+                  setDoodlePaneSeedPrompt(null);
+                  setDoodlePaneSeedAutoSubmit(false);
                 }}
                 onClosePane={() => {
                   setIsDoodlePaneOpen(false);
                   setDoodlePaneContext(null);
+                  setDoodlePaneSeedPrompt(null);
+                  setDoodlePaneSeedAutoSubmit(false);
                   syncTopNavFromActiveTab();
                 }}
                 onNavigate={(link) => {
@@ -4519,6 +4555,37 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   ) {
                     if (Platform.OS === 'web' && typeof window !== 'undefined') {
                       window.dispatchEvent(new CustomEvent('openAttendanceExportModal'));
+                    }
+                    return;
+                  }
+                  const smartActionMatch = href.match(/^#planner-smart-action\/([a-z0-9-]+)/i);
+                  if (smartActionMatch) {
+                    const modeId = smartActionMatch[1];
+                    handleTopSelect('planner');
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('plannerSmartAction', {
+                        detail: { modeId },
+                      }));
+                    }
+                    return;
+                  }
+                  if (href === '#doodle-parent-review') {
+                    // Parent review = this Doodle transcript; ensure the pane stays/opens.
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('openDoodleCommandBar', {
+                        detail: { focus: 'parent-review' },
+                      }));
+                    }
+                    return;
+                  }
+                  const assignmentHash = href.match(/^#assignment\/([a-zA-Z0-9-]+)/i);
+                  if (assignmentHash) {
+                    handleTopSelect('learning');
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.history.replaceState({}, '', `/learning?assignment=${assignmentHash[1]}`);
+                      window.dispatchEvent(new CustomEvent('openAssignment', {
+                        detail: { assignmentId: assignmentHash[1] },
+                      }));
                     }
                     return;
                   }
@@ -4589,15 +4656,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 children={children}
                 active={isMessagesPaneOpen}
                 placement="left"
-                doodleEnabled={!childDoodleBotDisabled}
-                onOpenDoodle={() => {
-                  if (childDoodleBotDisabled) return;
-                  setIsMessagesPaneOpen(false);
-                  setIsCreatePaneOpen(false);
-                  setDoodlePaneContext(null);
-                  setIsDoodlePaneOpen(true);
-                  setActiveTopNav('messages');
-                }}
+                doodleEnabled={false}
                 onClosePane={() => {
                   setIsMessagesPaneOpen(false);
                   syncTopNavFromActiveTab();
@@ -4609,6 +4668,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             topActive: activeTopNav,
             messagesPaneOpen: isMessagesPaneOpen,
             createPaneOpen: isCreatePaneOpen,
+            searchPaneOpen: isDoodlePaneOpen,
             onSelectTop: handleTopSelect,
             childrenList: children,
             activeChildId: activeChildId,
@@ -4617,19 +4677,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             onSelectChildSection: handleChildSectionSelect,
             onExitChildView: handleExitChildView,
             onOpenNew: handleOpenNewMenu,
-            onOpenSearch: () => {
-              if (typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('openDoodleCommandBar', {
-                  detail: { context: doodleCommandContext },
-                }));
-              }
-            },
+            onOpenSearch: () => handleTopSelect('search'),
             onAvatarPress: handleShellAvatarPress,
             user: user,
             userRole: resolvedShellUserRole,
             familyPlanningMode: familyPlanningMode ?? family?.default_planning_mode ?? null,
             featureSettings: family?.feature_settings || null,
             studentSelfManagedNoParent,
+            doodleBotDisabled: childDoodleBotDisabled,
             unreadMessagesCount,
           }}
           onOpenSettings={(section = 'profile') => {

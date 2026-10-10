@@ -64,7 +64,26 @@ def _coerce_float(val: Any) -> Optional[float]:
         return None
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(*, allow_structure_expansion: bool = False) -> str:
+    if allow_structure_expansion:
+        return """You are a curriculum structure assistant for a homeschool planner.
+Return valid JSON only. No markdown. No commentary outside the JSON.
+
+Primary job: produce nested units[].lessons[] for review.
+
+When the source has clear unit/week/section headings and lesson lists:
+- Extract that hierarchy faithfully. Preserve wording and sequence.
+- Do not invent unrelated topics.
+
+When the source is unstructured (course goals, themes, topics, or a paper without a syllabus outline):
+- Organize into MULTIPLE titled units with nested lessons covering those goals/themes.
+- Size the total lesson count to the Planning context target (±15%) when provided.
+- Prefer 3–8 lessons per unit; never dump everything into one flat “Imported lessons” unit when multiple themes exist.
+- You may invent reasonable lesson titles that teach the stated goals; keep them concrete and teachable.
+- Set minutes_est on each lesson to the typical lesson minutes from Planning context when provided.
+
+Always nest lessons under units. Ignore policy/admin text when instructed."""
+
     return """You are a curriculum structure extraction assistant.
 Your task is to extract structured educational content from user-provided text only.
 Do NOT invent curriculum that is not present in the source.
@@ -97,6 +116,10 @@ def _build_user_prompt(
     extract_assignments: bool,
     extract_assessments: bool,
     special_instructions: Optional[str],
+    planning_context: Optional[str] = None,
+    lesson_count_target: Optional[int] = None,
+    typical_lesson_minutes: Optional[int] = None,
+    allow_structure_expansion: bool = False,
 ) -> str:
     lines_summary = []
     for ln in pre_parse.lines[:200]:  # cap for prompt size
@@ -111,6 +134,15 @@ def _build_user_prompt(
         f"Ignore policy/admin text: {ignore_policy}",
         f"Extract assignments: {extract_assignments}",
         f"Extract assessments: {extract_assessments}",
+        f"Allow structure expansion for goals: {allow_structure_expansion}",
+    ]
+    if lesson_count_target:
+        parts.append(f"Target lesson count: {lesson_count_target}")
+    if typical_lesson_minutes:
+        parts.append(f"Typical lesson minutes: {typical_lesson_minutes}")
+    if planning_context and str(planning_context).strip():
+        parts.extend(["", "Planning context (authoritative for pacing/sizing):", str(planning_context).strip()])
+    parts.extend([
         "",
         "Pre-parser summary:",
         f"  dominant_mode: {structure.get('dominant_mode', 'mixed')}",
@@ -122,45 +154,58 @@ def _build_user_prompt(
         "Tagged lines (line_index, heuristic_tag, raw):",
         "\n".join(lines_summary[:100]),
         "",
-        "RAW SOURCE TEXT (extract from this only):",
+        "RAW SOURCE TEXT:",
         "---",
         raw_text[:25000],
         "---",
-    ]
+    ])
     if special_instructions:
-        parts.insert(-2, f"Special instructions: {special_instructions}")
+        parts.insert(-4, f"Special instructions: {special_instructions}")
 
     # Compact schema = much shorter model output → faster than verbose null-heavy JSON (closer to chat TTFT).
-    schema = """
+    expand_rules = ""
+    if allow_structure_expansion:
+        expand_rules = """
+- Prefer multiple units with nested lessons.
+- If the source lacks a lesson list, expand goals into a teachable multi-unit outline sized to Target lesson count.
+- Set minutes_est on lessons to Typical lesson minutes when provided.
+"""
+    else:
+        expand_rules = """
+- Only include units/lessons clearly present. unassigned_items for uncertain lines; ignored_items for policy/admin when ignore_policy is true.
+- Only add objective/notes/minutes_est/modality/confidence/inferred_from if the source explicitly gives them (otherwise omit).
+"""
+
+    schema = f"""
 Return one JSON object only (no markdown). Use compact output — omit empty arrays, omit unknown fields, do NOT emit null placeholders.
 
 Required shape:
-{
+{{
   "summary": "short one-line summary of this text (optional)",
   "units": [
-    {
+    {{
       "title": "unit title",
       "sequence_index": 1,
       "source_label": "optional heading from source",
       "lessons": [
-        {
+        {{
           "title": "lesson title",
           "sequence_index": 1,
-          "lesson_type": "lesson|assignment|project|assessment|reading|lab|review|activity"
-        }
+          "lesson_type": "lesson|assignment|project|assessment|reading|lab|review|activity",
+          "minutes_est": {typical_lesson_minutes or 60}
+        }}
       ]
-    }
+    }}
   ],
-  "unassigned_items": [ { "temp_id": "t1", "raw_text": "line", "reason": "uncertain" } ],
-  "ignored_items": [ { "raw_text": "snippet", "reason": "policy" } ],
+  "unassigned_items": [ {{ "temp_id": "t1", "raw_text": "line", "reason": "uncertain" }} ],
+  "ignored_items": [ {{ "raw_text": "snippet", "reason": "policy" }} ],
   "parser_warnings": []
-}
+}}
 
 Rules:
 - Include date_text on a lesson ONLY if a date appears next to that item in the source.
-- Only add objective/notes/minutes_est/modality/confidence/inferred_from if the source explicitly gives them (otherwise omit).
-- Only include units/lessons clearly present. unassigned_items for uncertain lines; ignored_items for policy/admin when ignore_policy is true.
 - temp_id on unassigned_items: short unique string if you use that array.
+{expand_rules}
 """
     return "\n".join(parts) + "\n\n" + schema.strip()
 
@@ -345,6 +390,10 @@ async def _openai_extract_one_plain_text_chunk(
     extract_assignments: bool,
     extract_assessments: bool,
     special_instructions: Optional[str],
+    planning_context: Optional[str] = None,
+    lesson_count_target: Optional[int] = None,
+    typical_lesson_minutes: Optional[int] = None,
+    allow_structure_expansion: bool = False,
 ) -> Dict[str, Any]:
     text = (chunk_text or "").strip()
     if len(text) > 25000:
@@ -362,6 +411,10 @@ async def _openai_extract_one_plain_text_chunk(
         extract_assignments=extract_assignments,
         extract_assessments=extract_assessments,
         special_instructions=special_instructions,
+        planning_context=planning_context,
+        lesson_count_target=lesson_count_target,
+        typical_lesson_minutes=typical_lesson_minutes,
+        allow_structure_expansion=allow_structure_expansion,
     )
     content = await _openai_extract_json_string(
         client, model, system_content, user_content, stream=False, timeout=120.0
@@ -384,12 +437,16 @@ async def _extract_parallel_chunks(
     extract_assignments: bool,
     extract_assessments: bool,
     special_instructions: Optional[str],
+    planning_context: Optional[str] = None,
+    lesson_count_target: Optional[int] = None,
+    typical_lesson_minutes: Optional[int] = None,
+    allow_structure_expansion: bool = False,
 ) -> Dict[str, Any]:
     from openai import AsyncOpenAI
 
     model = _parse_model_name()
     client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-    system_content = _build_system_prompt()
+    system_content = _build_system_prompt(allow_structure_expansion=allow_structure_expansion)
     sem = asyncio.Semaphore(_MAX_PARALLEL_CHUNKS)
     log_event(
         "curriculum.parse_text.parallel",
@@ -415,18 +472,38 @@ async def _extract_parallel_chunks(
                 extract_assignments=extract_assignments,
                 extract_assessments=extract_assessments,
                 special_instructions=special_instructions,
+                planning_context=planning_context,
+                lesson_count_target=lesson_count_target,
+                typical_lesson_minutes=typical_lesson_minutes,
+                allow_structure_expansion=allow_structure_expansion,
             )
 
     partials = await asyncio.gather(*[one_fragment(c) for c in chunks])
     merged_raw = _merge_raw_extractions(list(partials))
     return _validate_and_normalize_parsed(
-        merged_raw, subject_id=subject_id, family_id=family_id, raw_text=full_raw_text
+        merged_raw,
+        subject_id=subject_id,
+        family_id=family_id,
+        raw_text=full_raw_text,
+        typical_lesson_minutes=typical_lesson_minutes,
     )
 
 
-def _validate_and_normalize_parsed(raw: Dict[str, Any], subject_id: str, family_id: str, raw_text: str) -> Dict[str, Any]:
+def _validate_and_normalize_parsed(
+    raw: Dict[str, Any],
+    subject_id: str,
+    family_id: str,
+    raw_text: str,
+    *,
+    typical_lesson_minutes: Optional[int] = None,
+) -> Dict[str, Any]:
     """Validate and normalize LLM output into ParsedDraftCurriculum shape."""
     warnings = list(raw.get("parser_warnings") or [])
+    default_minutes = (
+        int(typical_lesson_minutes)
+        if isinstance(typical_lesson_minutes, (int, float)) and typical_lesson_minutes > 0
+        else None
+    )
     units_in = raw.get("units")
     if not isinstance(units_in, list):
         units_in = []
@@ -451,13 +528,16 @@ def _validate_and_normalize_parsed(raw: Dict[str, Any], subject_id: str, family_
             lt = (le.get("lesson_type") or "lesson").strip().lower()
             if lt not in ALLOWED_LESSON_TYPES:
                 lt = "lesson"
+            minutes_est = le.get("minutes_est") if isinstance(le.get("minutes_est"), (int, float)) else None
+            if minutes_est is None and default_minutes is not None:
+                minutes_est = default_minutes
             lessons_out.append({
                 "temp_id": le.get("temp_id") or _ensure_temp_id(),
                 "title": lesson_title,
                 "objective": (le.get("objective") or "").strip() or None,
                 "notes": (le.get("notes") or "").strip() or None,
                 "sequence_index": li + 1,
-                "minutes_est": le.get("minutes_est") if isinstance(le.get("minutes_est"), (int, float)) else None,
+                "minutes_est": minutes_est,
                 "modality": (le.get("modality") or "practice").strip() or None,
                 "lesson_type": lt,
                 "date_text": (le.get("date_text") or "").strip() or None,
@@ -500,7 +580,7 @@ def _validate_and_normalize_parsed(raw: Dict[str, Any], subject_id: str, family_
                 "objective": None,
                 "notes": None,
                 "sequence_index": i + 1,
-                "minutes_est": None,
+                "minutes_est": default_minutes,
                 "modality": None,
                 "lesson_type": "lesson",
                 "date_text": None,
@@ -509,18 +589,41 @@ def _validate_and_normalize_parsed(raw: Dict[str, Any], subject_id: str, family_
                 "confidence": _coerce_float(item.get("confidence")) or 0.5,
             })
         if inferred_lessons:
-            units_out = [{
-                "temp_id": _ensure_temp_id(),
-                "source_label": "Imported lessons",
-                "title": "Imported lessons",
-                "description": None,
-                "sequence_index": 1,
-                "inferred_from": ["unassigned"],
-                "lessons": inferred_lessons,
-                "assignments": [],
-                "assessments": [],
-            }]
-            warnings.append("No clear unit structure found; grouped lines into a single 'Imported lessons' unit.")
+            # Split long flat lists into multiple units (~6 lessons) so the draft is editable.
+            chunk_size = 6
+            if len(inferred_lessons) > chunk_size:
+                units_out = []
+                for bi in range(0, len(inferred_lessons), chunk_size):
+                    chunk = inferred_lessons[bi:bi + chunk_size]
+                    for j, lesson in enumerate(chunk):
+                        lesson["sequence_index"] = j + 1
+                    units_out.append({
+                        "temp_id": _ensure_temp_id(),
+                        "source_label": None,
+                        "title": f"Unit {(bi // chunk_size) + 1}",
+                        "description": None,
+                        "sequence_index": (bi // chunk_size) + 1,
+                        "inferred_from": ["unassigned"],
+                        "lessons": chunk,
+                        "assignments": [],
+                        "assessments": [],
+                    })
+                warnings.append(
+                    "No clear unit structure found; grouped lines into multiple units for editing."
+                )
+            else:
+                units_out = [{
+                    "temp_id": _ensure_temp_id(),
+                    "source_label": "Imported lessons",
+                    "title": "Imported lessons",
+                    "description": None,
+                    "sequence_index": 1,
+                    "inferred_from": ["unassigned"],
+                    "lessons": inferred_lessons,
+                    "assignments": [],
+                    "assessments": [],
+                }]
+                warnings.append("No clear unit structure found; grouped lines into a single 'Imported lessons' unit.")
             unassigned = []
 
     if not units_out:
@@ -564,6 +667,10 @@ async def extract_curriculum_from_plain_text(
     extract_assessments: bool = True,
     learner_stage: Optional[str] = None,
     special_instructions: Optional[str] = None,
+    planning_context: Optional[str] = None,
+    lesson_count_target: Optional[int] = None,
+    typical_lesson_minutes: Optional[int] = None,
+    allow_structure_expansion: bool = True,
 ) -> Dict[str, Any]:
     """
     Run pre-parse then LLM extraction; validate and return parsed draft.
@@ -574,6 +681,7 @@ async def extract_curriculum_from_plain_text(
     if not raw_text:
         raise ValueError("Raw text is required for extraction.")
 
+    expand = bool(allow_structure_expansion and (planning_context or lesson_count_target))
     pre_parse = preparse_plain_text(raw_text)
     chunks_opt = split_raw_into_parallel_chunks(pre_parse)
     if chunks_opt and len(chunks_opt) >= 2:
@@ -591,6 +699,10 @@ async def extract_curriculum_from_plain_text(
             extract_assignments=extract_assignments,
             extract_assessments=extract_assessments,
             special_instructions=special_instructions,
+            planning_context=planning_context,
+            lesson_count_target=lesson_count_target,
+            typical_lesson_minutes=typical_lesson_minutes,
+            allow_structure_expansion=expand,
         )
 
     from openai import AsyncOpenAI
@@ -609,13 +721,23 @@ async def extract_curriculum_from_plain_text(
         extract_assignments=extract_assignments,
         extract_assessments=extract_assessments,
         special_instructions=special_instructions,
+        planning_context=planning_context,
+        lesson_count_target=lesson_count_target,
+        typical_lesson_minutes=typical_lesson_minutes,
+        allow_structure_expansion=expand,
     )
-    system_content = _build_system_prompt()
+    system_content = _build_system_prompt(allow_structure_expansion=expand)
     content = await _openai_extract_json_string(
         client, model, system_content, user_content, stream=False, timeout=150.0
     )
     raw = _parse_llm_json_content(content)
-    return _validate_and_normalize_parsed(raw, subject_id=subject_id, family_id=family_id, raw_text=raw_text)
+    return _validate_and_normalize_parsed(
+        raw,
+        subject_id=subject_id,
+        family_id=family_id,
+        raw_text=raw_text,
+        typical_lesson_minutes=typical_lesson_minutes,
+    )
 
 
 async def stream_extract_curriculum_from_plain_text(
@@ -634,6 +756,10 @@ async def stream_extract_curriculum_from_plain_text(
     extract_assessments: bool = True,
     learner_stage: Optional[str] = None,
     special_instructions: Optional[str] = None,
+    planning_context: Optional[str] = None,
+    lesson_count_target: Optional[int] = None,
+    typical_lesson_minutes: Optional[int] = None,
+    allow_structure_expansion: bool = True,
     user_id: Optional[str] = None,
 ) -> AsyncIterator[bytes]:
     """
@@ -645,6 +771,7 @@ async def stream_extract_curriculum_from_plain_text(
     if not raw_text:
         raise ValueError("Raw text is required for extraction.")
 
+    expand = bool(allow_structure_expansion and (planning_context or lesson_count_target))
     pre_parse = preparse_plain_text(raw_text)
     chunks_opt = split_raw_into_parallel_chunks(pre_parse)
     if chunks_opt and len(chunks_opt) >= 2:
@@ -665,7 +792,7 @@ async def stream_extract_curriculum_from_plain_text(
 
         model = _parse_model_name()
         client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-        system_content = _build_system_prompt()
+        system_content = _build_system_prompt(allow_structure_expansion=expand)
         sem = asyncio.Semaphore(_MAX_PARALLEL_CHUNKS)
         log_event(
             "curriculum.parse_text.parallel",
@@ -691,6 +818,10 @@ async def stream_extract_curriculum_from_plain_text(
                     extract_assignments=extract_assignments,
                     extract_assessments=extract_assessments,
                     special_instructions=special_instructions,
+                    planning_context=planning_context,
+                    lesson_count_target=lesson_count_target,
+                    typical_lesson_minutes=typical_lesson_minutes,
+                    allow_structure_expansion=expand,
                 )
                 return i, data
 
@@ -715,7 +846,11 @@ async def stream_extract_curriculum_from_plain_text(
 
         merged_final = _merge_raw_extractions([partials_buf[j] for j in range(n_chunks) if partials_buf[j] is not None])
         result = _validate_and_normalize_parsed(
-            merged_final, subject_id=subject_id, family_id=family_id, raw_text=raw_text
+            merged_final,
+            subject_id=subject_id,
+            family_id=family_id,
+            raw_text=raw_text,
+            typical_lesson_minutes=typical_lesson_minutes,
         )
         log_event(
             "curriculum.parse_text_stream.ok",
@@ -744,8 +879,12 @@ async def stream_extract_curriculum_from_plain_text(
         extract_assignments=extract_assignments,
         extract_assessments=extract_assessments,
         special_instructions=special_instructions,
+        planning_context=planning_context,
+        lesson_count_target=lesson_count_target,
+        typical_lesson_minutes=typical_lesson_minutes,
+        allow_structure_expansion=expand,
     )
-    system_content = _build_system_prompt()
+    system_content = _build_system_prompt(allow_structure_expansion=expand)
 
     stream = await client.chat.completions.create(
         model=model,
@@ -771,7 +910,13 @@ async def stream_extract_curriculum_from_plain_text(
 
     full = "".join(pieces)
     raw = _parse_llm_json_content(full)
-    result = _validate_and_normalize_parsed(raw, subject_id=subject_id, family_id=family_id, raw_text=raw_text)
+    result = _validate_and_normalize_parsed(
+        raw,
+        subject_id=subject_id,
+        family_id=family_id,
+        raw_text=raw_text,
+        typical_lesson_minutes=typical_lesson_minutes,
+    )
     log_event(
         "curriculum.parse_text_stream.ok",
         family_id=family_id,

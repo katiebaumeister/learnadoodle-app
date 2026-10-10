@@ -10,6 +10,7 @@ import {
   UserCircle,
   SlidersHorizontal,
   Sparkles,
+  Search,
 } from 'lucide-react';
 
 /** Match left-rail nav icons in section page titles. */
@@ -26,6 +27,7 @@ export const MAIN_NAV_ICONS = {
   family: Users,
   messages: MessageCircle,
   doodle: Sparkles,
+  search: Search,
   create: Plus,
   materials: Library,
   profile: UserCircle,

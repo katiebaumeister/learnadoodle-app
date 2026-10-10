@@ -20,12 +20,67 @@ from routers.util import (
     util_save_outline,
     get_admin_client
 )
-from llm import llm_extract_outline, llm_suggest_plan
+from llm import llm_extract_outline, llm_suggest_plan, llm_doodle_chat
 from llm_skills import llm_extract_skills
-from auth import get_current_user, rate_limiter
+from auth import get_current_user, rate_limiter, ai_user_rate_limiter
 from ai_usage_ledger import record_ai_usage
+from ai_quota import assert_family_ai_allowed
+from helpers import get_family_id_for_user
 
 router = APIRouter(prefix="/llm", tags=["llm"])
+
+_DOODLE_ALLOWED_MODELS = frozenset({"gpt-4o-mini", "gpt-4o-mini-2024-07-18"})
+
+
+class DoodleChatBody(BaseModel):
+    system: str
+    user: str
+    model: Optional[str] = "gpt-4o-mini"
+    temperature: Optional[float] = 0.5
+    max_tokens: Optional[int] = Field(default=700, ge=1, le=1500)
+
+
+@router.post("/doodle-chat", status_code=200)
+async def doodle_chat(
+    body: DoodleChatBody,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(ai_user_rate_limiter),
+):
+    """Proxy chat completions for Doodle so the browser never needs OPENAI_API_KEY."""
+    system = (body.system or "").strip()
+    user_msg = (body.user or "").strip()
+    if not system or not user_msg:
+        raise HTTPException(status_code=400, detail="system and user are required")
+    if len(system) > 12000 or len(user_msg) > 12000:
+        raise HTTPException(status_code=400, detail="Message too long")
+
+    family_id = get_family_id_for_user(user["id"])
+    assert_family_ai_allowed(family_id, "chatbotSimple")
+
+    model = (body.model or "gpt-4o-mini").strip()
+    if model not in _DOODLE_ALLOWED_MODELS:
+        model = "gpt-4o-mini"
+
+    try:
+        text = await llm_doodle_chat(
+            system=system,
+            user=user_msg,
+            model=model,
+            temperature=0.5 if body.temperature is None else min(1.0, max(0.0, float(body.temperature))),
+            max_tokens=min(1500, 700 if body.max_tokens is None else int(body.max_tokens)),
+        )
+        if not text:
+            raise HTTPException(status_code=502, detail="Empty LLM response")
+        record_ai_usage(
+            family_id,
+            "chatbotSimple",
+            metadata={"route": "llm/doodle-chat"},
+        )
+        return {"text": text}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Doodle chat failed: {str(e)}") from e
 
 
 def parse_due_date_hint(due_hint: str, start_date: Optional[str] = None, end_date: Optional[str] = None, week_number: int = 1) -> Optional[str]:
@@ -124,9 +179,18 @@ class ParseSyllabusEnhancedBody(BaseModel):
     create_backlog_items: bool = True  # If False, return tasks for review without creating
 
 @router.post("/parse-syllabus")
-async def parse_syllabus(body: ParseSyllabusBody):
+async def parse_syllabus(
+    body: ParseSyllabusBody,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(ai_user_rate_limiter),
+):
     """Parse syllabus PDF/text and extract structured outline"""
     try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=403, detail="Family ID mismatch")
+        assert_family_ai_allowed(family_id, "parseUploadedMaterial")
+
         # Fetch file from storage
         text = await get_file_text_from_storage(body.storage_bucket, body.storage_path)
         
@@ -135,30 +199,29 @@ async def parse_syllabus(body: ParseSyllabusBody):
         
         # Persist outline
         saved = await util_save_outline(body.syllabus_id, outline)
-        
-        try:
-            supa = get_admin_client()
-            syll = supa.table("syllabi").select("family_id").eq("id", body.syllabus_id).maybe_single().execute()
-            fid = syll.data.get("family_id") if syll.data else None
-            if fid:
-                record_ai_usage(
-                    fid,
-                    "parseUploadedMaterial",
-                    metadata={"route": "parse-syllabus", "syllabus_id": body.syllabus_id},
-                )
-        except Exception:
-            pass
+
+        record_ai_usage(
+            family_id,
+            "parseUploadedMaterial",
+            metadata={"route": "parse-syllabus", "syllabus_id": body.syllabus_id},
+        )
         
         return {
             "sections": saved.get("sections_count", 0),
             "outline": outline,
             "saved": saved.get("saved", False)
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse syllabus: {str(e)}")
 
 @router.post("/parse-syllabus-enhanced")
-async def parse_syllabus_enhanced(body: ParseSyllabusEnhancedBody):
+async def parse_syllabus_enhanced(
+    body: ParseSyllabusEnhancedBody,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(ai_user_rate_limiter),
+):
     """Enhanced syllabus parsing with skills extraction and unit creation"""
     from routers.util import get_admin_client
     from datetime import datetime, timedelta
@@ -166,6 +229,11 @@ async def parse_syllabus_enhanced(body: ParseSyllabusEnhancedBody):
     import re
     
     supa = get_admin_client()
+
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id or family_id != body.family_id:
+        raise HTTPException(status_code=403, detail="Family ID mismatch")
+    assert_family_ai_allowed(family_id, "parseUploadedMaterial")
     
     try:
         # Fetch file from storage
@@ -437,9 +505,19 @@ class SuggestPlanBody(BaseModel):
     reason: str = "rebalance"
 
 @router.post("/suggest-plan", status_code=200)
-async def suggest_plan(body: SuggestPlanBody):
+async def suggest_plan(
+    body: SuggestPlanBody,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(ai_user_rate_limiter),
+):
     """Generate AI plan proposal (does not apply changes)"""
     try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=403, detail="Family ID mismatch")
+        _plan_action_pre = "generatePlanMultiWeek" if body.horizon_weeks > 1 else "generatePlanWeek"
+        assert_family_ai_allowed(family_id, _plan_action_pre)
+
         # Load planning context
         context = await load_planning_context(
             family_id=body.family_id,
@@ -584,6 +662,8 @@ async def suggest_plan(body: SuggestPlanBody):
             result["userMessage"] = user_message
         
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to suggest plan: {str(e)}")
 
@@ -597,13 +677,22 @@ class ApproveBody(BaseModel):
     approvals: List[Approval]
 
 @router.patch("/approve")
-async def approve_changes(body: ApproveBody):
+async def approve_changes(
+    body: ApproveBody,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
     """Approve and apply plan changes atomically"""
     try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id:
+            raise HTTPException(status_code=403, detail="Family not found")
         # Convert Pydantic models to dictionaries (Pydantic v2 uses model_dump())
         approvals_dict = [a.model_dump() for a in body.approvals]
         result = await apply_ai_plan_changes(body.plan_id, approvals_dict)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to approve changes: {str(e)}")
 

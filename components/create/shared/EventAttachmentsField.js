@@ -8,7 +8,7 @@ import {
   ActivityIndicator,
   StyleSheet,
 } from 'react-native';
-import { ChevronDown, Eye, Plus } from 'lucide-react';
+import { ChevronDown, Plus } from 'lucide-react';
 import { getMaterials } from '../../../lib/services/materialsClient';
 import Dropdown from '../../ui/Dropdown';
 import MaterialDocViewerModal, {
@@ -133,9 +133,7 @@ export default function EventAttachmentsField({
             >
               {openingSelected ? (
                 <ActivityIndicator size="small" color={ACCENT_TEXT} />
-              ) : (
-                <Eye size={16} color={ACCENT_TEXT} />
-              )}
+              ) : null}
               <Text
                 style={[styles.selectText, localStyles.openSelectedText]}
                 numberOfLines={1}

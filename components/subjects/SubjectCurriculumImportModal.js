@@ -25,6 +25,7 @@ import {
 } from '../../lib/services/curriculumClient';
 import { manualDraftFromGeneratedDraft } from '../../lib/subjectCurriculumImport';
 import { consumePendingMagicExtractPaste } from '../../lib/planYearRetirement';
+import { buildSubjectCurriculumPlanningContext } from '../../lib/subjectCurriculumPlanningContext';
 import { useModalStackElevation } from '../hooks/useModalStackElevation';
 
 const ACCENT = '#9ECFFB';
@@ -43,10 +44,12 @@ export default function SubjectCurriculumImportModal({
   subject,
   assignedChildIds = [],
   replaceExisting = false,
+  hasExistingContent = false,
   initialMethod = null,
   academicYearId = null,
   initialMaterialId = null,
   autoContinueOnOpen = false,
+  headerTitle = null,
 }) {
   const toast = useToast();
   const overlayRef = React.useRef(null);
@@ -65,6 +68,8 @@ export default function SubjectCurriculumImportModal({
   const [working, setWorking] = useState(false);
   const [editorDraft, setEditorDraft] = useState(null);
   const [editorKey, setEditorKey] = useState(0);
+  const [planningCtx, setPlanningCtx] = useState(null);
+  const [scheduleSummary, setScheduleSummary] = useState(null);
   const autoContinueStartedRef = useRef(false);
 
   const reset = useCallback(() => {
@@ -76,6 +81,8 @@ export default function SubjectCurriculumImportModal({
     setStatusText('');
     setWorking(false);
     setEditorDraft(null);
+    setPlanningCtx(null);
+    setScheduleSummary(null);
     autoContinueStartedRef.current = false;
   }, []);
 
@@ -83,6 +90,53 @@ export default function SubjectCurriculumImportModal({
     reset();
     onClose?.();
   }, [onClose, reset]);
+
+  const loadPlanningContext = useCallback(async () => {
+    const ctx = await buildSubjectCurriculumPlanningContext({
+      familyId,
+      subject,
+      academicYearId,
+    });
+    setPlanningCtx(ctx);
+    setScheduleSummary(ctx?.scheduleSummary || null);
+    return ctx;
+  }, [familyId, subject, academicYearId]);
+
+  useEffect(() => {
+    if (!visible || !familyId || !subjectId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const ctx = await loadPlanningContext();
+        if (cancelled) return;
+        setPlanningCtx(ctx);
+        setScheduleSummary(ctx?.scheduleSummary || null);
+      } catch (_) {
+        if (!cancelled) {
+          setPlanningCtx(null);
+          setScheduleSummary(null);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [visible, familyId, subjectId, loadPlanningContext]);
+
+  const introCopy = useMemo(() => {
+    const scheduleBit = scheduleSummary
+      ? ` Fits your subject schedule: ${scheduleSummary}.`
+      : '';
+    const persistBit = (hasExistingContent || replaceExisting)
+      ? ' Note that once saved, the saved units and lessons will be overridden. Review before saving!'
+      : ' This creates a draft only. Nothing is saved until you review and press Save. Your subject has no saved units yet, so this won’t overwrite anything.';
+
+    if (method === 'generate') {
+      return `Describe what this course should cover. We will generate units and lessons sized to your saved school year schedule so you can edit before saving.${scheduleBit}${persistBit}`;
+    }
+    if (method === 'paste_plain') {
+      return `Paste a plain-text outline of units and lessons. Structured outlines keep their units and nested lessons; looser text is expanded into a multi-unit draft sized to your lesson days and times.${scheduleBit}${persistBit}`;
+    }
+    return `Select or upload a syllabus/doc.${persistBit}`;
+  }, [method, scheduleSummary, hasExistingContent, replaceExisting]);
 
   const openDraftEditor = useCallback((draft) => {
     const mapped = manualDraftFromGeneratedDraft(draft);
@@ -96,11 +150,28 @@ export default function SubjectCurriculumImportModal({
     setWorking(false);
   }, [toast]);
 
+  // Generate + paste can size to the school-year schedule. Upload/Create from syllabus
+  // must stay extractive from the material — do not invent a subject-themed outline.
+  const parsePayloadExtras = useCallback(async ({ expandStructure = false } = {}) => {
+    if (!expandStructure) {
+      return { allow_structure_expansion: false };
+    }
+    const ctx = planningCtx || await loadPlanningContext();
+    return {
+      planning_context: ctx?.planning_context || null,
+      lesson_count_target: ctx?.lesson_count_target || null,
+      typical_lesson_minutes: ctx?.typical_lesson_minutes || null,
+      special_instructions: ctx?.special_instructions || null,
+      allow_structure_expansion: true,
+    };
+  }, [planningCtx, loadPlanningContext]);
+
   const handleParse = async () => {
     if (!familyId || !subjectId || !rawText.trim()) return;
     setWorking(true);
-    setStatusText('Parsing…');
+    setStatusText('Parsing with your subject schedule…');
     try {
+      const extras = await parsePayloadExtras({ expandStructure: true });
       const { data, error } = await parsePlainTextStream(
         {
           subject_id: subjectId,
@@ -108,6 +179,7 @@ export default function SubjectCurriculumImportModal({
           subject_name: subjectName,
           raw_text: rawText.trim(),
           source_title: `${subjectName} import`,
+          ...extras,
         },
         { onDelta: () => {} },
       );
@@ -123,8 +195,9 @@ export default function SubjectCurriculumImportModal({
   const handleUploadParse = useCallback(async () => {
     if (!familyId || !subjectId || !selectedMaterialId) return;
     setWorking(true);
-    setStatusText('Extracting units from material…');
+    setStatusText('Extracting units and lessons from material…');
     try {
+      const extras = await parsePayloadExtras({ expandStructure: false });
       const { data, error } = await parsePlainTextStream(
         {
           subject_id: subjectId,
@@ -133,6 +206,7 @@ export default function SubjectCurriculumImportModal({
           raw_text: '',
           material_id: selectedMaterialId,
           source_title: `${subjectName} import`,
+          ...extras,
         },
         { onDelta: () => {} },
       );
@@ -143,13 +217,14 @@ export default function SubjectCurriculumImportModal({
       setWorking(false);
       setStatusText('');
     }
-  }, [familyId, subjectId, selectedMaterialId, subjectName, openDraftEditor, toast]);
+  }, [familyId, subjectId, selectedMaterialId, subjectName, openDraftEditor, toast, parsePayloadExtras]);
 
   const handleGenerate = async () => {
     if (!familyId || !subjectId) return;
     setWorking(true);
-    setStatusText('Generating curriculum…');
+    setStatusText('Generating curriculum for your schedule…');
     try {
+      const ctx = planningCtx || await loadPlanningContext();
       const { data, error } = await generateCurriculumDraftStream(
         {
           subject_id: subjectId,
@@ -157,11 +232,15 @@ export default function SubjectCurriculumImportModal({
           subject_name: subjectName,
           child_ids: assignedChildIds,
           generation_scope: generateNotes.trim() || `Build units and lessons for ${subjectName}.`,
-          duration_mode: 'multi_unit_course',
+          planning_context: ctx?.planning_context || null,
+          duration_mode: ctx?.duration_mode || 'multi_unit_course',
+          lesson_count_target: ctx?.lesson_count_target || null,
+          typical_lesson_minutes: ctx?.typical_lesson_minutes || null,
+          special_instructions: ctx?.special_instructions || null,
           include_assessments: true,
           include_projects: true,
           include_materials: false,
-          include_pacing: false,
+          include_pacing: true,
         },
         {
           onStatus: (text) => setStatusText(text || 'Generating…'),
@@ -203,8 +282,8 @@ export default function SubjectCurriculumImportModal({
   }, [visible, autoContinueOnOpen, method, selectedMaterialId, working, editorDraft, handleUploadParse]);
 
   const inputTitle = useMemo(
-    () => INPUT_TITLES[method] || 'Add units',
-    [method],
+    () => (headerTitle && String(headerTitle).trim()) || INPUT_TITLES[method] || 'Add units',
+    [headerTitle, method],
   );
 
   const canSubmit = useMemo(() => {
@@ -268,9 +347,7 @@ export default function SubjectCurriculumImportModal({
             >
               {method === 'generate' ? (
                 <>
-                  <Text style={styles.intro}>
-                    Describe what this course should cover. We will generate units and lessons you can edit before saving.
-                  </Text>
+                  <Text style={styles.intro}>{introCopy}</Text>
                   <Text style={styles.label}>Course description</Text>
                   <TextInput
                     value={generateNotes}
@@ -287,19 +364,23 @@ export default function SubjectCurriculumImportModal({
               ) : null}
 
               {method === 'upload' ? (
-                <EventAttachmentsField
-                  key={materialReloadKey}
-                  familyId={familyId}
-                  selectedMaterialId={selectedMaterialId}
-                  onMaterialChange={setSelectedMaterialId}
-                  onAddNew={() => setShowAddMaterial(true)}
-                  label="Material"
-                  placeholder="Select material…"
-                />
+                <>
+                  <Text style={styles.intro}>{introCopy}</Text>
+                  <EventAttachmentsField
+                    key={materialReloadKey}
+                    familyId={familyId}
+                    selectedMaterialId={selectedMaterialId}
+                    onMaterialChange={setSelectedMaterialId}
+                    onAddNew={() => setShowAddMaterial(true)}
+                    label="Material"
+                    placeholder="Select material…"
+                  />
+                </>
               ) : null}
 
               {method === 'paste_plain' ? (
                 <>
+                  <Text style={styles.intro}>{introCopy}</Text>
                   <Text style={styles.label}>Units and lessons</Text>
                   <TextInput
                     value={rawText}

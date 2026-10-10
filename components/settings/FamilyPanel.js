@@ -154,7 +154,7 @@ const SETTINGS_SIDEBAR_ITEMS = [
 ];
 
 /** Re-enable when billing checkout is live. */
-const SHOW_BILLING_TAB = false;
+const SHOW_BILLING_TAB = true;
 
 const SHOW_DANGER_ZONE = true;
 

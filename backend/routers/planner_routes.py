@@ -27,11 +27,12 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from auth import get_current_user, rate_limiter
+from auth import get_current_user, rate_limiter, ai_user_rate_limiter
 from helpers import get_family_id_for_user, child_belongs_to_family, get_placeholder_conversion_fields, require_onboarding_complete
 from logger import log_event
 from supabase_client import get_admin_client
 from ai_usage_ledger import record_ai_usage
+from ai_quota import assert_family_ai_allowed
 
 router = APIRouter(prefix="/api/planner", tags=["planner"])
 events_router = APIRouter(prefix="/api/events", tags=["events"])
@@ -1758,7 +1759,7 @@ async def apply_quick_reschedule(
 async def plan_week_endpoint(
     body: PlanWeekInput,
     user: dict = Depends(get_current_user),
-    __: None = Depends(rate_limiter)
+    __: None = Depends(ai_user_rate_limiter)
 ):
     """
     Generate a constraint-aware weekly plan.
@@ -1767,6 +1768,7 @@ async def plan_week_endpoint(
         family_id = get_family_id_for_user(user["id"])
         if not family_id or family_id != body.family_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        assert_family_ai_allowed(family_id, "generatePlanWeek")
         
         # Validate week_start is a Monday
         week_start_date = date.fromisoformat(body.week_start)
@@ -2531,7 +2533,7 @@ class AIChatInput(BaseModel):
 async def ai_chat_endpoint(
     body: AIChatInput,
     user: dict = Depends(get_current_user),
-    __: None = Depends(rate_limiter)
+    __: None = Depends(ai_user_rate_limiter)
 ):
     """
     AI chat endpoint for Intelligence Hub.
@@ -2541,6 +2543,7 @@ async def ai_chat_endpoint(
         family_id = get_family_id_for_user(user["id"])
         if not family_id or family_id != body.family_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        assert_family_ai_allowed(family_id, "chatbotPlannerAware")
         
         supabase = get_admin_client()
         

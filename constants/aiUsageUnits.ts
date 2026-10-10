@@ -24,7 +24,11 @@ export const AI_ACTION_UNIT_WEIGHTS = {
   fullSystemRebalanceMultiWeek: 25,
 } as const;
 
-/** Monthly included units per plan (internal). */
+/**
+ * Monthly included units per plan (product copy / UI).
+ * Backend enforcement currently uses the free/default cap for everyone
+ * (see backend/ai_quota.py — AI_MONTHLY_UNITS_DEFAULT / NEW_FAMILY), until billing tiers are wired.
+ */
 export const PLAN_MONTHLY_AI_UNITS: Record<PlanKey, number> = {
   free: 40,
   family: 300,

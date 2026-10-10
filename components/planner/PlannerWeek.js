@@ -22,6 +22,7 @@ import { logDragDrop, logDeleteEvent } from '../../app/services/plannerInstrumen
 import NoteEditorModal from '../records/NoteEditorModal';
 import { isPartOfRecurringSeries } from '../../lib/utils/recurringEventUtils';
 import { isAllDayEvent, isTimelessUntimedEvent } from './plannerListTableUtils';
+import { openDoodleWithPrompt, packWeekPrompt } from '../../lib/doodleLaunch';
 
 // Helper functions
 function startOfWeek(d) {
@@ -637,8 +638,12 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   };
 
   const handlePackThisWeek = async () => {
-    // TODO: Implement AI packing logic
-    alert('Pack This Week - AI endpoint coming soon!');
+    const childName = (allChildren || []).find((c) => selectedChildIds?.includes(c.id))?.name || null;
+    openDoodleWithPrompt({
+      prompt: packWeekPrompt({ childName }),
+      autoSubmit: true,
+      context: 'planner',
+    });
   };
 
   const handleRebalance4Weeks = async () => {

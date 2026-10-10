@@ -171,9 +171,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 20,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(148, 163, 184, 0.24)',
+    marginRight: 16,
+    backgroundColor: 'transparent',
     position: 'relative',
     ...(Platform.OS === 'web' && {
       flexShrink: 0,

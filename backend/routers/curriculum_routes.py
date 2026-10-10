@@ -19,11 +19,12 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from auth import get_current_user, rate_limiter
+from auth import get_current_user, rate_limiter, ai_user_rate_limiter
 from helpers import get_family_id_for_user, child_belongs_to_family
 from logger import log_event
 from supabase_client import get_admin_client
 from ai_usage_ledger import record_ai_usage
+from ai_quota import assert_family_ai_allowed
 
 router = APIRouter(prefix="/api/curriculum", tags=["curriculum"])
 
@@ -237,6 +238,16 @@ class ParsePlainTextRequest(BaseModel):
     extract_assessments: bool = True
     learner_stage: Optional[str] = None
     special_instructions: Optional[str] = None
+    planning_context: Optional[str] = Field(
+        None,
+        description="School year / subject schedule context (slot count, days, times, minutes)",
+    )
+    lesson_count_target: Optional[int] = Field(None, ge=1, le=500)
+    typical_lesson_minutes: Optional[int] = Field(None, ge=5, le=240)
+    allow_structure_expansion: bool = Field(
+        True,
+        description="When true and planning_context is set, expand goal-only sources into multi-unit lesson drafts sized to the schedule",
+    )
 
 
 async def _resolve_plain_text_for_parse(body: ParsePlainTextRequest, family_id: str) -> str:
@@ -480,15 +491,24 @@ async def extract_material_text(material_id: str, family_id: str) -> str:
             log_event("curriculum.material_using_notes", material_id=material_id, notes_length=len(notes))
             return notes
         
-        # If no usable content, use title and metadata
+        # If no usable content, use title, link, and metadata (YouTube/video materials)
         title = material.get("title", "Untitled Material")
         provider = material.get("provider_name", "")
         subject = material.get("subject_key", "")
         description = material.get("description", "")
+        provider_url = (material.get("provider_url") or material.get("url") or "").strip()
         
         parts = [title]
         if description:
             parts.append(description)
+        if provider_url:
+            parts.append(f"Source URL: {provider_url}")
+            if "youtu" in provider_url.lower():
+                parts.append(
+                    "This is a YouTube (or video) resource. "
+                    "Build lessons that use watching/discussing this video as the core activity; "
+                    "infer reasonable objectives from the title and any notes."
+                )
         if provider:
             parts.append(f"Provider: {provider}")
         if subject:
@@ -909,7 +929,7 @@ async def delete_manual_curriculum_events(
 async def build_curriculum(
     body: CurriculumBuildInput,
     user: dict = Depends(get_current_user),
-    __: None = Depends(rate_limiter)
+    __: None = Depends(ai_user_rate_limiter)
 ):
     """
     Build curriculum preview from topic, syllabus, PDF, or link.
@@ -919,6 +939,7 @@ async def build_curriculum(
         family_id = get_family_id_for_user(user["id"])
         if not family_id:
             raise HTTPException(status_code=404, detail="Family not found")
+        assert_family_ai_allowed(family_id, "curriculumImportStructuring")
         
         supabase = get_admin_client()
         
@@ -1109,7 +1130,7 @@ async def build_curriculum(
 async def generate_curriculum_draft_endpoint(
     body: GenerateCurriculumDraftRequest,
     user: dict = Depends(get_current_user),
-    _: None = Depends(rate_limiter),
+    _: None = Depends(ai_user_rate_limiter),
 ):
     """
     Generate a curriculum draft using OpenAI. Returns structured units and lessons for review.
@@ -1119,6 +1140,7 @@ async def generate_curriculum_draft_endpoint(
         family_id = get_family_id_for_user(user["id"])
         if not family_id or family_id != body.family_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+        assert_family_ai_allowed(body.family_id, "curriculumImportStructuring")
         from services.curriculum_generation_service import generate_curriculum_draft as do_generate
         draft = await do_generate(
             subject_id=body.subject_id,
@@ -1169,7 +1191,7 @@ async def generate_curriculum_draft_endpoint(
 async def generate_curriculum_draft_stream_endpoint(
     body: GenerateCurriculumDraftRequest,
     user: dict = Depends(get_current_user),
-    _: None = Depends(rate_limiter),
+    _: None = Depends(ai_user_rate_limiter),
 ):
     """
     Stream safe progress updates plus partial generator output, then the final curriculum draft.
@@ -1177,6 +1199,7 @@ async def generate_curriculum_draft_stream_endpoint(
     family_id = get_family_id_for_user(user["id"])
     if not family_id or family_id != body.family_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+    assert_family_ai_allowed(body.family_id, "curriculumImportStructuring")
 
     from services.curriculum_generation_service import (
         stream_generate_curriculum_draft as do_stream_generate,
@@ -1207,6 +1230,11 @@ async def generate_curriculum_draft_stream_endpoint(
                 special_instructions=body.special_instructions,
             ):
                 yield chunk
+            record_ai_usage(
+                body.family_id,
+                "curriculumImportStructuring",
+                metadata={"route": "curriculum/generate-draft-stream", "subject_id": body.subject_id},
+            )
         except ValueError as e:
             log_event("curriculum.generate_draft_stream.validation_error", error=str(e), family_id=body.family_id)
             yield (json.dumps({"type": "error", "message": str(e)}) + "\n").encode("utf-8")
@@ -1319,11 +1347,15 @@ async def commit_generated_draft_endpoint(
 
 # --- Parse plain text / Import & extract ---
 
+def _parse_action_type(body: "ParsePlainTextRequest") -> str:
+    return "parseUploadedMaterial" if getattr(body, "material_id", None) else "parsePlainTextToStructure"
+
+
 @router.post("/parse-text")
 async def parse_plain_text_endpoint(
     body: ParsePlainTextRequest,
     user: dict = Depends(get_current_user),
-    _: None = Depends(rate_limiter),
+    _: None = Depends(ai_user_rate_limiter),
 ):
     """
     Extract structured curriculum from pasted plain text. Two-stage: deterministic pre-parse
@@ -1333,6 +1365,8 @@ async def parse_plain_text_endpoint(
         family_id = get_family_id_for_user(user["id"])
         if not family_id or family_id != body.family_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+        action = _parse_action_type(body)
+        assert_family_ai_allowed(body.family_id, action)
         raw_text_resolved = await _resolve_plain_text_for_parse(body, family_id)
         from services.curriculum_parse_service import extract_curriculum_from_plain_text
         result = await extract_curriculum_from_plain_text(
@@ -1350,6 +1384,10 @@ async def parse_plain_text_endpoint(
             extract_assessments=body.extract_assessments,
             learner_stage=body.learner_stage,
             special_instructions=body.special_instructions,
+            planning_context=body.planning_context,
+            lesson_count_target=body.lesson_count_target,
+            typical_lesson_minutes=body.typical_lesson_minutes,
+            allow_structure_expansion=body.allow_structure_expansion,
         )
         log_event(
             "curriculum.parse_text.ok",
@@ -1357,6 +1395,15 @@ async def parse_plain_text_endpoint(
             subject_id=body.subject_id,
             units_count=len(result.get("units", [])),
             user_id=user["id"],
+        )
+        record_ai_usage(
+            body.family_id,
+            action,
+            metadata={
+                "route": "curriculum/parse-text",
+                "subject_id": body.subject_id,
+                "material_id": getattr(body, "material_id", None),
+            },
         )
         return result
     except ValueError as e:
@@ -1373,7 +1420,7 @@ async def parse_plain_text_endpoint(
 async def parse_plain_text_stream_endpoint(
     body: ParsePlainTextRequest,
     user: dict = Depends(get_current_user),
-    _: None = Depends(rate_limiter),
+    _: None = Depends(ai_user_rate_limiter),
 ):
     """
     Same as parse-text but streams model output as NDJSON (delta lines + final complete object).
@@ -1382,6 +1429,8 @@ async def parse_plain_text_stream_endpoint(
     family_id = get_family_id_for_user(user["id"])
     if not family_id or family_id != body.family_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+    action = _parse_action_type(body)
+    assert_family_ai_allowed(body.family_id, action)
 
     from services.curriculum_parse_service import stream_extract_curriculum_from_plain_text
 
@@ -1403,9 +1452,22 @@ async def parse_plain_text_stream_endpoint(
                 extract_assessments=body.extract_assessments,
                 learner_stage=body.learner_stage,
                 special_instructions=body.special_instructions,
+                planning_context=body.planning_context,
+                lesson_count_target=body.lesson_count_target,
+                typical_lesson_minutes=body.typical_lesson_minutes,
+                allow_structure_expansion=body.allow_structure_expansion,
                 user_id=user["id"],
             ):
                 yield chunk
+            record_ai_usage(
+                body.family_id,
+                action,
+                metadata={
+                    "route": "curriculum/parse-text-stream",
+                    "subject_id": body.subject_id,
+                    "material_id": getattr(body, "material_id", None),
+                },
+            )
         except ValueError as e:
             log_event("curriculum.parse_text_stream.validation_error", error=str(e), family_id=body.family_id)
             yield (json.dumps({"type": "error", "message": str(e)}) + "\n").encode("utf-8")

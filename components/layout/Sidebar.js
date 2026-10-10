@@ -14,6 +14,7 @@ export default function Sidebar({
   topActive,
   messagesPaneOpen = false,
   createPaneOpen = false,
+  searchPaneOpen = false,
   onSelectTop,
   childrenList = [],
   activeChildId,
@@ -33,6 +34,7 @@ export default function Sidebar({
   familyPlanningMode = null,
   featureSettings = null,
   studentSelfManagedNoParent = false,
+  doodleBotDisabled = false,
   unreadMessagesCount = 0,
 }) {
   React.useEffect(() => {
@@ -50,6 +52,7 @@ export default function Sidebar({
           topActive={topActive}
           messagesPaneOpen={messagesPaneOpen}
           createPaneOpen={createPaneOpen}
+          searchPaneOpen={searchPaneOpen}
           onSelectTop={onSelectTop}
           onExitChildView={onExitChildView}
           childrenList={childrenList}
@@ -70,6 +73,7 @@ export default function Sidebar({
           familyPlanningMode={familyPlanningMode}
           featureSettings={featureSettings}
           studentSelfManagedNoParent={studentSelfManagedNoParent}
+          doodleBotDisabled={doodleBotDisabled}
           unreadMessagesCount={unreadMessagesCount}
         />
       </View>

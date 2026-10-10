@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import MessagesPaneCloseButton from '../messages/MessagesPaneCloseButton';
 import DmParticipantAvatar from '../messages/DmParticipantAvatar';
+import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
+import { filterSubjectsForSchoolYear } from '../../lib/assistant/commands/rosterHelpers';
 import { DOODLE_HELPER_PARTICIPANT } from '../../lib/doodleHelperParticipant';
 import { normalizeAppHref } from '../../lib/url';
 import { DOODLE_PANE_STATUS, DOODLE_RESPONSE_TYPES } from '../../lib/assistant/commands/types';
@@ -150,6 +152,8 @@ function MessageBubble({
   message,
   onSelectOption,
   onNavigate,
+  onUndo = null,
+  canUndo = false,
   selectedOptionId = null,
   optionsDisabled = false,
 }) {
@@ -161,6 +165,10 @@ function MessageBubble({
   const timeLabel = formatMessageTime(message.createdAt);
   const isErrorLike = structured?.type === DOODLE_RESPONSE_TYPES.ERROR
     || (isSystem && /invalid input|couldn.?t|failed|error/i.test(display));
+  const showUndo = canUndo
+    && structured?.type === DOODLE_RESPONSE_TYPES.RESULT
+    && structured?.undoToken
+    && typeof onUndo === 'function';
 
   return (
     <View style={[
@@ -262,6 +270,20 @@ function MessageBubble({
                   ))}
                 </View>
               ) : null}
+              {structured?.type === DOODLE_RESPONSE_TYPES.RESULT && structured.auditLabel ? (
+                <Text style={styles.auditLabel}>{structured.auditLabel}</Text>
+              ) : null}
+              {showUndo ? (
+                <TouchableOpacity
+                  style={styles.undoBtn}
+                  onPress={() => onUndo?.()}
+                  disabled={optionsDisabled}
+                  accessibilityRole="button"
+                  accessibilityLabel="Undo this change"
+                >
+                  <Text style={styles.undoBtnText}>Undo</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
             {timeLabel ? <Text style={styles.bubbleTime}>{timeLabel}</Text> : null}
           </View>
@@ -296,15 +318,200 @@ function MessageBubble({
   );
 }
 
-function ActionPreviewCard({ pending, busy, onConfirm, onCancel }) {
-  if (!pending || pending.type !== DOODLE_RESPONSE_TYPES.ACTION_PREVIEW) return null;
+function ActionPreviewCard({
+  pending,
+  busy,
+  roster,
+  context,
+  onConfirm,
+  onCancel,
+  onUpdateCommand,
+}) {
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [subjectPickerOpen, setSubjectPickerOpen] = useState(false);
+  const subjectTriggerRef = useRef(null);
+
+  if (
+    !pending
+    || (
+      pending.type !== DOODLE_RESPONSE_TYPES.ACTION_PREVIEW
+      && pending.type !== DOODLE_RESPONSE_TYPES.BATCH_ACTION_PREVIEW
+    )
+  ) {
+    return null;
+  }
+
+  if (pending.type === DOODLE_RESPONSE_TYPES.BATCH_ACTION_PREVIEW) {
+    const items = Array.isArray(pending.preview) ? pending.preview : [];
+    const warnings = Array.isArray(pending.warnings) ? pending.warnings : [];
+    return (
+      <View style={styles.previewCard}>
+        <Text style={styles.previewTitle}>
+          {pending.message || 'Review proposed schedule'}
+        </Text>
+        <View style={styles.previewFields}>
+          {items.slice(0, 14).map((item, idx) => (
+            <View key={`batch-${item.commandIndex ?? idx}`} style={styles.previewField}>
+              <Text style={styles.previewLabel}>{item.title || `Change ${idx + 1}`}</Text>
+              <Text style={styles.previewValue}>{item.description || '—'}</Text>
+            </View>
+          ))}
+          {items.length > 14 ? (
+            <Text style={styles.previewValue}>…and {items.length - 14} more</Text>
+          ) : null}
+        </View>
+        {warnings.length ? (
+          <View style={{ marginTop: 8, gap: 4 }}>
+            {warnings.slice(0, 4).map((w) => (
+              <Text key={w} style={styles.auditLabel}>{w}</Text>
+            ))}
+          </View>
+        ) : null}
+        <View style={styles.previewActions}>
+          <TouchableOpacity style={styles.cancelBtn} onPress={onCancel} disabled={busy}>
+            <Text style={styles.cancelBtnText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.confirmBtn} onPress={onConfirm} disabled={busy}>
+            {busy ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.confirmBtnText}>
+                {pending.confirmationLabel || 'Apply changes'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  const command = pending.command || {};
+  const subjects = filterSubjectsForSchoolYear(
+    roster?.subjects || [],
+    context?.schoolYearLabel,
+  );
+  const children = roster?.children || [];
+  const selectedSubject = subjects.find((s) => String(s.id) === String(command.subjectId));
+  const dueDate = command.dueAt ? new Date(command.dueAt) : null;
+  const dueLabel = dueDate && !Number.isNaN(dueDate.getTime())
+    ? dueDate.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
+    : 'Not set';
+
+  const renderFieldValue = (field) => {
+    if (!field?.editable || !field.fieldPath) {
+      return <Text style={styles.previewValue}>{field.value}</Text>;
+    }
+
+    if (field.fieldPath === 'title') {
+      return (
+        <TextInput
+          value={String(command.title || '')}
+          onChangeText={(text) => onUpdateCommand?.({ title: text })}
+          style={styles.previewInput}
+          placeholder="Assignment title"
+          placeholderTextColor="#94A3B8"
+          editable={!busy}
+        />
+      );
+    }
+
+    if (field.fieldPath === 'dueAt') {
+      return (
+        <>
+          <TouchableOpacity
+            style={styles.previewSelect}
+            onPress={() => !busy && setDatePickerOpen(true)}
+            disabled={busy}
+            {...(Platform.OS === 'web' && { cursor: busy ? 'not-allowed' : 'pointer' })}
+          >
+            <Text style={styles.previewSelectText}>{dueLabel}</Text>
+          </TouchableOpacity>
+          <AppCalendarDatePickerModal
+            visible={datePickerOpen}
+            onClose={() => setDatePickerOpen(false)}
+            selectedDate={dueDate && !Number.isNaN(dueDate.getTime()) ? dueDate : new Date()}
+            onSelectDate={(nextDate) => {
+              onUpdateCommand?.({ dueAt: nextDate.toISOString() });
+              setDatePickerOpen(false);
+            }}
+          />
+        </>
+      );
+    }
+
+    if (field.fieldPath === 'subjectId') {
+      return (
+        <>
+          <TouchableOpacity
+            ref={subjectTriggerRef}
+            style={styles.previewSelect}
+            onPress={() => !busy && setSubjectPickerOpen((open) => !open)}
+            disabled={busy}
+            {...(Platform.OS === 'web' && { cursor: busy ? 'not-allowed' : 'pointer' })}
+          >
+            <Text style={styles.previewSelectText}>
+              {selectedSubject?.name || selectedSubject?.title || field.value || 'Select subject'}
+            </Text>
+          </TouchableOpacity>
+          {subjectPickerOpen ? (
+            <View style={styles.previewOptionList}>
+              {subjects.map((subject) => {
+                const active = String(subject.id) === String(command.subjectId);
+                return (
+                  <TouchableOpacity
+                    key={String(subject.id)}
+                    style={[styles.previewOption, active && styles.previewOptionActive]}
+                    onPress={() => {
+                      onUpdateCommand?.({ subjectId: String(subject.id) });
+                      setSubjectPickerOpen(false);
+                    }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={[styles.previewOptionText, active && styles.previewOptionTextActive]}>
+                      {subject.name || subject.title || 'Subject'}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : null}
+        </>
+      );
+    }
+
+    if (field.fieldPath === 'childIds') {
+      return (
+        <View style={styles.previewOptionListInline}>
+          {children.map((child) => {
+            const active = String(child.id) === String(command.childIds?.[0]);
+            return (
+              <TouchableOpacity
+                key={String(child.id)}
+                style={[styles.previewOptionChip, active && styles.previewOptionChipActive]}
+                onPress={() => onUpdateCommand?.({ childIds: [String(child.id)] })}
+                disabled={busy}
+                {...(Platform.OS === 'web' && { cursor: busy ? 'not-allowed' : 'pointer' })}
+              >
+                <Text style={[styles.previewOptionChipText, active && styles.previewOptionChipTextActive]}>
+                  {child.first_name || child.name || 'Student'}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      );
+    }
+
+    return <Text style={styles.previewValue}>{field.value}</Text>;
+  };
+
   return (
     <View style={styles.previewCard}>
       <Text style={styles.previewTitle}>{pending.message || 'Review action'}</Text>
       {(pending.preview || []).map((field) => (
         <View key={`${field.label}-${field.fieldPath || field.value}`} style={styles.previewRow}>
           <Text style={styles.previewLabel}>{field.label}</Text>
-          <Text style={styles.previewValue}>{field.value}</Text>
+          {renderFieldValue(field)}
         </View>
       ))}
       <View style={styles.previewActions}>
@@ -333,6 +540,9 @@ export default function DoodleCommandPane({
   onBack = null,
   onClosePane,
   onNavigate = null,
+  seedPrompt = null,
+  seedAutoSubmit = false,
+  onSeedConsumed = null,
 }) {
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
@@ -340,6 +550,7 @@ export default function DoodleCommandPane({
   const paneRef = useRef(null);
   const addFilesRef = useRef(null);
   const runSubmitRef = useRef(null);
+  const seedConsumedRef = useRef(null);
   const [query, setQuery] = useState('');
   const [inputHeight, setInputHeight] = useState(COMPOSER_MIN_HEIGHT);
   const [draftAttachments, setDraftAttachments] = useState([]);
@@ -357,14 +568,31 @@ export default function DoodleCommandPane({
     hydrateConversation,
     submitMessage,
     confirmPending,
+    undoLastAction,
+    lastUndoable,
     cancelPending,
     dismissError,
     answerClarification,
+    updatePendingCommand,
   } = useDoodleCommandStore();
 
   useEffect(() => {
     if (shellContextInput) setContextFromShell(shellContextInput);
   }, [shellContextInput, setContextFromShell]);
+
+  // Prefill / auto-submit from app CTAs (Build from material, Pack week, etc.)
+  useEffect(() => {
+    const prompt = typeof seedPrompt === 'string' ? seedPrompt.trim() : '';
+    if (!prompt || seedConsumedRef.current === prompt) return undefined;
+    seedConsumedRef.current = prompt;
+    setQuery(prompt);
+    onSeedConsumed?.();
+    if (!seedAutoSubmit) return undefined;
+    const t = setTimeout(() => {
+      runSubmitRef.current?.(prompt);
+    }, 80);
+    return () => clearTimeout(t);
+  }, [seedPrompt, seedAutoSubmit, onSeedConsumed]);
 
   useEffect(() => {
     const familyId = shellContextInput?.familyId || context?.householdId;
@@ -576,7 +804,7 @@ export default function DoodleCommandPane({
     setDraftAttachments([]);
     await submitMessage(trimmed, { roster, capabilities, attachments: attachmentsPayload });
   };
-  runSubmitRef.current = () => runSubmit(query);
+  runSubmitRef.current = runSubmit;
 
   // Enter sends; Shift+Enter inserts a newline (multiline composer)
   useEffect(() => {
@@ -653,17 +881,7 @@ export default function DoodleCommandPane({
           style={styles.headerAvatar}
         />
         <View style={styles.headerTextCol}>
-          <View style={styles.headerTitleRow}>
-            <Text style={styles.headerTitle} numberOfLines={1}>Doodle</Text>
-            <View
-              style={styles.headerBetaBadge}
-              pointerEvents="none"
-              accessibilityElementsHidden
-              importantForAccessibility="no"
-            >
-              <Text style={styles.headerBetaText}>BETA</Text>
-            </View>
-          </View>
+          <Text style={styles.headerTitle} numberOfLines={1}>Doodle</Text>
           <Text style={styles.headerSubtitle} numberOfLines={1}>Your learning assistant</Text>
         </View>
         {typeof onClosePane === 'function' ? (
@@ -687,19 +905,28 @@ export default function DoodleCommandPane({
         ) : null}
 
         <View style={styles.thread}>
-          {messages.map((message) => (
-            <MessageBubble
-              key={message.id}
-              message={message}
-              selectedOptionId={selectedOptions[message.id] || null}
-              optionsDisabled={busy}
-              onSelectOption={(opt) => {
-                setSelectedOptions((prev) => ({ ...prev, [message.id]: opt.id }));
-                answerClarification(opt, { roster, capabilities });
-              }}
-              onNavigate={handleNavigate}
-            />
-          ))}
+          {messages.map((message, index) => {
+            const isLatestResult = message.structured?.type === DOODLE_RESPONSE_TYPES.RESULT
+              && message.structured?.undoToken
+              && lastUndoable?.undoToken
+              && String(message.structured.undoToken) === String(lastUndoable.undoToken)
+              && index === messages.length - 1;
+            return (
+              <MessageBubble
+                key={message.id}
+                message={message}
+                selectedOptionId={selectedOptions[message.id] || null}
+                optionsDisabled={busy}
+                canUndo={Boolean(isLatestResult)}
+                onUndo={() => undoLastAction({ capabilities })}
+                onSelectOption={(opt) => {
+                  setSelectedOptions((prev) => ({ ...prev, [message.id]: opt.id }));
+                  answerClarification(opt, { roster, capabilities });
+                }}
+                onNavigate={handleNavigate}
+              />
+            );
+          })}
         </View>
 
         {status === DOODLE_PANE_STATUS.SUBMITTING ? (
@@ -712,8 +939,11 @@ export default function DoodleCommandPane({
         <ActionPreviewCard
           pending={pendingResponse}
           busy={status === DOODLE_PANE_STATUS.EXECUTING}
+          roster={roster}
+          context={context}
           onConfirm={() => confirmPending({ capabilities })}
           onCancel={cancelPending}
+          onUpdateCommand={(patch) => updatePendingCommand(patch, { roster })}
         />
 
         {error ? (() => {
@@ -909,12 +1139,6 @@ const styles = StyleSheet.create({
     minWidth: 0,
     gap: 2,
   },
-  headerTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    minWidth: 0,
-  },
   headerTitle: {
     flexShrink: 1,
     fontSize: 17,
@@ -927,24 +1151,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#64748B',
     ...(Platform.OS === 'web' && { fontFamily: FONT }),
-  },
-  headerBetaBadge: {
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4,
-    backgroundColor: '#E2E8F0',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  headerBetaText: {
-    fontSize: 8,
-    lineHeight: 11,
-    fontWeight: '700',
-    color: '#475569',
-    letterSpacing: 0.5,
-    textAlign: 'center',
-    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
   },
   scroll: {
     flex: 1,
@@ -1091,6 +1297,29 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: ACCENT_CHIP_BG,
   },
+  auditLabel: {
+    marginTop: 8,
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+  },
+  undoBtn: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.45)',
+    backgroundColor: '#FFFFFF',
+  },
+  undoBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+    ...(Platform.OS === 'web' && { fontFamily: FONT_DISPLAY }),
+  },
   linkBtnText: {
     fontSize: 13,
     fontWeight: '700',
@@ -1127,6 +1356,90 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 13,
     color: '#1E293B',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+  },
+  previewInput: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#1F2937',
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+  },
+  previewSelect: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  previewSelectText: {
+    fontSize: 14,
+    color: '#1F2937',
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+  },
+  previewOptionList: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+  },
+  previewOption: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  previewOptionActive: {
+    backgroundColor: ACCENT_SOFT_BG,
+  },
+  previewOptionText: {
+    fontSize: 14,
+    color: '#374151',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+  },
+  previewOptionTextActive: {
+    color: ACCENT_TEXT,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+  },
+  previewOptionListInline: {
+    marginTop: 4,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  previewOptionChip: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 9999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#FFFFFF',
+  },
+  previewOptionChipActive: {
+    borderColor: ACCENT_CHIP_BORDER,
+    backgroundColor: ACCENT_CHIP_BG,
+  },
+  previewOptionChipText: {
+    fontSize: 13,
+    color: '#374151',
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && { fontFamily: FONT }),
+  },
+  previewOptionChipTextActive: {
+    color: ACCENT_TEXT,
+    fontWeight: '600',
     ...(Platform.OS === 'web' && { fontFamily: FONT }),
   },
   previewActions: {

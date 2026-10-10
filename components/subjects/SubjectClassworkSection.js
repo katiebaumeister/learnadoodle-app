@@ -36,6 +36,7 @@ import {
 } from '../../lib/subjectLessonLinking';
 import { formatDueShort } from '../tutor/tutorHelpUtils';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
+import { openDoodleWithPrompt, openBuildFromMaterialEditor } from '../../lib/doodleLaunch';
 import { updateAssignmentPlacement } from '../../lib/services/assignmentPlacementClient';
 import {
   deleteAssignmentAndEvent,
@@ -900,7 +901,7 @@ function ClassworkPanelHeader({
   onUnitsAction,
   showUnitsAction = false,
   showCreateFromMaterialAction = false,
-  createFromMaterialActionLabel = 'Build from material',
+  createFromMaterialActionLabel = 'Create from syllabus',
   onCreateFromMaterialAction = null,
   showScheduleAllAction = false,
   scheduleAllActionLabel = 'Schedule all lessons',
@@ -1198,6 +1199,8 @@ export default function SubjectClassworkSection({
   familyId,
   subjectId,
   subjectName,
+  academicYearId = null,
+  assignedChildIds = [],
   isParentViewer = true,
   onOpenAssignment,
   onManageUnits,
@@ -2381,10 +2384,27 @@ export default function SubjectClassworkSection({
           unitsActionLabel={unitsActionLabel}
           onUnitsAction={handleOpenUnitsEditor}
           showCreateFromMaterialAction={isParentViewer}
-          onCreateFromMaterialAction={() => setShowCreateFromMaterialComingSoon(true)}
+          createFromMaterialActionLabel="Create from syllabus"
+          onCreateFromMaterialAction={() => {
+            if (!subjectId) return;
+            openBuildFromMaterialEditor({
+              subjectId,
+              subjectName: subjectName || null,
+              academicYearId,
+              childIds: assignedChildIds,
+              method: 'upload',
+              headerTitle: 'Create from syllabus',
+            });
+          }}
           showScheduleAllAction={isParentViewer && showScheduleAllLessons}
           scheduleAllActionLabel={schedulingAll ? 'Scheduling…' : 'Schedule all lessons'}
-          onScheduleAllAction={handleScheduleClassDaysPress}
+          onScheduleAllAction={() => {
+            openDoodleWithPrompt({
+              prompt: `Create next ${subjectName || 'subject'} lesson`,
+              autoSubmit: true,
+              context: 'learning',
+            });
+          }}
           scheduleAllDisabled={schedulingAll}
         />
         <ScrollView
@@ -2505,7 +2525,18 @@ export default function SubjectClassworkSection({
         unitsActionLabel={unitsActionLabel}
         onUnitsAction={handleOpenUnitsEditor}
         showCreateFromMaterialAction={isParentViewer}
-        onCreateFromMaterialAction={() => setShowCreateFromMaterialComingSoon(true)}
+        createFromMaterialActionLabel="Create from syllabus"
+        onCreateFromMaterialAction={() => {
+          if (!subjectId) return;
+          openBuildFromMaterialEditor({
+            subjectId,
+            subjectName: subjectName || null,
+            academicYearId,
+            childIds: assignedChildIds,
+            method: 'upload',
+            headerTitle: 'Create from syllabus',
+          });
+        }}
         showScheduleAllAction={isParentViewer && showScheduleAllLessons}
         scheduleAllActionLabel={schedulingAll ? 'Scheduling…' : 'Schedule all lessons'}
         onScheduleAllAction={handleScheduleClassDaysPress}

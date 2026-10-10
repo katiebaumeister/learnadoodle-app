@@ -825,6 +825,10 @@ export default function BulletinBoardSection({
     });
     return map;
   }, [subjects]);
+  const scopedSubjectIds = useMemo(
+    () => new Set((subjects || []).map((s) => String(s?.id || '')).filter(Boolean)),
+    [subjects],
+  );
 
   const filterSubjectRecord = useMemo(() => {
     if (!filterSubjectId) return null;
@@ -1015,20 +1019,34 @@ export default function BulletinBoardSection({
   const visiblePosts = useMemo(() => {
     if (!filterSubjectId) {
       // Home feed: keep the family welcome post, hide per-subject getting-started seeds.
-      return posts.filter((post) => post?.systemKind !== SUBJECT_GETTING_STARTED_SYSTEM_KIND);
+      return posts
+        .filter((post) => post?.systemKind !== SUBJECT_GETTING_STARTED_SYSTEM_KIND)
+        .filter((post) => {
+          const sid = String(post?.subjectId || '').trim();
+          if (!sid) return true;
+          return scopedSubjectIds.has(sid);
+        });
     }
     const filterKey = String(filterSubjectId);
     return posts.filter((post) => String(post.subjectId || '') === filterKey);
-  }, [posts, filterSubjectId]);
+  }, [posts, filterSubjectId, scopedSubjectIds]);
 
   const streamPosts = visiblePosts;
 
-  const { items: activityItems, loading: activityLoading } = useAssignmentActivity(
+  const { items: activityItemsRaw, loading: activityLoading } = useAssignmentActivity(
     familyId,
     filterSubjectId || null,
     50,
     true
   );
+  const activityItems = useMemo(() => {
+    if (filterSubjectId) return activityItemsRaw;
+    return (activityItemsRaw || []).filter((item) => {
+      const sid = String(item?.subjectId || '').trim();
+      if (!sid) return true;
+      return scopedSubjectIds.has(sid);
+    });
+  }, [activityItemsRaw, filterSubjectId, scopedSubjectIds]);
 
   // Subject boards: hold loading until welcome exists or seed attempt finishes (avoids "No posts yet" flash).
   const bulletinInitialLoading = postsLoading

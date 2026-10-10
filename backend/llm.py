@@ -13,6 +13,31 @@ _OPENAI_KEY = os.environ["OPENAI_API_KEY"]
 client = AsyncOpenAI(api_key=_OPENAI_KEY)
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=3)
+async def llm_doodle_chat(
+    system: str,
+    user: str,
+    model: str = "gpt-4o-mini",
+    temperature: float = 0.5,
+    max_tokens: int = 700,
+) -> str:
+    """
+    Generic chat completion for Doodle (browser → FastAPI → OpenAI).
+    Keeps OPENAI_API_KEY server-side only.
+    """
+    response = await client.chat.completions.create(
+        model=model or "gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=temperature if temperature is not None else 0.5,
+        max_tokens=max_tokens if max_tokens is not None else 700,
+    )
+    content = (response.choices[0].message.content or "").strip()
+    return content
+
+
+@backoff.on_exception(backoff.expo, Exception, max_tries=3)
 async def llm_extract_outline(text: str) -> Dict[str, Any]:
     """
     Extract structured outline from syllabus text.

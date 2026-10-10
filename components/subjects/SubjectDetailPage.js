@@ -33,6 +33,7 @@ import {
   Download,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
+import { openBuildFromMaterialEditor } from '../../lib/doodleLaunch';
 import { getSubjectDetail, parseChildIds } from '../../lib/services/subjectsClient';
 import { useSession } from '../../contexts/SessionContext';
 import MaterialDocViewerModal, {
@@ -4216,6 +4217,8 @@ export default function SubjectDetailPage({
               familyId={familyId}
               subjectId={subject?.id}
               subjectName={subject?.name}
+              academicYearId={subjectPlanYearId || subjectPlanYearIdFromEvents || null}
+              assignedChildIds={assignedChildren}
               isParentViewer={isParentViewer}
               onOpenAssignment={openAssignedWorkItem}
               onManageUnits={openUnitsEditor}
@@ -4239,6 +4242,8 @@ export default function SubjectDetailPage({
                 familyId={familyId}
                 subjectId={subject?.id}
                 subjectName={subject?.name}
+                academicYearId={subjectPlanYearId || subjectPlanYearIdFromEvents || null}
+                assignedChildIds={assignedChildren}
                 isParentViewer={isParentViewer}
                 onOpenAssignment={openAssignedWorkItem}
                 onManageUnits={openUnitsEditor}
@@ -4276,8 +4281,20 @@ export default function SubjectDetailPage({
               onMaterialsUpdate={() => {
                 loadSubjectDetail({ silent: true });
               }}
+              buildFromMaterialLabel="Create from syllabus"
               onBuildFromMaterial={
-                isParentViewer ? () => setShowBuildFromMaterialComingSoonModal(true) : null
+                isParentViewer && subject?.id
+                  ? () => {
+                    openBuildFromMaterialEditor({
+                      subjectId: subject.id,
+                      subjectName: subject?.name || subject?.title || null,
+                      academicYearId: subjectPlanYearId || subjectPlanYearIdFromEvents || null,
+                      childIds: assignedChildren,
+                      method: 'upload',
+                      headerTitle: 'Create from syllabus',
+                    });
+                  }
+                  : null
               }
             />
           </View>

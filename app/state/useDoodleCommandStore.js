@@ -7,10 +7,11 @@ import React, {
   useReducer,
   useRef,
 } from 'react';
-import { DOODLE_PANE_STATUS, DOODLE_RESPONSE_TYPES } from '../../lib/assistant/commands/types';
+import { DOODLE_PANE_STATUS, DOODLE_RESPONSE_TYPES, DOODLE_COMMAND_TYPES } from '../../lib/assistant/commands/types';
 import { collectDoodleContext } from '../../lib/assistant/commands/contextCollector';
-import { doodleRespond } from '../../lib/assistant/commands/respond';
+import { doodleRespond, buildAssignmentPreview } from '../../lib/assistant/commands/respond';
 import { doodleCancelPending, doodleExecute } from '../../lib/assistant/commands/execute';
+import { doodleUndo } from '../../lib/assistant/commands/doodleUndo';
 import { trackDoodleEvent } from '../../lib/assistant/commands/analytics';
 import { AIConversationService } from '../../lib/aiConversationService';
 
@@ -34,6 +35,10 @@ function serializeStructured(structured) {
     preview: structured.preview,
     confirmationLabel: structured.confirmationLabel,
     warnings: structured.warnings,
+    undoToken: structured.undoToken || null,
+    undoPayload: structured.undoPayload || null,
+    auditLabel: structured.auditLabel || null,
+    commands: structured.commands || null,
   };
 }
 
@@ -46,6 +51,7 @@ const initialState = {
   error: null,
   conversationId: null,
   hydrated: false,
+  lastUndoable: null,
 };
 
 function reducer(state, action) {
@@ -108,6 +114,8 @@ function reducer(state, action) {
         pendingClarification: null,
         error: null,
       };
+    case 'SET_LAST_UNDOABLE':
+      return { ...state, lastUndoable: action.lastUndoable || null };
     case 'CLEAR_HISTORY':
       return {
         ...state,
@@ -118,6 +126,7 @@ function reducer(state, action) {
         error: null,
         status: DOODLE_PANE_STATUS.IDLE,
         hydrated: true,
+        lastUndoable: null,
       };
     default:
       return state;
@@ -330,18 +339,67 @@ export function DoodleCommandProvider({ children }) {
   const confirmPending = useCallback(async ({ capabilities } = {}) => {
     const current = stateRef.current;
     const pending = current.pendingResponse;
-    if (!pending?.command || !current.context) return null;
+    if (!current.context) return null;
+    const isBatch = pending?.type === DOODLE_RESPONSE_TYPES.BATCH_ACTION_PREVIEW
+      && Array.isArray(pending.commands)
+      && pending.commands.length > 0;
+    if (!pending?.command && !isBatch) return null;
     if (current.status === DOODLE_PANE_STATUS.EXECUTING) return null;
 
     dispatch({ type: 'SET_STATUS', status: DOODLE_PANE_STATUS.EXECUTING, error: null });
     try {
-      const result = await doodleExecute({
-        command: pending.command,
-        context: current.context,
-        capabilities,
-        idempotencyKey: pending.idempotencyKey,
-        conversationId: current.conversationId,
-      });
+      let result;
+      if (isBatch) {
+        const results = [];
+        const undoStack = [];
+        for (let i = 0; i < pending.commands.length; i += 1) {
+          const cmd = pending.commands[i];
+          const one = await doodleExecute({
+            command: cmd,
+            context: current.context,
+            capabilities,
+            idempotencyKey: pending.idempotencyKey
+              ? `${pending.idempotencyKey}_${i}`
+              : undefined,
+            conversationId: current.conversationId,
+          });
+          results.push(one);
+          if (one.type === DOODLE_RESPONSE_TYPES.ERROR) {
+            result = {
+              type: DOODLE_RESPONSE_TYPES.ERROR,
+              message: `Stopped after ${i} change${i === 1 ? '' : 's'}: ${one.message}`,
+              recoverable: true,
+            };
+            break;
+          }
+          if (one.undoToken) {
+            undoStack.push({
+              undoToken: one.undoToken,
+              undoPayload: one.undoPayload || null,
+            });
+          }
+        }
+        if (!result) {
+          const okCount = results.filter((r) => r.type === DOODLE_RESPONSE_TYPES.RESULT).length;
+          const last = undoStack[undoStack.length - 1] || null;
+          result = {
+            type: DOODLE_RESPONSE_TYPES.RESULT,
+            message: `Applied ${okCount} schedule change${okCount === 1 ? '' : 's'}.`,
+            affectedRecords: results.flatMap((r) => r.affectedRecords || []),
+            undoToken: last?.undoToken || null,
+            undoPayload: last?.undoPayload || null,
+            auditLabel: 'Batch schedule update via Doodle',
+          };
+        }
+      } else {
+        result = await doodleExecute({
+          command: pending.command,
+          context: current.context,
+          capabilities,
+          idempotencyKey: pending.idempotencyKey,
+          conversationId: current.conversationId,
+        });
+      }
 
       await appendAndPersist({
         id: makeId('assistant'),
@@ -356,6 +414,17 @@ export function DoodleCommandProvider({ children }) {
           ? DOODLE_PANE_STATUS.ERROR
           : DOODLE_PANE_STATUS.COMPLETED,
       });
+      if (result.type === DOODLE_RESPONSE_TYPES.RESULT && result.undoToken) {
+        dispatch({
+          type: 'SET_LAST_UNDOABLE',
+          lastUndoable: {
+            undoToken: result.undoToken,
+            undoPayload: result.undoPayload || null,
+            messageId: null,
+            at: Date.now(),
+          },
+        });
+      }
       if (result.type === DOODLE_RESPONSE_TYPES.ERROR) {
         dispatch({ type: 'SET_ERROR', error: result.message });
       }
@@ -364,6 +433,54 @@ export function DoodleCommandProvider({ children }) {
       dispatch({
         type: 'SET_ERROR',
         error: err?.message || 'Could not execute that action.',
+      });
+      return null;
+    }
+  }, [appendAndPersist]);
+
+  const undoLastAction = useCallback(async ({ capabilities } = {}) => {
+    const current = stateRef.current;
+    const undoable = current.lastUndoable;
+    if (!undoable?.undoToken || !current.context) return null;
+    if (current.status === DOODLE_PANE_STATUS.EXECUTING) return null;
+    // Expire undo after 10 minutes
+    if (undoable.at && Date.now() - undoable.at > 10 * 60 * 1000) {
+      dispatch({ type: 'SET_LAST_UNDOABLE', lastUndoable: null });
+      dispatch({ type: 'SET_ERROR', error: 'Undo expired. That change can no longer be reversed from chat.' });
+      return null;
+    }
+
+    dispatch({ type: 'SET_STATUS', status: DOODLE_PANE_STATUS.EXECUTING, error: null });
+    try {
+      const result = await doodleUndo({
+        undoToken: undoable.undoToken,
+        undoPayload: undoable.undoPayload,
+        context: current.context,
+        capabilities,
+        conversationId: current.conversationId,
+      });
+      await appendAndPersist({
+        id: makeId('assistant'),
+        role: 'assistant',
+        content: result.message || '',
+        createdAt: new Date().toISOString(),
+        structured: result,
+      });
+      dispatch({ type: 'SET_LAST_UNDOABLE', lastUndoable: null });
+      dispatch({
+        type: 'CLEAR_PENDING',
+        status: result.type === DOODLE_RESPONSE_TYPES.ERROR
+          ? DOODLE_PANE_STATUS.ERROR
+          : DOODLE_PANE_STATUS.COMPLETED,
+      });
+      if (result.type === DOODLE_RESPONSE_TYPES.ERROR) {
+        dispatch({ type: 'SET_ERROR', error: result.message });
+      }
+      return result;
+    } catch (err) {
+      dispatch({
+        type: 'SET_ERROR',
+        error: err?.message || 'Could not undo that action.',
       });
       return null;
     }
@@ -400,24 +517,52 @@ export function DoodleCommandProvider({ children }) {
     });
   }, [submitMessage]);
 
+  const updatePendingCommand = useCallback((patch, { roster } = {}) => {
+    const current = stateRef.current;
+    const pending = current.pendingResponse;
+    if (!pending?.command) return;
+    const nextCommand = { ...pending.command, ...patch };
+    let preview = pending.preview;
+    if (
+      nextCommand.type === DOODLE_COMMAND_TYPES.ASSIGNMENT_CREATE
+      && roster
+    ) {
+      preview = buildAssignmentPreview(nextCommand, roster, current.context);
+    }
+    dispatch({
+      type: 'SET_PENDING',
+      pendingResponse: {
+        ...pending,
+        command: nextCommand,
+        preview,
+      },
+      pendingClarification: null,
+      status: DOODLE_PANE_STATUS.AWAITING_CONFIRMATION,
+    });
+  }, []);
+
   const value = useMemo(() => ({
     ...state,
     setContextFromShell,
     hydrateConversation,
     submitMessage,
     confirmPending,
+    undoLastAction,
     cancelPending,
     dismissError,
     answerClarification,
+    updatePendingCommand,
   }), [
     state,
     setContextFromShell,
     hydrateConversation,
     submitMessage,
     confirmPending,
+    undoLastAction,
     cancelPending,
     dismissError,
     answerClarification,
+    updatePendingCommand,
   ]);
 
   return (

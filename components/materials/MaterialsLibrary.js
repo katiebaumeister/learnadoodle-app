@@ -15,7 +15,13 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { Search, X, ExternalLink, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload, Plus } from 'lucide-react';
+import { Search, X, ExternalLink, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload, Plus, FileText } from 'lucide-react';
+import {
+  openBuildFromMaterialEditor,
+  openDoodleWithPrompt,
+  buildFromMaterialPrompt,
+  quizFromMaterialPrompt,
+} from '../../lib/doodleLaunch';
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
 import { useSession } from '../../contexts/SessionContext';
@@ -88,6 +94,7 @@ export default function MaterialsLibrary({
   scopedChildIds = null,
   embedded = false,
   onBuildFromMaterial = null,
+  buildFromMaterialLabel = 'Build from material',
 }) {
   const subjectLocked = Boolean(lockedSubjectId);
   const showSubjectFilterRow = !hideSubjectFilter && !subjectLocked;
@@ -762,10 +769,40 @@ export default function MaterialsLibrary({
     }
   };
 
+  const handleBuildUnitsFromMaterial = (item) => {
+    if (!item?.id) return;
+    if (lockedSubjectId) {
+      openBuildFromMaterialEditor({
+        subjectId: lockedSubjectId,
+        subjectName: lockedSubjectName || null,
+        materialId: item.id,
+        childIds: Array.isArray(scopedChildIds) ? scopedChildIds : [],
+        method: 'upload',
+        autoContinueOnOpen: true,
+      });
+      return;
+    }
+    openDoodleWithPrompt({
+      prompt: buildFromMaterialPrompt({ materialTitle: item.title || null }),
+      autoSubmit: true,
+      context: 'materials',
+    });
+  };
+
+  const handleQuizFromMaterial = (item) => {
+    if (!item?.id) return;
+    openDoodleWithPrompt({
+      prompt: quizFromMaterialPrompt({
+        subjectName: lockedSubjectName || null,
+        materialTitle: item.title || null,
+      }),
+      autoSubmit: true,
+      context: 'materials',
+    });
+  };
+
   const handleMagicExtract = async (item) => {
-    toast.push('Magic Extract: Analyzing document...', 'info');
-    // TODO: Implement AI-powered extraction from material
-    // This could extract key information, create summaries, generate lesson plans, etc.
+    handleBuildUnitsFromMaterial(item);
   };
 
   const showContextMenu = (item, clientX, clientY) => {
@@ -780,6 +817,8 @@ export default function MaterialsLibrary({
     const menuItems = [
       { text: 'Edit Material', action: () => handleEditAttachment(item), icon: Edit2 },
       { text: 'Open in new tab', action: () => handleOpenInNewTab(item), icon: ExternalLink },
+      { text: 'Build units & lessons', action: () => handleBuildUnitsFromMaterial(item), icon: Sparkles },
+      { text: 'Make quiz from this', action: () => handleQuizFromMaterial(item), icon: FileText },
       { text: 'Delete', action: () => handleDeleteItem(item), isDelete: true, icon: Trash2 }
     ];
     
@@ -1058,11 +1097,11 @@ export default function MaterialsLibrary({
             onPress={onBuildFromMaterial}
             activeOpacity={0.85}
             accessibilityRole="button"
-            accessibilityLabel="Build from material"
+            accessibilityLabel={buildFromMaterialLabel}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
             <Sparkles size={18} color="#334155" strokeWidth={2.25} />
-            <Text style={styles.embeddedPanelActionBtnText}>Build from material</Text>
+            <Text style={styles.embeddedPanelActionBtnText}>{buildFromMaterialLabel}</Text>
           </TouchableOpacity>
         ) : null}
         {renderUploadMaterialButton()}

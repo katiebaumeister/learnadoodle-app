@@ -49,6 +49,7 @@ const SIDEBAR_COLORS = {
 const NAV_ITEM_DEFS = {
   home: { key: 'home', label: 'Home', icon: MAIN_NAV_ICONS.home },
   messages: { key: 'messages', label: 'Messages', icon: MAIN_NAV_ICONS.messages },
+  search: { key: 'search', label: 'Doodle', icon: MAIN_NAV_ICONS.doodle },
   doodle: { key: 'doodle', label: 'Doodle', icon: MAIN_NAV_ICONS.doodle },
   subjects: { key: 'subjects', label: 'Subjects', icon: MAIN_NAV_ICONS.subjects },
   materials: { key: 'materials', label: 'Materials', icon: MAIN_NAV_ICONS.materials },
@@ -67,13 +68,13 @@ const NAV_ITEM_DEFS = {
 };
 
 const PARENT_NAV_BUCKET_KEYS = [
-  ['home', 'messages'],
+  ['home', 'messages', 'search'],
   ['planner', 'subjects', 'materials'],
   ['profile'],
 ];
 
 const TUTOR_NAV_BUCKET_KEYS = [
-  ['home', 'messages'],
+  ['home', 'messages', 'search'],
   ['tutorStudents', 'planner'],
 ];
 
@@ -87,6 +88,7 @@ export default function LeftRail({
   topActive,
   messagesPaneOpen = false,
   createPaneOpen = false,
+  searchPaneOpen = false,
   onSelectTop,
   onExitChildView = null,
   childrenList = [],
@@ -109,6 +111,7 @@ export default function LeftRail({
   familyPlanningMode = null,
   featureSettings = null,
   studentSelfManagedNoParent = false,
+  doodleBotDisabled = false,
   unreadMessagesCount = 0,
 }) {
   const [expandedChildren, setExpandedChildren] = useState(new Set());
@@ -198,6 +201,7 @@ export default function LeftRail({
     if (!SHOW_SUBJECTS_CATALOG_IN_SIDEBAR && item.key === 'learning') return false;
     if (!SHOW_RECORDS_IN_SIDEBAR && item.key === 'records') return false;
     if (!SHOW_CREATE_IN_SIDEBAR && item.key === 'create') return false;
+    if ((item.key === 'search' || item.key === 'doodle') && doodleBotDisabled) return false;
     if ((userRole === 'child' || userRole === 'student') && item.key === 'planning-preferences') return false;
     if (item.key === 'planning-preferences' && effectivePermissions.canViewPlanner === false) return false;
     if ((userRole === 'child' || userRole === 'student') && item.key === 'create') return false;
@@ -217,6 +221,7 @@ export default function LeftRail({
     capabilities.showCompliance,
     capabilities.showLearning,
     capabilities.showMaterials,
+    doodleBotDisabled,
     effectivePermissions.canViewLibrary,
     effectivePermissions.canViewPlanner,
     effectivePermissions.canViewSubjects,
@@ -243,7 +248,7 @@ export default function LeftRail({
     if (userRole === 'tutor') {
       bucketKeys = SHOW_MATERIALS_IN_SIDEBAR
         ? [
-            ['home', 'messages'],
+            ['home', 'messages', 'search'],
             ['tutorStudents', 'planner', 'materials'],
           ]
         : TUTOR_NAV_BUCKET_KEYS;
@@ -295,9 +300,14 @@ export default function LeftRail({
   const renderNavItem = (item) => {
     const NavIcon = item.icon;
     const isCreate = item.key === 'create';
+    const isSearch = item.key === 'search' || item.key === 'doodle';
     const active = createPaneOpen
       ? isCreate
-      : topActive === item.key;
+      : searchPaneOpen
+        ? isSearch
+        : messagesPaneOpen
+          ? item.key === 'messages'
+          : topActive === item.key;
     const isHovered = hoveredItem === item.key && !active;
     const isPlanner = item.key === 'planner';
     const isMore = item.key === 'more';
