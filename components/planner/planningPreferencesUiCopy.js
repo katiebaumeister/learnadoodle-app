@@ -19,6 +19,13 @@ export const SCHOOL_YEAR_SETTINGS_UI = {
     breaks: 'Breaks',
     daysOff: 'Days off',
   },
+  defaultUsHolidays: 'Default US holidays',
+  /** @deprecated Use defaultUsHolidays */
+  useDefaultUsHolidays: 'Default US holidays',
+  useDefaultUsHolidaysHint: 'When yes, standard U.S. public holidays count as days off for this school year.',
+  usHolidayBadge: 'US holiday',
+  usHolidayExcludedHint: 'Counted as a learning day',
+  defaultHolidayNotEditableNote: 'Default US holidays are not editable. You can remove this holiday from your days off list, or turn off Default US holidays.',
   /** @deprecated Use SCHOOL_YEAR_SETTINGS_UI — kept for imports during migration */
   legacyPlanningPreferencesTitle: 'School Year Settings',
 };

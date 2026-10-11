@@ -108,6 +108,69 @@ function pickSubjectListSource(overview, subjects) {
   return [];
 }
 
+/** Fresh window for home schedule cache; stale entries are still shown (SWR). */
+const HOME_CACHE_TTL_MS = 5 * 60 * 1000;
+const HOME_CACHE_MAX_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+
+function getHomeDataCacheKey(familyId, date) {
+  return `home_data_${familyId}_${date}`;
+}
+
+function readHomeDataCache(familyId, date, { allowStale = true } = {}) {
+  if (!familyId || !date) return null;
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+  try {
+    const cacheKey = getHomeDataCacheKey(familyId, date);
+    const cached = localStorage.getItem(cacheKey);
+    if (!cached) return null;
+
+    const { data, timestamp } = JSON.parse(cached);
+    const age = Date.now() - (Number(timestamp) || 0);
+    if (age < HOME_CACHE_TTL_MS) return data || null;
+    if (allowStale && age < HOME_CACHE_MAX_STALE_MS) return data || null;
+
+    localStorage.removeItem(cacheKey);
+    return null;
+  } catch (err) {
+    console.error('[ParentHomeScreen] Error reading cache:', err);
+    return null;
+  }
+}
+
+function writeHomeDataCache(familyId, date, data) {
+  if (!familyId || !date || !data) return;
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(
+      getHomeDataCacheKey(familyId, date),
+      JSON.stringify({ data, timestamp: Date.now() })
+    );
+  } catch (err) {
+    console.error('[ParentHomeScreen] Error saving cache:', err);
+  }
+}
+
+function resolveHomeCacheDate(date) {
+  const validDate =
+    date instanceof Date && !Number.isNaN(date.getTime()) ? new Date(date) : new Date();
+  validDate.setHours(0, 0, 0, 0);
+  return { validDate, dateStr: toLocalYmd(validDate) };
+}
+
+function seedHomeDataFromCache(familyId, date = new Date()) {
+  if (!familyId) return null;
+  const { dateStr } = resolveHomeCacheDate(date);
+  const cached = readHomeDataCache(familyId, dateStr, { allowStale: true });
+  if (!cached || typeof cached !== 'object') return null;
+  return {
+    learning: Array.isArray(cached.learning) ? cached.learning : [],
+    tasks: Array.isArray(cached.tasks) ? cached.tasks : [],
+    children: Array.isArray(cached.children) ? cached.children : [],
+    subjects: Array.isArray(cached.subjects) ? cached.subjects : [],
+    ...cached,
+  };
+}
+
 async function hydrateLearningAssignees(learning = [], familyId) {
   const items = Array.isArray(learning) ? learning : [];
   const eventIds = Array.from(
@@ -194,7 +257,8 @@ export default function ParentHomeScreen({
   plannerEventsByDate = null,
 }) {
   const session = useSession();
-  const [homeData, setHomeData] = useState(null);
+  // Seed Today's Schedule from localStorage on first paint so Home never flashes empty.
+  const [homeData, setHomeData] = useState(() => seedHomeDataFromCache(propFamilyId));
   const [dashboardExtras, setDashboardExtras] = useState({
     dueAssignments: [],
     pendingSubmissions: [],
@@ -211,6 +275,7 @@ export default function ParentHomeScreen({
   const initialDataReadyFiredRef = useRef(false);
   const onInitialDataReadyRef = useRef(onInitialDataReady);
   onInitialDataReadyRef.current = onInitialDataReady;
+  const seededFromCacheRef = useRef(homeData != null);
 
   const markInitialDataReady = useCallback(() => {
     if (initialDataReadyFiredRef.current) return;
@@ -221,6 +286,23 @@ export default function ParentHomeScreen({
   // Get familyId from session if not provided as prop
   const familyId = propFamilyId || session?.family_id;
   const welcomeSeedAttemptedRef = useRef(null);
+
+  // Release the shell loader as soon as cached schedule is on screen.
+  useEffect(() => {
+    if (seededFromCacheRef.current) {
+      markInitialDataReady();
+    }
+  }, [markInitialDataReady]);
+
+  // If familyId arrives after mount (session), seed cache before the fetch finishes.
+  useEffect(() => {
+    if (!familyId || homeData != null) return;
+    const seeded = seedHomeDataFromCache(familyId, selectedDate);
+    if (!seeded) return;
+    seededFromCacheRef.current = true;
+    setHomeData(seeded);
+    markInitialDataReady();
+  }, [familyId, homeData, selectedDate, markInitialDataReady]);
 
   useEffect(() => {
     if (!familyId || family?.onboarding_completed !== true) return;
@@ -249,63 +331,6 @@ export default function ParentHomeScreen({
       return normalizeSubjectList(incoming);
     });
   }, [preloadedSubjectsOverview, preloadedSubjects]);
-
-  // Cache helpers (matching WebContent pattern)
-  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-  const getHomeDataCacheKey = (familyId, date) => {
-    return `home_data_${familyId}_${date}`;
-  };
-
-  const loadHomeDataFromCache = (familyId, date) => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
-    try {
-      const cacheKey = getHomeDataCacheKey(familyId, date);
-      const cached = localStorage.getItem(cacheKey);
-      if (!cached) return null;
-      
-      const { data, timestamp } = JSON.parse(cached);
-      const age = Date.now() - timestamp;
-      
-      if (age < CACHE_TTL_MS) {
-        return data;
-      } else {
-        localStorage.removeItem(cacheKey);
-        return null;
-      }
-    } catch (err) {
-      console.error('[ParentHomeScreen] Error reading cache:', err);
-      return null;
-    }
-  };
-
-  const saveHomeDataToCache = (familyId, date, data) => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    try {
-      const cacheKey = getHomeDataCacheKey(familyId, date);
-      localStorage.setItem(cacheKey, JSON.stringify({
-        data: data,
-        timestamp: Date.now()
-      }));
-    } catch (err) {
-      console.error('[ParentHomeScreen] Error saving cache:', err);
-    }
-  };
-
-  const clearHomeDataCache = (fid, date = null) => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined' || !fid) return;
-    try {
-      if (date) {
-        localStorage.removeItem(getHomeDataCacheKey(fid, date));
-        return;
-      }
-      const prefix = `home_data_${fid}_`;
-      Object.keys(localStorage).forEach((key) => {
-        if (key.startsWith(prefix)) localStorage.removeItem(key);
-      });
-    } catch (err) {
-      console.error('[ParentHomeScreen] Error clearing cache:', err);
-    }
-  };
 
   const loadDashboardExtras = useCallback(async (fid) => {
     if (!fid) return;
@@ -396,36 +421,35 @@ export default function ParentHomeScreen({
   useEffect(() => {
     // Wait for session to be ready and familyId to be available
     if (session && !session.loading && familyId && !session.error) {
-      // Check cache first - if available, use it immediately without loading state
-      const validDate = selectedDate instanceof Date && !isNaN(selectedDate.getTime())
-        ? selectedDate
-        : new Date();
-      validDate.setHours(0, 0, 0, 0);
-      const dateStr = toLocalYmd(validDate);
-      
-      const cachedData = loadHomeDataFromCache(familyId, dateStr);
+      const { dateStr } = resolveHomeCacheDate(selectedDate);
+      const cachedData = readHomeDataCache(familyId, dateStr, { allowStale: true });
       if (cachedData) {
-        // Use cached data immediately - no loading state
-        setHomeData(cachedData);
+        // Paint cache immediately, then soft-revalidate in the background.
+        setHomeData((prev) => {
+          if (prev?.learning?.length && !cachedData?.learning?.length) return prev;
+          return {
+            learning: Array.isArray(cachedData.learning) ? cachedData.learning : [],
+            tasks: Array.isArray(cachedData.tasks) ? cachedData.tasks : [],
+            children: Array.isArray(cachedData.children) ? cachedData.children : [],
+            subjects: Array.isArray(cachedData.subjects) ? cachedData.subjects : [],
+            ...cachedData,
+          };
+        });
         markInitialDataReady();
         setError(null);
         loadDashboardExtras(familyId);
-        // Load notification count in background
         loadNotificationCount();
-        // Refresh data in background without showing loading
-        loadData(true); // Pass true to indicate silent refresh
+        loadData(true);
         return;
       }
-      
-      // No cache - keep startup loader visible until first real payload resolves.
+
+      // No cache — keep startup loader until first real payload (unless already seeded).
       setError(null);
-      // Load data in background silently
-      loadData(true, { markInitialReady: true });
-      // Load notification count in background
+      loadData(true, { markInitialReady: !seededFromCacheRef.current });
       loadNotificationCount();
     } else if (session && session.error) {
       setError(new Error('Session error: ' + session.error));
-      setHomeData({
+      setHomeData((prev) => prev || {
         learning: [],
         tasks: [],
         children: [],
@@ -434,7 +458,7 @@ export default function ParentHomeScreen({
       markInitialDataReady();
     } else if (session && !session.loading && !familyId) {
       setError(new Error('No family ID available'));
-      setHomeData({
+      setHomeData((prev) => prev || {
         learning: [],
         tasks: [],
         children: [],
@@ -450,11 +474,7 @@ export default function ParentHomeScreen({
     if (!familyId) return;
 
     try {
-      const validDate = selectedDate instanceof Date && !isNaN(selectedDate.getTime())
-        ? selectedDate
-        : new Date();
-      validDate.setHours(0, 0, 0, 0);
-      const dateStr = toLocalYmd(validDate);
+      const { validDate, dateStr } = resolveHomeCacheDate(selectedDate);
 
       // Load home shell data + Planner-aligned day schedule in parallel.
       const [homeResult, scheduleResult] = await Promise.all([
@@ -474,19 +494,17 @@ export default function ParentHomeScreen({
         if (!silent && !isAbortLikeError(error)) {
           setError(error);
         }
-        // Set empty data structure to prevent infinite loading
-        const emptyData = {
+        // Keep cached schedule on blips — never flash empty during silent refresh.
+        setHomeData((prev) => prev || {
           learning: [],
           tasks: [],
           children: [],
           subjects: [],
-        };
-        setHomeData(emptyData);
+        });
         if (shouldMarkInitialReady) {
           markInitialDataReady();
         }
         loadDashboardExtras(familyId);
-        // Still try to load notification count even if RPC fails
         try {
           await loadNotificationCount();
         } catch (e) {
@@ -544,11 +562,9 @@ export default function ParentHomeScreen({
         markInitialDataReady();
       }
       
-      // Save to cache
-      saveHomeDataToCache(familyId, dateStr, normalizedHomeData);
+      writeHomeDataCache(familyId, dateStr, normalizedHomeData);
       loadDashboardExtras(familyId);
 
-      // Load notification count
       await loadNotificationCount();
     } catch (error) {
       if (!isAbortLikeError(error)) {
@@ -557,8 +573,8 @@ export default function ParentHomeScreen({
       if (!silent && !isAbortLikeError(error)) {
         setError(error);
       }
-      // Set empty data to prevent infinite loading
-      setHomeData({
+      // Keep existing schedule visible on network blips.
+      setHomeData((prev) => prev || {
         learning: [],
         tasks: [],
         children: [],
@@ -572,6 +588,8 @@ export default function ParentHomeScreen({
 
   const loadDataRef = useRef(loadData);
   loadDataRef.current = loadData;
+  const selectedDateRef = useRef(selectedDate);
+  selectedDateRef.current = selectedDate;
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return;
@@ -591,8 +609,7 @@ export default function ParentHomeScreen({
       );
     };
     const onRefreshCalendar = () => {
-      // Always invalidate + refetch so Planner edits never leave Home stale.
-      clearHomeDataCache(familyId);
+      // Soft-revalidate in place; keep painted + localStorage schedule until fresh write.
       loadDataRef.current(true);
       loadDashboardExtras(familyId);
     };
@@ -622,7 +639,11 @@ export default function ParentHomeScreen({
           changed = true;
           return { ...event, status: nextStatus };
         });
-        return changed ? { ...prev, learning: nextLearning } : prev;
+        if (!changed) return prev;
+        const next = { ...prev, learning: nextLearning };
+        const { dateStr } = resolveHomeCacheDate(selectedDateRef.current);
+        writeHomeDataCache(familyId, dateStr, next);
+        return next;
       });
     };
     const onEventDeleted = (e) => {
@@ -640,7 +661,6 @@ export default function ParentHomeScreen({
         )
       );
       if (!deletedId && !deletedAcademicYearId && cleanSeriesLinkIds.length === 0) return;
-      clearHomeDataCache(familyId);
 
       setHomeData((prev) => {
         if (!prev || !Array.isArray(prev.learning) || prev.learning.length === 0) return prev;
@@ -660,8 +680,14 @@ export default function ParentHomeScreen({
           if (deletedAcademicYearId && String(row?.academic_year_id || '') === String(deletedAcademicYearId)) return false;
           return true;
         });
-        return nextLearning.length === prev.learning.length ? prev : { ...prev, learning: nextLearning };
+        if (nextLearning.length === prev.learning.length) return prev;
+        const next = { ...prev, learning: nextLearning };
+        const { dateStr } = resolveHomeCacheDate(selectedDateRef.current);
+        writeHomeDataCache(familyId, dateStr, next);
+        return next;
       });
+      // Soft-revalidate after optimistic remove (do not wipe painted UI first).
+      loadDataRef.current(true);
     };
     window.addEventListener('refreshCalendar', onRefreshCalendar);
     window.addEventListener('eventAttendancePatched', onAttendancePatched);
@@ -714,13 +740,22 @@ export default function ParentHomeScreen({
       : new Date()
   );
   const plannerAlignedLearning = useMemo(() => {
+    const homeLearning = Array.isArray(effectiveHomeData.learning) ? effectiveHomeData.learning : [];
     if (plannerEventsByDate && typeof plannerEventsByDate === 'object') {
-      const fromPlanner = scheduleEventsForYmdFromPlannerMap(plannerEventsByDate, selectedDateKey);
-      if (fromPlanner.length > 0 || (plannerEventsByDate[selectedDateKey] != null)) {
-        return fromPlanner;
+      const hasDayBucket = Object.prototype.hasOwnProperty.call(plannerEventsByDate, selectedDateKey);
+      if (hasDayBucket) {
+        const fromPlanner = scheduleEventsForYmdFromPlannerMap(plannerEventsByDate, selectedDateKey);
+        // Trust planner when it has events. If planner day is empty but home cache
+        // still has rows, keep home until soft-revalidate confirms (avoids empty flash).
+        if (fromPlanner.length > 0) return fromPlanner;
+        if (homeLearning.length === 0) return fromPlanner;
+      } else if (homeLearning.length === 0) {
+        // Month map may still be warming — try a full scan for this day.
+        const fromPlanner = scheduleEventsForYmdFromPlannerMap(plannerEventsByDate, selectedDateKey);
+        if (fromPlanner.length > 0) return fromPlanner;
       }
     }
-    return effectiveHomeData.learning || [];
+    return homeLearning;
   }, [plannerEventsByDate, selectedDateKey, effectiveHomeData.learning]);
   const filteredLearning = plannerAlignedLearning;
 

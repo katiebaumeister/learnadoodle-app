@@ -82,10 +82,14 @@ function isInsideWrapper(text, cursor, wrapper) {
 function detectActiveFormats(text, cursor) {
   const content = String(text || '');
   const pos = Math.max(0, Math.min(cursor ?? 0, content.length));
+  const lineStart = content.lastIndexOf('\n', Math.max(0, pos - 1)) + 1;
+  const lineEnd = content.indexOf('\n', pos);
+  const line = content.slice(lineStart, lineEnd === -1 ? content.length : lineEnd);
   return {
     bold: isInsideWrapper(content, pos, '**'),
     italic: isInsideWrapper(content, pos, '_') && !isInsideWrapper(content, pos, '__'),
     underline: isInsideWrapper(content, pos, '__'),
+    list: /^\s*[•\-*]\s/.test(line),
   };
 }
 
@@ -161,9 +165,22 @@ function isSelectionInsideElement(el, selection) {
   return el.contains(anchor);
 }
 
+const EMPTY_WEB_FORMATS = { bold: false, italic: false, underline: false, list: false };
+
+function selectionInList(editableEl, selection) {
+  if (!editableEl || !selection?.anchorNode) return false;
+  const start =
+    selection.anchorNode.nodeType === Node.ELEMENT_NODE
+      ? selection.anchorNode
+      : selection.anchorNode.parentElement;
+  if (!start || typeof start.closest !== 'function') return false;
+  if (!editableEl.contains(start)) return false;
+  return Boolean(start.closest('ul, ol, li'));
+}
+
 function readWebFormatState(editableEl) {
   if (!editableEl || typeof document === 'undefined') {
-    return { bold: false, italic: false, underline: false };
+    return { ...EMPTY_WEB_FORMATS };
   }
 
   const sel = document.getSelection?.();
@@ -171,46 +188,48 @@ function readWebFormatState(editableEl) {
   const editorHasFocus =
     activeEl === editableEl || (activeEl != null && editableEl.contains(activeEl));
   const selectionInsideEditor = isSelectionInsideElement(editableEl, sel);
+  const toolbarFocused = Boolean(
+    activeEl?.closest?.('[data-format-toolbar="true"]'),
+  );
 
-  if (!editorHasFocus && !selectionInsideEditor) {
-    return { bold: false, italic: false, underline: false };
+  // Keep prior toolbar highlight while pressing format buttons (focus briefly leaves editor).
+  if (!editorHasFocus && !selectionInsideEditor && !toolbarFocused) {
+    return { ...EMPTY_WEB_FORMATS };
   }
 
-  if (sel) {
-    let node = sel.anchorNode || null;
-    const formats = { bold: false, italic: false, underline: false };
-    while (node && node !== editableEl) {
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        const tag = node.tagName?.toUpperCase?.() || '';
-        if (tag === 'STRONG' || tag === 'B') formats.bold = true;
-        if (tag === 'EM' || tag === 'I') formats.italic = true;
-        if (tag === 'U') formats.underline = true;
-        if (tag === 'SPAN' && node.style) {
-          const weight = node.style.fontWeight;
-          if (weight === 'bold' || weight === '700' || Number(weight) >= 600) formats.bold = true;
-          const decoration = node.style.textDecoration || node.style.textDecorationLine || '';
-          if (String(decoration).includes('underline')) formats.underline = true;
-          if (node.style.fontStyle === 'italic') formats.italic = true;
-        }
-      }
-      node = node.parentNode;
-    }
-    if (formats.bold || formats.italic || formats.underline) return formats;
-  }
-
-  if (!editorHasFocus) {
-    return { bold: false, italic: false, underline: false };
-  }
+  const list = selectionInList(editableEl, sel);
 
   try {
     return {
-      bold: document.queryCommandState('bold'),
-      italic: document.queryCommandState('italic'),
-      underline: document.queryCommandState('underline'),
+      bold: !!document.queryCommandState('bold'),
+      italic: !!document.queryCommandState('italic'),
+      underline: !!document.queryCommandState('underline'),
+      list: list || !!document.queryCommandState('insertUnorderedList'),
     };
   } catch (_) {
-    return { bold: false, italic: false, underline: false };
+    // Fall through to DOM walk
   }
+
+  let node = sel?.anchorNode || null;
+  const formats = { ...EMPTY_WEB_FORMATS, list };
+  while (node && node !== editableEl) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const tag = node.tagName?.toUpperCase?.() || '';
+      if (tag === 'STRONG' || tag === 'B') formats.bold = true;
+      if (tag === 'EM' || tag === 'I') formats.italic = true;
+      if (tag === 'U') formats.underline = true;
+      if (tag === 'UL' || tag === 'OL' || tag === 'LI') formats.list = true;
+      if (tag === 'SPAN' && node.style) {
+        const weight = node.style.fontWeight;
+        if (weight === 'bold' || weight === '700' || Number(weight) >= 600) formats.bold = true;
+        const decoration = node.style.textDecoration || node.style.textDecorationLine || '';
+        if (String(decoration).includes('underline')) formats.underline = true;
+        if (node.style.fontStyle === 'italic') formats.italic = true;
+      }
+    }
+    node = node.parentNode;
+  }
+  return formats;
 }
 
 function FormatToolbar({ activeFormats, onPress, detectedFormats }) {
@@ -222,7 +241,7 @@ function FormatToolbar({ activeFormats, onPress, detectedFormats }) {
         { mode: 'underline', Icon: Underline, label: 'Underline' },
         { mode: 'list', Icon: List, label: 'Bulleted list' },
       ].map(({ mode, Icon, label: actionLabel }) => {
-        const isActive = mode !== 'list' && (detectedFormats?.[mode] || activeFormats[mode]);
+        const isActive = Boolean(detectedFormats?.[mode] || activeFormats?.[mode]);
         const buttonStyle = [
           styles.attachActionButton,
           isActive && styles.attachActionButtonActive,
@@ -274,7 +293,9 @@ function WebInstructionsEditor({
   const containerRef = useRef(null);
   const editableRef = useRef(null);
   const skipExternalSyncRef = useRef(false);
-  const [activeFormats, setActiveFormats] = useState({ bold: false, italic: false, underline: false });
+  /** Last markdown we emitted — prevents value→HTML rewrite that desyncs the toolbar. */
+  const lastEmittedMarkdownRef = useRef(null);
+  const [activeFormats, setActiveFormats] = useState({ ...EMPTY_WEB_FORMATS });
 
   const syncPlaceholder = useCallback((el) => {
     if (!el) return;
@@ -286,21 +307,27 @@ function WebInstructionsEditor({
     }
   }, [placeholder]);
 
+  const readEditorMarkdown = useCallback((el) => {
+    if (!el) return '';
+    return cleanInstructionMarkdown(htmlToMarkdown(el).replace(/\u200B/g, ''));
+  }, []);
+
   const emitMarkdown = useCallback((el) => {
     if (!el) return '';
-    const markdown = cleanInstructionMarkdown(htmlToMarkdown(el).replace(/\u200B/g, ''));
+    const markdown = readEditorMarkdown(el);
+    lastEmittedMarkdownRef.current = markdown;
     syncPlaceholder(el);
     onChangeText?.(markdown);
     return markdown;
-  }, [onChangeText, syncPlaceholder]);
+  }, [onChangeText, syncPlaceholder, readEditorMarkdown]);
 
   useImperativeHandle(editorRef, () => ({
     getMarkdown: () => {
       const el = editableRef.current;
       if (!el) return String(value ?? '');
-      return cleanInstructionMarkdown(htmlToMarkdown(el).replace(/\u200B/g, ''));
+      return readEditorMarkdown(el);
     },
-  }), [value]);
+  }), [value, readEditorMarkdown]);
 
   const refreshFormatState = useCallback(() => {
     setActiveFormats(readWebFormatState(editableRef.current));
@@ -309,7 +336,9 @@ function WebInstructionsEditor({
   const applyMarkdownToEditor = useCallback((el, markdown) => {
     if (!el) return;
     skipExternalSyncRef.current = true;
-    el.innerHTML = markdownToHtml(markdown);
+    const cleaned = cleanInstructionMarkdown(markdown);
+    lastEmittedMarkdownRef.current = cleaned;
+    el.innerHTML = markdownToHtml(cleaned);
     syncPlaceholder(el);
     requestAnimationFrame(() => {
       skipExternalSyncRef.current = false;
@@ -339,9 +368,19 @@ function WebInstructionsEditor({
       refreshFormatState();
     };
 
-    const handleBlur = () => {
+    const handleBlur = (event) => {
       emitMarkdown(el);
-      setActiveFormats({ bold: false, italic: false, underline: false });
+      const related = event?.relatedTarget;
+      if (related?.closest?.('[data-format-toolbar="true"]')) {
+        return;
+      }
+      // Defer clear so toolbar mousedown can keep/restore format highlights.
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (active === el || el.contains(active)) return;
+        if (active?.closest?.('[data-format-toolbar="true"]')) return;
+        setActiveFormats({ ...EMPTY_WEB_FORMATS });
+      });
     };
 
     const onSelectionActivity = () => refreshFormatState();
@@ -376,12 +415,18 @@ function WebInstructionsEditor({
   useLayoutEffect(() => {
     const el = editableRef.current;
     if (!el || skipExternalSyncRef.current) return;
-    const current = htmlToMarkdown(el).replace(/\u200B/g, '');
-    const next = String(value ?? '');
+    const next = cleanInstructionMarkdown(String(value ?? ''));
+    // Ignore echoes of our own emit — rewriting HTML here was scrambling B/I/U/list state.
+    if (lastEmittedMarkdownRef.current != null && next === lastEmittedMarkdownRef.current) {
+      return;
+    }
+    const current = readEditorMarkdown(el);
     if (current !== next) {
       applyMarkdownToEditor(el, next);
+    } else {
+      lastEmittedMarkdownRef.current = next;
     }
-  }, [value, applyMarkdownToEditor]);
+  }, [value, applyMarkdownToEditor, readEditorMarkdown]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return undefined;
@@ -438,7 +483,11 @@ function WebInstructionsEditor({
     else if (mode === 'list') document.execCommand('insertUnorderedList');
 
     emitMarkdown(el);
-    refreshFormatState();
+    // queryCommandState is only reliable after the browser finishes the command.
+    requestAnimationFrame(() => {
+      refreshFormatState();
+      requestAnimationFrame(refreshFormatState);
+    });
   }, [emitMarkdown, refreshFormatState]);
 
   return (
@@ -470,7 +519,7 @@ function NativeInstructionsEditor({
   const inputRef = useRef(null);
   const selectionRef = useRef({ start: 0, end: 0 });
   const pendingSelectionRef = useRef(null);
-  const [activeFormats, setActiveFormats] = useState({ bold: false, italic: false, underline: false });
+  const [activeFormats, setActiveFormats] = useState({ ...EMPTY_WEB_FORMATS });
 
   const textValue = String(value ?? '');
 
@@ -515,6 +564,18 @@ function NativeInstructionsEditor({
     const hasRange = end > start;
 
     if (mode === 'list') {
+      const lineStart = current.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+      const lineEndIdx = current.indexOf('\n', start);
+      const lineEnd = lineEndIdx === -1 ? current.length : lineEndIdx;
+      const line = current.slice(lineStart, lineEnd);
+      if (/^\s*[•\-*]\s/.test(line)) {
+        // Toggle bullet off for the current line.
+        const stripped = line.replace(/^\s*[•\-*]\s+/, '');
+        const next = `${current.slice(0, lineStart)}${stripped}${current.slice(lineEnd)}`;
+        const cursor = lineStart + stripped.length;
+        commitChange(next, cursor, cursor);
+        return;
+      }
       const result = prefixCurrentLine(current, { start, end }, '• ');
       commitChange(result.next, result.selectionStart, result.selectionEnd);
       return;

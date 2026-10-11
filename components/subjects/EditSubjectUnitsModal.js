@@ -46,13 +46,15 @@ export default function EditSubjectUnitsModal({
 
   const handleCreateUnitsAndLessons = useCallback(() => {
     if (!subjectId) return;
+    // Close this edit sheet first so Create doesn't leave a stale Edit modal underneath.
+    handleClose();
     openMagicCreateWizard({
       subjectId,
       subjectName,
       academicYearId,
       childIds: Array.isArray(childIds) ? childIds : [],
     });
-  }, [subjectId, subjectName, academicYearId, childIds]);
+  }, [subjectId, subjectName, academicYearId, childIds, handleClose]);
 
   if (!visible) return null;
 

@@ -1268,7 +1268,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     return cleanValue(data);
   };
 
-  // Load from cache
+  // Load from cache (stale-while-revalidate: keep showing expired entries up to 7 days)
   const loadHomeDataFromCache = (familyId, date) => {
     if (typeof window === 'undefined') return null;
     try {
@@ -1277,16 +1277,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       if (!cached) return null;
       
       const { data, timestamp } = JSON.parse(cached);
-      const age = Date.now() - timestamp;
+      const age = Date.now() - (Number(timestamp) || 0);
+      const MAX_STALE_MS = 7 * 24 * 60 * 60 * 1000;
       
-      if (age < CACHE_TTL_MS) {
+      if (age < CACHE_TTL_MS || age < MAX_STALE_MS) {
         // Clean invalid UUIDs from cached data before returning
         return cleanAvatarUrls(data);
-      } else {
-        console.log(`[Home] Cache expired (age: ${Math.round(age / 1000)}s)`);
-        localStorage.removeItem(cacheKey);
-        return null;
       }
+      localStorage.removeItem(cacheKey);
+      return null;
     } catch (err) {
       console.error('[Home] Error reading cache:', err);
       return null;

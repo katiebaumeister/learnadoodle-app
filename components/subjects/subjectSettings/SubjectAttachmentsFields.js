@@ -9,6 +9,7 @@ export default function SubjectAttachmentsFields({
   onSyllabusChange,
   onLessonPlanChange,
   onAddSyllabus,
+  recentMaterial = null,
 }) {
   if (!familyId) return null;
 
@@ -23,6 +24,7 @@ export default function SubjectAttachmentsFields({
       <EventAttachmentsField
         familyId={familyId}
         selectedMaterialId={selectedMaterialId}
+        recentMaterial={recentMaterial}
         onMaterialChange={(materialId) => {
           onSyllabusChange?.(materialId || null);
           onLessonPlanChange?.(null);

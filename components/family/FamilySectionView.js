@@ -53,6 +53,7 @@ function FamilyMembersPanel({
   onFamilyUpdate,
   profile,
   fullSubjects,
+  children = [],
   userRole,
   viewingAsChildId,
   onViewAsChild,
@@ -66,6 +67,7 @@ function FamilyMembersPanel({
       onFamilyUpdate={onFamilyUpdate}
       profile={profile}
       preloadedSubjects={fullSubjects}
+      preloadedChildren={children}
       userRole={userRole}
       initialSection="members"
       hideInternalSidebar
@@ -172,6 +174,7 @@ export default function FamilySectionView({
             onFamilyUpdate={onFamilyUpdate}
             profile={profile}
             fullSubjects={fullSubjects}
+            children={children}
             userRole={userRole}
             viewingAsChildId={viewingAsChildId}
             onViewAsChild={onViewAsChild}

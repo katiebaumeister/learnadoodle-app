@@ -28,33 +28,43 @@ export default function ScheduleDateFields({
   timeColumnStyle = null,
   trailingColumnStyle = null,
   endDateRequired = false,
+  disabled = false,
 }) {
-  const handleStartPrev = () => onStartDateChange?.(addDays(startDate, -1));
-  const handleStartNext = () => onStartDateChange?.(addDays(startDate, 1));
+  const handleStartPrev = () => {
+    if (disabled) return;
+    onStartDateChange?.(addDays(startDate, -1));
+  };
+  const handleStartNext = () => {
+    if (disabled) return;
+    onStartDateChange?.(addDays(startDate, 1));
+  };
   const dateColumnStyleResolved = dateColumnStyle
     || (matchEventModalDateWidth ? styles.scheduleColumnEventDate : styles.scheduleColumn);
   const startTimeColumnStyle = timeColumnStyle || styles.scheduleColumn;
   const trailingWrapStyle = trailingColumnStyle || styles.scheduleTrailingColumn;
 
   return (
-    <View style={styles.formGroup}>
+    <View style={[styles.formGroup, disabled ? { opacity: 0.72 } : null]}>
       <View style={styles.dateTimeInlineRow}>
         <View style={dateColumnStyleResolved}>
           <Text style={styles.fieldLabel}>Start date <Text style={styles.required}>*</Text></Text>
           <View style={[styles.chip, styles.scheduleDateChip, startDateError && { borderColor: '#ef4444' }]}>
-            <TouchableOpacity onPress={handleStartPrev}>
+            <TouchableOpacity onPress={handleStartPrev} disabled={disabled}>
               <ChevronLeft size={16} color={FG} />
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => onOpenStartDatePicker?.()}
+              onPress={() => {
+                if (!disabled) onOpenStartDatePicker?.();
+              }}
+              disabled={disabled}
               style={styles.scheduleDateChipLabel}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              {...(Platform.OS === 'web' && { cursor: disabled ? 'default' : 'pointer' })}
             >
               <Text style={styles.scheduleDateChipText} numberOfLines={1}>
                 {fmtDate(startDate)}
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleStartNext}>
+            <TouchableOpacity onPress={handleStartNext} disabled={disabled}>
               <ChevronRight size={16} color={FG} />
             </TouchableOpacity>
           </View>
@@ -68,13 +78,21 @@ export default function ScheduleDateFields({
               {endDateRequired ? <Text style={styles.required}> *</Text> : null}
             </Text>
             <View style={[styles.chip, styles.scheduleDateChip, endDateError && { borderColor: '#ef4444' }]}>
-              <TouchableOpacity onPress={() => endDate && onEndDateChange?.(addDays(endDate, -1))}>
+              <TouchableOpacity
+                onPress={() => {
+                  if (!disabled && endDate) onEndDateChange?.(addDays(endDate, -1));
+                }}
+                disabled={disabled}
+              >
                 <ChevronLeft size={16} color={FG} />
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => onOpenEndDatePicker?.()}
+                onPress={() => {
+                  if (!disabled) onOpenEndDatePicker?.();
+                }}
+                disabled={disabled}
                 style={styles.scheduleDateChipLabel}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                {...(Platform.OS === 'web' && { cursor: disabled ? 'default' : 'pointer' })}
               >
                 <Text
                   style={[styles.scheduleDateChipText, !endDate && { color: PLACEHOLDER }]}
@@ -83,7 +101,12 @@ export default function ScheduleDateFields({
                   {endDate ? fmtDate(endDate) : 'Optional'}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => onEndDateChange?.(addDays(endDate || startDate, 1))}>
+              <TouchableOpacity
+                onPress={() => {
+                  if (!disabled) onEndDateChange?.(addDays(endDate || startDate, 1));
+                }}
+                disabled={disabled}
+              >
                 <ChevronRight size={16} color={FG} />
               </TouchableOpacity>
             </View>
@@ -97,11 +120,12 @@ export default function ScheduleDateFields({
               <Text style={styles.fieldLabel}>Start time</Text>
               <MaskedTimeInput
                 value={startTime}
-                onChangeText={onStartTimeChange}
+                onChangeText={disabled ? undefined : onStartTimeChange}
                 placeholder="Optional"
                 placeholderTextColor={PLACEHOLDER}
                 wrapStyle={styles.scheduleTimeInputWrap}
                 hasError={!!timeError}
+                disabled={disabled}
               />
             </View>
             {showEndTime && onEndTimeChange ? (
@@ -109,11 +133,12 @@ export default function ScheduleDateFields({
                 <Text style={styles.fieldLabel}>End time</Text>
                 <MaskedTimeInput
                   value={endTime}
-                  onChangeText={onEndTimeChange}
+                  onChangeText={disabled ? undefined : onEndTimeChange}
                   placeholder="Optional"
                   placeholderTextColor={PLACEHOLDER}
                   wrapStyle={styles.scheduleTimeInputWrap}
                   hasError={!!timeError}
+                  disabled={disabled}
                 />
               </View>
             ) : null}

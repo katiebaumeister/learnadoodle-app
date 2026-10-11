@@ -965,11 +965,17 @@ export default function SubjectsPage({
     selectedYearFilter,
   ]);
 
-  // Labels from the full subject set so cross-year duplicates get year (then child) context.
-  const subjectDisplayLabels = useMemo(
-    () => buildSubjectDisplayLabels(subjects || [], { children: safeChildren }),
-    [subjects, safeChildren],
-  );
+  // Year is already on the page flipper — only disambiguate within the visible year
+  // (child names when needed). Materials keeps cross-year labels.
+  const subjectDisplayLabels = useMemo(() => {
+    let list = subjects || [];
+    if (selectedYearFilter !== ALL_YEARS_FILTER) {
+      list = list.filter(
+        (subject) => (subject.school_year || '2025/26') === selectedYearFilter,
+      );
+    }
+    return buildSubjectDisplayLabels(list, { children: safeChildren });
+  }, [subjects, safeChildren, selectedYearFilter]);
 
   const selectAllChildrenFilter = useCallback(() => {
     setAllChildrenFilterActive(true);
@@ -2809,6 +2815,7 @@ export default function SubjectsPage({
                 onFamilyUpdate={onFamilyUpdate}
                 profile={profile}
                 preloadedSubjects={familyModalSubjects}
+                preloadedChildren={safeChildren}
                 userRole={userRole}
                 initialSection="members"
                 hideInternalSidebar

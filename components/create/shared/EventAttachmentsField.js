@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,72 @@ import MaterialDocViewerModal, {
 } from '../../materials/MaterialDocViewerModal';
 import { createModalStyles as styles, MUTED, PLACEHOLDER, ACCENT_TEXT, FG } from './createModalStyles';
 
+function materialBaseTitle(material) {
+  return String(material?.title || material?.name || 'Untitled').trim() || 'Untitled';
+}
+
+function materialSubjectBit(material) {
+  return String(material?.subject_key || '').trim() || null;
+}
+
+function materialChildrenBit(material) {
+  const names = (material?.material_children || [])
+    .map((mc) => String(mc?.child?.first_name || '').trim())
+    .filter(Boolean);
+  if (!names.length) return null;
+  return [...new Set(names)].join(', ');
+}
+
+/** Only add subject/child context when the same title appears more than once. */
+function buildMaterialDisplayLabels(materials = []) {
+  const list = Array.isArray(materials) ? materials : [];
+  const byTitle = new Map();
+  list.forEach((material) => {
+    if (!material?.id) return;
+    const key = materialBaseTitle(material).toLowerCase();
+    if (!byTitle.has(key)) byTitle.set(key, []);
+    byTitle.get(key).push(material);
+  });
+
+  const labels = new Map();
+  byTitle.forEach((group) => {
+    if (group.length === 1) {
+      const m = group[0];
+      labels.set(String(m.id), materialBaseTitle(m));
+      return;
+    }
+
+    const withSubject = group.map((m) => {
+      const base = materialBaseTitle(m);
+      const subject = materialSubjectBit(m);
+      return {
+        id: String(m.id),
+        material: m,
+        label: subject ? `${base} · ${subject}` : base,
+      };
+    });
+
+    const byLabel = new Map();
+    withSubject.forEach((row) => {
+      if (!byLabel.has(row.label)) byLabel.set(row.label, []);
+      byLabel.get(row.label).push(row);
+    });
+
+    byLabel.forEach((rows, label) => {
+      if (rows.length === 1) {
+        labels.set(rows[0].id, label);
+        return;
+      }
+      rows.forEach((row) => {
+        const kids = materialChildrenBit(row.material);
+        labels.set(row.id, kids ? `${label} · ${kids}` : label);
+      });
+    });
+  });
+
+  return labels;
+}
+
 export default function EventAttachmentsField({
   familyId,
   selectedMaterialId,
@@ -28,6 +94,8 @@ export default function EventAttachmentsField({
   selectedMaterialIds = [],
   onAddExistingMaterial = null,
   materialFilter = null,
+  /** Just-created material to merge into the picker immediately (before refetch). */
+  recentMaterial = null,
   /** When a single material is selected, click its name to open the in-app viewer. */
   allowOpenSelected = true,
 }) {
@@ -42,42 +110,83 @@ export default function EventAttachmentsField({
     viewerKind: 'pdf',
   });
   const triggerRef = useRef(null);
+  const materialFilterRef = useRef(materialFilter);
+  materialFilterRef.current = materialFilter;
+  const loadSeqRef = useRef(0);
 
-  useEffect(() => {
+  const applyList = useCallback((rows) => {
+    const list = Array.isArray(rows) ? rows : [];
+    const filter = materialFilterRef.current;
+    setMaterials(typeof filter === 'function' ? list.filter(filter) : list);
+  }, []);
+
+  const loadMaterials = useCallback(() => {
     if (!familyId) return;
-    let cancelled = false;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     getMaterials(familyId)
       .then((rows) => {
-        if (cancelled) return;
-        const list = Array.isArray(rows) ? rows : [];
-        setMaterials(typeof materialFilter === 'function' ? list.filter(materialFilter) : list);
+        if (seq !== loadSeqRef.current) return;
+        applyList(rows);
       })
       .catch(() => {
-        if (!cancelled) setMaterials([]);
+        if (seq !== loadSeqRef.current) return;
+        setMaterials([]);
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (seq === loadSeqRef.current) setLoading(false);
       });
-    return () => {
-      cancelled = true;
+  }, [familyId, applyList]);
+
+  useEffect(() => {
+    loadMaterials();
+  }, [loadMaterials]);
+
+  // Library / Add Material modal saves dispatch this — keep picker in sync while parent modal stays open.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return undefined;
+    const onRefresh = (e) => {
+      const fid = e?.detail?.familyId;
+      if (fid && String(fid) !== String(familyId)) return;
+      loadMaterials();
     };
-  }, [familyId, materialFilter]);
+    window.addEventListener('refreshMaterials', onRefresh);
+    return () => window.removeEventListener('refreshMaterials', onRefresh);
+  }, [familyId, loadMaterials]);
+
+  // Optimistic insert so "+ Add New" → save shows the row before refetch returns.
+  useEffect(() => {
+    if (!recentMaterial?.id) return;
+    setMaterials((prev) => {
+      if (prev.some((m) => String(m.id) === String(recentMaterial.id))) return prev;
+      const next = [recentMaterial, ...prev];
+      const filter = materialFilterRef.current;
+      return typeof filter === 'function' ? next.filter(filter) : next;
+    });
+  }, [recentMaterial]);
 
   useEffect(() => {
     setOpen(false);
   }, [selectedMaterialId, selectedMaterialIds?.length]);
+
+  const materialDisplayLabels = useMemo(
+    () => buildMaterialDisplayLabels(materials),
+    [materials],
+  );
 
   const selected = materials.find((m) => String(m.id) === String(selectedMaterialId));
   const attachedIdSet = new Set((selectedMaterialIds || []).map(String));
   const availableMaterials = allowMultiple
     ? materials.filter((material) => !attachedIdSet.has(String(material.id)))
     : materials;
+  const selectedLabel = selected
+    ? (materialDisplayLabels.get(String(selected.id)) || materialBaseTitle(selected))
+    : null;
   const selectLabel = loading
     ? 'Loading…'
     : allowMultiple
       ? placeholder
-      : (selected?.title || selected?.name || placeholder);
+      : (selectedLabel || placeholder);
 
   const canOpenSelected = Boolean(
     allowOpenSelected
@@ -214,6 +323,8 @@ export default function EventAttachmentsField({
           ) : null}
           {availableMaterials.map((material) => {
             const active = !allowMultiple && String(material.id) === String(selectedMaterialId);
+            const optionLabel =
+              materialDisplayLabels.get(String(material.id)) || materialBaseTitle(material);
             return (
               <TouchableOpacity
                 key={String(material.id)}
@@ -232,7 +343,7 @@ export default function EventAttachmentsField({
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
                 <Text style={{ fontSize: 14, color: active ? ACCENT_TEXT : FG }}>
-                  {material.title || material.name || 'Untitled'}
+                  {optionLabel}
                 </Text>
               </TouchableOpacity>
             );

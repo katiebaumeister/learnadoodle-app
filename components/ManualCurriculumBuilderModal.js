@@ -649,16 +649,17 @@ export default function ManualCurriculumBuilderModal({
         }
         return;
       }
+      setDirty(false);
+      invalidateSubjectCurriculumStructureCache(familyId, subjectId, academicYearId || null);
+      // Close immediately after commit so the spinner isn't held by follow-up refreshes.
+      if (closeOnSuccess && !embedded) {
+        onClose?.();
+      }
       if (!autoSave) {
         toast?.push(s('courseStructure.manualBuilder.saveSuccess'), 'success');
       }
-      setDirty(false);
-      invalidateSubjectCurriculumStructureCache(familyId, subjectId, academicYearId || null);
       onSaved?.();
       refreshSubjectCurriculumUnits(familyId, subjectId, academicYearId || null).catch(() => {});
-      if (closeOnSuccess && !embedded) {
-        handleClose();
-      }
     } catch (e) {
       const message = e?.message || s('courseStructure.manualBuilder.errorSave');
       if (!embedded || !autoSave) {
@@ -673,8 +674,8 @@ export default function ManualCurriculumBuilderModal({
     familyId,
     subjectName,
     onSaved,
+    onClose,
     toast,
-    handleClose,
     replaceExisting,
     loadedExisting,
     createCalendarEvents,

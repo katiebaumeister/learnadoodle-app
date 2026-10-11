@@ -134,6 +134,39 @@ async def ensure_family(
                 detail="Only parents can create a family"
             )
 
+        # Repair: profile.family_id missing but family_members already links this user —
+        # never create a second empty family (that looks like a data wipe).
+        try:
+            fm = (
+                supabase.table("family_members")
+                .select("family_id")
+                .eq("user_id", user["id"])
+                .limit(1)
+                .execute()
+            )
+            existing_fm_family = (
+                fm.data[0].get("family_id")
+                if fm.data and len(fm.data) > 0
+                else None
+            )
+            if existing_fm_family:
+                supabase.table("profiles").update({
+                    "family_id": existing_fm_family,
+                    "updated_at": datetime.utcnow().isoformat(),
+                }).eq("id", user["id"]).execute()
+                log_event(
+                    "onboarding.ensure_family.repaired_profile",
+                    user_id=user["id"],
+                    family_id=existing_fm_family,
+                )
+                return {"family_id": existing_fm_family}
+        except Exception as repair_err:
+            log_event(
+                "onboarding.ensure_family.repair_check_error",
+                user_id=user["id"],
+                error=str(repair_err),
+            )
+
         # Create family row via RPC to avoid supabase-py SyncQueryRequestBuilder (insert().select() not supported).
         try:
             rpc_res = supabase.rpc("create_family_return_id", {}).execute()
@@ -221,6 +254,8 @@ class AddChildIn(BaseModel):
     avatar_url: Optional[str] = None
     interests: List[str] = []
     learning_styles: List[str] = []
+    # When set, update this child instead of inserting (onboarding back/forth).
+    child_id: Optional[str] = None
     # Support profile fields (all optional)
     diagnoses: Optional[List[str]] = None
     learning_modalities: Optional[List[str]] = None
@@ -531,6 +566,22 @@ async def onboarding_status(
         default_planning_mode
         and has_children
     )
+    # Heal stale flag: family already has required setup — never force re-onboarding
+    # that can destroy existing children/subjects via the modal.
+    if not completed and onboarding_is_valid:
+        try:
+            supabase.table("family").update({
+                "onboarding_completed": True,
+                "updated_at": datetime.utcnow().isoformat(),
+            }).eq("id", family_id).execute()
+            completed = True
+            log_event(
+                "onboarding.status.healed_completed_flag",
+                user_id=user["id"],
+                family_id=family_id,
+            )
+        except Exception:
+            completed = True
     return {
         "onboarding_completed": bool(completed),
         "onboarding_is_valid": onboarding_is_valid,
@@ -606,26 +657,58 @@ async def add_child(
             # Database uses 'learning_style' (singular, text) - take first value
             if len(body.learning_styles) > 0:
                 insert_data["learning_style"] = body.learning_styles[0]
-        
-        # Insert child record
-        try:
-            resp = supabase.table("children").insert(insert_data).execute()
-        except Exception as db_err:
-            log_event("onboarding.add_child.db_error", user_id=user["id"], error=str(db_err), insert_data=insert_data)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Database error: {str(db_err)}"
-            )
-        
-        if not resp.data:
-            log_event("onboarding.add_child.no_data", user_id=user["id"], insert_data=insert_data)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create child record - no data returned"
-            )
-        
-        child_data = resp.data[0]
-        child_id = child_data["id"]
+
+        updating_existing = bool(body.child_id)
+        if updating_existing:
+            if not child_belongs_to_family(body.child_id, family_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Forbidden: Child does not belong to this family",
+                )
+            # Do not rewrite family_id on update
+            update_data = {k: v for k, v in insert_data.items() if k != "family_id"}
+            try:
+                resp = (
+                    supabase.table("children")
+                    .update(update_data)
+                    .eq("id", body.child_id)
+                    .eq("family_id", family_id)
+                    .execute()
+                )
+            except Exception as db_err:
+                log_event("onboarding.add_child.db_error", user_id=user["id"], error=str(db_err), insert_data=update_data)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Database error: {str(db_err)}"
+                )
+            if not resp.data:
+                log_event("onboarding.add_child.no_data", user_id=user["id"], insert_data=update_data)
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Child not found",
+                )
+            child_data = resp.data[0]
+            child_id = child_data["id"]
+        else:
+            # Insert child record
+            try:
+                resp = supabase.table("children").insert(insert_data).execute()
+            except Exception as db_err:
+                log_event("onboarding.add_child.db_error", user_id=user["id"], error=str(db_err), insert_data=insert_data)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Database error: {str(db_err)}"
+                )
+
+            if not resp.data:
+                log_event("onboarding.add_child.no_data", user_id=user["id"], insert_data=insert_data)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create child record - no data returned"
+                )
+
+            child_data = resp.data[0]
+            child_id = child_data["id"]
         
         # Create or update support profile if any support fields are provided
         if any([body.diagnoses, body.learning_modalities, body.support_needs, body.executive_function, body.support_notes]):
@@ -656,8 +739,15 @@ async def add_child(
                              child_id=child_id, 
                              error=str(profile_err))
         
-        increment_counter("children_added")
-        log_event("onboarding.add_child.success", user_id=user["id"], child_id=child_id, family_id=family_id)
+        if not updating_existing:
+            increment_counter("children_added")
+        log_event(
+            "onboarding.add_child.success",
+            user_id=user["id"],
+            child_id=child_id,
+            family_id=family_id,
+            updated=updating_existing,
+        )
         
         # Fetch support profile if it exists
         support_profile = None

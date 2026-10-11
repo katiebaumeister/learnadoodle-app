@@ -11,16 +11,6 @@ const CARD_ROLES = {
   tutor: { cardTitle: 'Tutor ID' },
 };
 
-function formatMemberId(familyId, childId, cardRole) {
-  const y = new Date().getFullYear();
-  const familyShort = (familyId || '').replace(/-/g, '').slice(-5).toUpperCase() || '00000';
-  if (cardRole === 'student' && childId) {
-    const childShort = (childId || '').replace(/-/g, '').slice(-2).toUpperCase() || '01';
-    return `LD-${y}-${familyShort}-${childShort}`;
-  }
-  return `LD-${y}-${familyShort}`;
-}
-
 function getYearDates() {
   const y = new Date().getFullYear();
   const start = new Date(y, 0, 1);
@@ -55,7 +45,6 @@ export default function IDCardView({
 
   const displayName = child?.first_name || child?.name || (cardRole === 'parent' ? 'Parent' : cardRole === 'tutor' ? 'Tutor' : 'Student');
   const { startDate, expiration } = getYearDates();
-  const memberId = formatMemberId(familyId, cardRole === 'student' ? child?.id : null, cardRole);
   const gradeRaw = cardRole === 'student' ? (child?.grade ?? child?.grade_level ?? '') : '';
   const grade = formatGradeLevel(gradeRaw);
 
@@ -139,10 +128,6 @@ export default function IDCardView({
           <View style={styles.fieldRow}>
             <Text style={[styles.label, { color: tokens.text }]}>Start date:</Text>
             <Text style={[styles.value, { color: tokens.text }]}>{startDate}</Text>
-          </View>
-          <View style={styles.fieldRow}>
-            <Text style={[styles.label, { color: tokens.text }]}>Member ID:</Text>
-            <Text style={[styles.value, { color: tokens.text }]}>{memberId}</Text>
           </View>
           <View style={styles.fieldRow}>
             <Text style={[styles.label, { color: tokens.text }]}>Expiration:</Text>

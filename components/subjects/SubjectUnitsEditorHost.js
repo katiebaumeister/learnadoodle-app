@@ -9,6 +9,7 @@ import {
   draftFromCurriculumStructure,
 } from '../../lib/subjectUnitsEditorDraft';
 import { normalizeSubjectUnitsEditorMethod } from '../../lib/subjectUnitsEditor';
+import { CLOSE_SUBJECT_UNITS_EDITOR } from '../../lib/subjectClassworkActions';
 
 const IMPORT_METHODS = new Set(['upload', 'paste_plain', 'generate']);
 
@@ -105,9 +106,16 @@ export default function SubjectUnitsEditorHost({ familyId }) {
       setInitialDraft(units.length ? draftFromCurriculumStructure({ units }) : null);
       setVisible(true);
     };
+    const closeHandler = () => {
+      handleClose();
+    };
     window.addEventListener('openSubjectUnitsEditor', handler);
-    return () => window.removeEventListener('openSubjectUnitsEditor', handler);
-  }, [familyId]);
+    window.addEventListener(CLOSE_SUBJECT_UNITS_EDITOR, closeHandler);
+    return () => {
+      window.removeEventListener('openSubjectUnitsEditor', handler);
+      window.removeEventListener(CLOSE_SUBJECT_UNITS_EDITOR, closeHandler);
+    };
+  }, [familyId, handleClose]);
 
   if (!familyId || !subject || !visible) return null;
 

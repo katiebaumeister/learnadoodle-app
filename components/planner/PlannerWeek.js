@@ -490,7 +490,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         .from('children')
         .select('id, first_name')
         .eq('family_id', familyId)
-        .eq('archived', false);
+        .or('archived.eq.false,archived.is.null');
       
       if (childrenData) {
         setAllChildren(childrenData.map(c => ({ id: c.id, name: c.first_name })));

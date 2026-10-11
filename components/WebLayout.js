@@ -809,16 +809,19 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   /** null = not loaded yet; rows seed EventModal help/submission strips without a blocking fetch */
   const [preloadedFamilyAssignments, setPreloadedFamilyAssignments] = useState(null);
   // Derived: must come after session/state used below (avoid TDZ).
-  // Wait for the status check, and only block on explicit false — never on
-  // missing/undefined family fields (that flash caused the welcome modal on refresh).
+  // Only block from /onboarding/status (initialOnboardingBlocked). Never from /members
+  // alone — its unexpected-error fallback returns completed=false + empty children and
+  // previously forced re-onboarding. familyLooksSetup is a positive unblock signal.
+  const familyLooksSetup = !!(
+    family?.onboarding_is_valid
+    || (family?.default_planning_mode && Array.isArray(family?.children) && family.children.length > 0)
+  );
   const onboardingBlocked = !!(
     session &&
     onboardingCheckDone &&
     !onboardingJustCompleted &&
-    (
-      initialOnboardingBlocked
-      || family?.onboarding_completed === false
-    )
+    !familyLooksSetup &&
+    initialOnboardingBlocked
   );
   // Only parent home uses ParentHomeScreen's initial-data ready callback.
   // Using resolvedShellUserRole avoids false "parent-like" matches during
@@ -2173,7 +2176,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             try {
               const { data: fullSubjectsData } = await supabase
                 .from('subject')
-                .select('id, name, child_id, grade, notes, school_year, school_term, created_at, updated_at, default_constraint_mode, default_target_days, default_target_hours')
+                .select('id, name, child_id, grade, notes, school_year, school_term, grading_settings, created_at, updated_at, default_constraint_mode, default_target_days, default_target_hours')
                 .eq('family_id', resolvedFamilyId)
                 .order('name');
               setFullSubjects(fullSubjectsData || []);
@@ -2329,8 +2332,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         const res = await getOnboardingStatus();
         const data = res?.data ?? res;
         if (cancelled) return;
-        // Only block when the API explicitly says incomplete (not on null/404).
-        setInitialOnboardingBlocked(data?.onboarding_completed === false);
+        // Only block when incomplete AND family does not already have setup data.
+        // Accounts with children + planning mode must never be forced through onboarding again.
+        const alreadySetup = !!(
+          data?.onboarding_is_valid
+          || (data?.has_children && data?.default_planning_mode)
+        );
+        setInitialOnboardingBlocked(data?.onboarding_completed === false && !alreadySetup);
         setOnboardingCheckDone(true);
       } catch (_) {
         if (!cancelled) {
@@ -2446,7 +2454,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         setSubjects(subjectsData || []);
         const { data: fullSubjectsData } = await supabase
           .from('subject')
-          .select('id, name, child_id, grade, notes, school_year, school_term, created_at, updated_at, default_constraint_mode, default_target_days, default_target_hours')
+          .select('id, name, child_id, grade, notes, school_year, school_term, grading_settings, created_at, updated_at, default_constraint_mode, default_target_days, default_target_hours')
           .eq('family_id', familyId)
           .order('name');
         setFullSubjects(fullSubjectsData || []);

@@ -139,22 +139,42 @@ export const createModalStyles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'nowrap',
     alignItems: 'stretch',
-    alignSelf: 'flex-start',
+    alignSelf: 'stretch',
     width: 'auto',
     maxWidth: '100%',
     gap: 24,
-    flexGrow: 0,
-    flexShrink: 0,
+    flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   schoolYearSettingsContentPanel: {
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
+    width: '100%',
+    flex: 1,
+    minHeight: 0,
+    alignSelf: 'stretch',
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  schoolYearSettingsContentPanelScroll: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      overflowY: 'auto',
+      overflowX: 'hidden',
+    }),
+  },
+  schoolYearSettingsContentPanelScrollInner: {
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 16,
-    width: '100%',
+    gap: 0,
   },
   schoolYearSettingsSidePanel: {
     flex: 1,
@@ -295,17 +315,15 @@ export const createModalStyles = StyleSheet.create({
     ...(Platform.OS === 'web'
       ? {
           width: 'auto',
-          height: 'auto',
-          // Clamp the min height so it can't push the modal taller than the viewport.
-          minHeight: 'min(680px, 90vh)',
+          // Fixed design height (like assignment modals); left column scrolls inside.
+          height: `min(${SCHOOL_YEAR_SETTINGS_MODAL_HEIGHT}px, 90vh)`,
           maxHeight: '90vh',
           borderRadius: 28,
           boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
         }
       : {
-          height: 'auto',
+          height: '88%',
           maxHeight: '88%',
-          minHeight: 560,
         }),
     overflow: 'hidden',
   },

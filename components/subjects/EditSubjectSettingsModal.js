@@ -8,7 +8,6 @@ import {
   ScrollView,
   StyleSheet,
   Platform,
-  ActivityIndicator,
 } from 'react-native';
 import { useToast } from '../Toast';
 import { supabase } from '../../lib/supabase';
@@ -53,6 +52,7 @@ import {
 import { findAcademicYearPlanForSubject } from '../../lib/subjectPlanSlotLines';
 import { getAcademicYear } from '../../lib/services/academicYearClient';
 import { getSubjectProgressCache, mergeSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
+import { filterActiveChildren } from '../../lib/childrenQuery';
 import { getSubjectPlanBlocksForSubject } from './subjectScheduleOverview';
 
 const DEFAULT_SCHEDULE_TIME = '09:00';
@@ -130,16 +130,15 @@ export default function EditSubjectSettingsModal({
   const [lessonPlanMaterialId, setLessonPlanMaterialId] = useState(null);
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
   const [addMaterialDefaultRole, setAddMaterialDefaultRole] = useState(null);
+  const [recentAttachmentMaterial, setRecentAttachmentMaterial] = useState(null);
 
   const detailsHydratedForRef = useRef(null);
+  const gradingHydratedRef = useRef(false);
   const scheduleHydratedKeyRef = useRef(null);
   const scheduleTouchedRef = useRef(false);
   const datesCustomizedRef = useRef(false);
-  const [detailsReady, setDetailsReady] = useState(false);
-  const [scheduleReady, setScheduleReady] = useState(false);
   const [resolvedPlanData, setResolvedPlanData] = useState(null);
   const [resolvedAcademicYearId, setResolvedAcademicYearId] = useState(null);
-  const [loadingPlanData, setLoadingPlanData] = useState(false);
 
   const effectivePlanData = subjectPlanData ?? resolvedPlanData;
   const effectiveAcademicYearId = academicYearId ?? resolvedAcademicYearId;
@@ -193,19 +192,33 @@ export default function EditSubjectSettingsModal({
 
   useEffect(() => {
     detailsHydratedForRef.current = null;
+    gradingHydratedRef.current = false;
     scheduleHydratedKeyRef.current = null;
     scheduleTouchedRef.current = false;
     datesCustomizedRef.current = false;
-    setDetailsReady(false);
-    setScheduleReady(false);
+    setRecentAttachmentMaterial(null);
     if (!visible) {
       setResolvedPlanData(null);
       setResolvedAcademicYearId(null);
-      setLoadingPlanData(false);
       return;
     }
     setValidationBanner('');
     setShowDeleteConfirm(false);
+
+    // Schedule is stable plan data — seed instantly from props/cache so the pane
+    // never waits on attachments / planner-settings / year scans.
+    const cached = familyId && subject?.id
+      ? getSubjectProgressCache(familyId, subject.id)
+      : null;
+    const seedPlan = subjectPlanData || cached?.planData || null;
+    const seedYearId = academicYearId || cached?.academicYearId || null;
+    if (seedPlan) {
+      setResolvedPlanData(seedPlan);
+      if (seedYearId) setResolvedAcademicYearId(seedYearId);
+    } else {
+      setResolvedPlanData(null);
+      setResolvedAcademicYearId(null);
+    }
   }, [visible, subject?.id]);
 
   useEffect(() => {
@@ -213,20 +226,19 @@ export default function EditSubjectSettingsModal({
     if (subjectPlanData) {
       setResolvedPlanData(subjectPlanData);
       if (academicYearId) setResolvedAcademicYearId(academicYearId);
-      setLoadingPlanData(false);
       return undefined;
     }
 
     let cancelled = false;
-    setLoadingPlanData(true);
+    const cached = getSubjectProgressCache(familyId, subject.id);
+    if (cached?.planData) {
+      setResolvedPlanData(cached.planData);
+      setResolvedAcademicYearId(cached.academicYearId ?? null);
+    }
 
+    // Soft-revalidate in the background; do not blank the schedule pane while scanning years.
     const loadPlanData = async () => {
       try {
-        const cached = getSubjectProgressCache(familyId, subject.id);
-        if (!cancelled && cached?.planData) {
-          setResolvedPlanData(cached.planData);
-          setResolvedAcademicYearId(cached.academicYearId ?? null);
-        }
         const fetched = await findAcademicYearPlanForSubject(familyId, subject.id);
         if (cancelled) return;
         setResolvedPlanData(fetched?.planData || null);
@@ -238,12 +250,10 @@ export default function EditSubjectSettingsModal({
           });
         }
       } catch (_) {
-        if (!cancelled) {
+        if (!cancelled && !cached?.planData) {
           setResolvedPlanData(null);
           setResolvedAcademicYearId(null);
         }
-      } finally {
-        if (!cancelled) setLoadingPlanData(false);
       }
     };
 
@@ -367,36 +377,47 @@ export default function EditSubjectSettingsModal({
       const termId = subject.school_term || getDefaultSchoolTerm();
       setSchoolYear(yearLabel);
       setSchoolTerm(termId);
-      setGradingDraft(parseSubjectGradingSettings(initialGradingSettings ?? subject.grading_settings));
       const childIds = subject.child_id ? parseChildIds(subject.child_id) : [];
       setSelectedChildIds(childIds);
 
-      if (familyId) {
-        try {
-          const { settings } = await getPlanDefaultsFromSettings(familyId, yearLabel);
-          if (!cancelled) setPlannerSettings(settings || null);
-        } catch (_) {
-          if (!cancelled) setPlannerSettings(null);
-        }
-      }
+      // Left-column extras only — do not block the schedule pane on these.
+      const settingsPromise = familyId
+        ? getPlanDefaultsFromSettings(familyId, yearLabel)
+            .then(({ settings }) => settings || null)
+            .catch(() => null)
+        : Promise.resolve(null);
+      const attachmentsPromise = loadSubjectAttachmentIds(subject.id, familyId)
+        .catch(() => ({ syllabusMaterialId: null, lessonPlanMaterialId: null }));
+      // List rows sometimes omit grading_settings — fetch before save can wipe them.
+      const hasGradingProp =
+        initialGradingSettings != null
+        || (subject.grading_settings != null && typeof subject.grading_settings === 'object');
+      const gradingPromise = hasGradingProp
+        ? Promise.resolve(initialGradingSettings ?? subject.grading_settings)
+        : (familyId && subject.id
+          ? supabase
+              .from('subject')
+              .select('grading_settings')
+              .eq('id', subject.id)
+              .eq('family_id', familyId)
+              .maybeSingle()
+              .then(({ data }) => data?.grading_settings ?? null)
+              .catch(() => null)
+          : Promise.resolve(null));
 
-      try {
-        const attachmentIds = await loadSubjectAttachmentIds(subject.id, familyId);
-        if (!cancelled) {
-          setSyllabusMaterialId(attachmentIds.syllabusMaterialId);
-          setLessonPlanMaterialId(attachmentIds.lessonPlanMaterialId);
-        }
-      } catch (_) {
-        if (!cancelled) {
-          setSyllabusMaterialId(null);
-          setLessonPlanMaterialId(null);
-        }
-      }
+      const [settings, attachmentIds, gradingRaw] = await Promise.all([
+        settingsPromise,
+        attachmentsPromise,
+        gradingPromise,
+      ]);
+      if (cancelled) return;
 
-      if (!cancelled) {
-        detailsHydratedForRef.current = subject.id;
-        setDetailsReady(true);
-      }
+      setGradingDraft(parseSubjectGradingSettings(gradingRaw));
+      gradingHydratedRef.current = true;
+      setPlannerSettings(settings);
+      setSyllabusMaterialId(attachmentIds?.syllabusMaterialId ?? null);
+      setLessonPlanMaterialId(attachmentIds?.lessonPlanMaterialId ?? null);
+      detailsHydratedForRef.current = subject.id;
     };
 
     hydrateDetails();
@@ -404,48 +425,35 @@ export default function EditSubjectSettingsModal({
   }, [visible, subject, initialGradingSettings, familyId]);
 
   useEffect(() => {
-    if (!visible || !subject || !detailsReady) return;
-    // Hydrate as soon as we have plan data (e.g. from the in-memory cache) instead
-    // of waiting for the slow academic-year revalidation fetch — that wait is what
-    // made the schedule fields appear blank for a moment, then "pop" into place.
-    // Only block when there is genuinely nothing to hydrate from yet.
-    if (loadingPlanData && !effectivePlanData) return;
-    if (scheduleTouchedRef.current) {
-      if (!scheduleReady) setScheduleReady(true);
-      return;
-    }
-    if (scheduleHydratedKeyRef.current === schedulePlanKey) {
-      if (!scheduleReady) setScheduleReady(true);
-      return;
-    }
-    let cancelled = false;
+    if (!visible || !subject) return;
+    // Schedule comes from plan blocks (props/cache). Do not wait on details /
+    // attachment fetches. Paint immediately; rehydrate when plan data arrives.
+    if (scheduleTouchedRef.current) return;
 
-    const hydrateSchedule = async () => {
-      const initialSchedule = buildInitialScheduleForm({
-        subject,
-        planData: effectivePlanData,
-        academicYearId: effectiveAcademicYearId,
-        plannerSettings,
-      });
-      if (cancelled) return;
+    const yearLabel = subject.school_year || schoolYear || getDefaultSchoolYear();
+    const termId = subject.school_term || schoolTerm || getDefaultSchoolTerm();
+    // Include planner-settings readiness so term dates refresh once settings load,
+    // without blocking the first paint of the schedule fields.
+    const hydrateKey = `${schedulePlanKey}|y:${yearLabel}|t:${termId}|ps:${plannerSettings ? '1' : '0'}`;
+    if (scheduleHydratedKeyRef.current === hydrateKey) return;
 
-      applyScheduleFormState(
-        initialSchedule,
-        schoolYear,
-        schoolTerm,
-        plannerSettings,
-      );
-      scheduleHydratedKeyRef.current = schedulePlanKey;
-      setScheduleReady(true);
-    };
+    const initialSchedule = buildInitialScheduleForm({
+      subject,
+      planData: effectivePlanData,
+      academicYearId: effectiveAcademicYearId,
+      plannerSettings,
+    });
 
-    hydrateSchedule();
-    return () => { cancelled = true; };
+    applyScheduleFormState(
+      initialSchedule,
+      yearLabel,
+      termId,
+      plannerSettings,
+    );
+    scheduleHydratedKeyRef.current = hydrateKey;
   }, [
     visible,
     subject,
-    detailsReady,
-    loadingPlanData,
     schedulePlanKey,
     effectivePlanData,
     effectiveAcademicYearId,
@@ -453,8 +461,6 @@ export default function EditSubjectSettingsModal({
     schoolTerm,
     plannerSettings,
     applyScheduleFormState,
-    familyId,
-    scheduleReady,
   ]);
 
   useEffect(() => {
@@ -467,11 +473,9 @@ export default function EditSubjectSettingsModal({
     (async () => {
       setLoadingChildren(true);
       try {
-        const { data, error } = await supabase
-          .from('children')
-          .select('*')
-          .eq('family_id', familyId)
-          .eq('archived', false);
+        const { data, error } = await filterActiveChildren(
+          supabase.from('children').select('*').eq('family_id', familyId),
+        );
         if (cancelled) return;
         if (error && (error.code === '42703' || error.message?.includes('archived'))) {
           const retry = await supabase.from('children').select('*').eq('family_id', familyId);
@@ -618,8 +622,13 @@ export default function EditSubjectSettingsModal({
         .select();
 
       if (error) throw error;
+      if (!data?.[0]?.id) {
+        throw new Error('Could not update this subject. Refresh the page and try again.');
+      }
 
-      await saveSubjectGradingSettings(subject.id, familyId, gradingDraft);
+      if (gradingHydratedRef.current) {
+        await saveSubjectGradingSettings(subject.id, familyId, gradingDraft);
+      }
 
       await saveSubjectAttachmentLinks({
         familyId,
@@ -883,6 +892,7 @@ export default function EditSubjectSettingsModal({
                         familyId={familyId}
                         syllabusMaterialId={syllabusMaterialId}
                         lessonPlanMaterialId={lessonPlanMaterialId}
+                        recentMaterial={recentAttachmentMaterial}
                         onSyllabusChange={setSyllabusMaterialId}
                         onLessonPlanChange={setLessonPlanMaterialId}
                         onAddSyllabus={() => {
@@ -910,34 +920,28 @@ export default function EditSubjectSettingsModal({
                     <Text style={localStyles.scheduleOptionalNote}>
                       Optional: Set a structured repeating class schedule.
                     </Text>
-                    {scheduleReady ? (
-                      <SubjectScheduleFields
-                        embeddedInForm
-                        datesRequired={false}
-                        schoolYear={schoolYear}
-                        schoolYearOptions={schoolYearOptions}
-                        onSchoolYearChange={handleSchoolYearChangeWithTouch}
-                        schoolTerm={schoolTerm}
-                        termOptions={TERM_OPTIONS}
-                        onSchoolTermChange={handleSchoolTermChangeWithTouch}
-                        weekdays={weekdays}
-                        onWeekdaysChange={handleWeekdaysChange}
-                        startTime={startTime}
-                        onStartTimeChange={handleStartTimeChange}
-                        durationMinutes={durationMinutes}
-                        onDurationMinutesChange={handleDurationMinutesChange}
-                        startDate={startDate}
-                        onStartDateChange={handleStartDateChange}
-                        endDate={endDate}
-                        onEndDateChange={handleEndDateChange}
-                        onOpenStartDatePicker={() => setDatePickerTarget('start')}
-                        onOpenEndDatePicker={() => setDatePickerTarget('end')}
-                      />
-                    ) : (
-                      <View style={localStyles.scheduleLoading}>
-                        <ActivityIndicator size="small" color="#8B5CF6" />
-                      </View>
-                    )}
+                    <SubjectScheduleFields
+                      embeddedInForm
+                      datesRequired={false}
+                      schoolYear={schoolYear}
+                      schoolYearOptions={schoolYearOptions}
+                      onSchoolYearChange={handleSchoolYearChangeWithTouch}
+                      schoolTerm={schoolTerm}
+                      termOptions={TERM_OPTIONS}
+                      onSchoolTermChange={handleSchoolTermChangeWithTouch}
+                      weekdays={weekdays}
+                      onWeekdaysChange={handleWeekdaysChange}
+                      startTime={startTime}
+                      onStartTimeChange={handleStartTimeChange}
+                      durationMinutes={durationMinutes}
+                      onDurationMinutesChange={handleDurationMinutesChange}
+                      startDate={startDate}
+                      onStartDateChange={handleStartDateChange}
+                      endDate={endDate}
+                      onEndDateChange={handleEndDateChange}
+                      onOpenStartDatePicker={() => setDatePickerTarget('start')}
+                      onOpenEndDatePicker={() => setDatePickerTarget('end')}
+                    />
                   </View>
                 </View>
               </View>
@@ -984,6 +988,7 @@ export default function EditSubjectSettingsModal({
           }}
           onSaved={(material) => {
             if (material?.id) {
+              setRecentAttachmentMaterial(material);
               if (addMaterialDefaultRole === 'lesson_plan') {
                 setLessonPlanMaterialId(material.id);
               } else {
@@ -1019,11 +1024,6 @@ const localStyles = StyleSheet.create({
     fontSize: 14,
     color: '#6b7280',
     fontStyle: 'italic',
-  },
-  scheduleLoading: {
-    paddingVertical: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   scheduleOptionalNote: {
     fontSize: 12,

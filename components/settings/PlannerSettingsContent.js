@@ -21,8 +21,10 @@ import {
   saveFamilyPlannerSettings,
   getPlanDefaultsFromSettings,
   syncFamilyHolidayBreakExclusions,
+  saveExcludedPublicHolidayDates,
 } from '../../lib/services/plannerSettingsClient';
 import { getPublicHolidaysForRange } from '../../lib/services/academicYearClient';
+import { getUsFederalHolidaysForRange } from '../../lib/usFederalHolidays';
 import { PLANNING_PREFERENCES_UI, SCHOOL_YEAR_SETTINGS_UI } from '../planner/planningPreferencesUiCopy';
 import DayOffCreateModal from '../create/DayOffCreateModal';
 import {
@@ -76,6 +78,72 @@ const formatDayOffRangeLabel = (row) => {
   if (!row?.end || row.end === row.start) return startLabel;
   return `${startLabel} – ${formatDayOffDateLabel(row.end)}`;
 };
+
+const formatDayOffTitleLabel = (row) => {
+  const name = String(row?.name || 'Day off').trim() || 'Day off';
+  const isDefault = row?.kind === 'public' || String(row?.id || '').startsWith('public-');
+  if (!isDefault) return name;
+  return / \(Default\)$/i.test(name) ? name : `${name} (Default)`;
+};
+
+const PUBLIC_HOLIDAYS_CACHE_PREFIX = 'ld_us_public_holidays_v1::';
+const PUBLIC_HOLIDAYS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const publicHolidaysMemoryCache = new Map();
+
+const buildPublicHolidaysCacheKey = (countryCode, startYmd, endYmd) => (
+  `${String(countryCode || 'US').toUpperCase()}|${String(startYmd || '').slice(0, 10)}|${String(endYmd || '').slice(0, 10)}`
+);
+
+const normalizePublicHolidayList = (holidays) => {
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const byDate = new Map();
+  (Array.isArray(holidays) ? holidays : []).forEach((h) => {
+    const date = String(h?.date || '').slice(0, 10);
+    if (!DATE_RE.test(date) || byDate.has(date)) return;
+    byDate.set(date, {
+      date,
+      name: String(h?.localName || h?.name || 'US holiday').trim() || 'US holiday',
+    });
+  });
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+};
+
+const readPublicHolidaysCache = (countryCode, startYmd, endYmd) => {
+  const key = buildPublicHolidaysCacheKey(countryCode, startYmd, endYmd);
+  if (!key.includes('|') || key.endsWith('||') || key.includes('|undefined')) return null;
+  const fromMemory = publicHolidaysMemoryCache.get(key);
+  if (Array.isArray(fromMemory) && fromMemory.length > 0) return fromMemory;
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage?.getItem(`${PUBLIC_HOLIDAYS_CACHE_PREFIX}${key}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const age = Date.now() - (Number(parsed?.timestamp) || 0);
+    if (age > PUBLIC_HOLIDAYS_CACHE_TTL_MS) return null;
+    const list = normalizePublicHolidayList(parsed?.holidays);
+    if (list.length > 0) publicHolidaysMemoryCache.set(key, list);
+    return list.length > 0 ? list : null;
+  } catch (_) {
+    return null;
+  }
+};
+
+const writePublicHolidaysCache = (countryCode, startYmd, endYmd, holidays) => {
+  const key = buildPublicHolidaysCacheKey(countryCode, startYmd, endYmd);
+  const list = normalizePublicHolidayList(holidays);
+  if (!list.length) return list;
+  publicHolidaysMemoryCache.set(key, list);
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    try {
+      window.localStorage?.setItem(
+        `${PUBLIC_HOLIDAYS_CACHE_PREFIX}${key}`,
+        JSON.stringify({ timestamp: Date.now(), holidays: list })
+      );
+    } catch (_) { /* ignore quota */ }
+  }
+  return list;
+};
+
 const plannerSettingsSnapshotCache = new Map();
 const PLANNER_SETTINGS_SESSION_CACHE_PREFIX = 'ld_planner_settings_snapshot_v1::';
 
@@ -531,9 +599,22 @@ export default function PlannerSettingsContent({
   );
   const countryCode = 'US';
   const regionCode = null;
-  // Followed public-holiday dates for the selected year range, so the
-  // "learning days available" readout can subtract them exactly.
-  const [publicHolidayDates, setPublicHolidayDates] = useState([]);
+  // Followed public holidays for the selected year range (dates + names for Days off list
+  // and the "learning days available" readout). Prefer built-in US calendar (instant).
+  const [publicHolidays, setPublicHolidays] = useState(() => {
+    const start = String(initialSnapshot?.defaultYearStartDate || '').slice(0, 10);
+    const end = String(initialSnapshot?.defaultYearEndDate || '').slice(0, 10);
+    if (Array.isArray(initialSnapshot?.publicHolidays) && initialSnapshot.publicHolidays.length > 0) {
+      return normalizePublicHolidayList(initialSnapshot.publicHolidays);
+    }
+    const builtIn = getUsFederalHolidaysForRange(start, end);
+    if (builtIn.length > 0) return builtIn;
+    return readPublicHolidaysCache('US', start, end) || [];
+  });
+  const publicHolidayDates = useMemo(
+    () => (publicHolidays || []).map((h) => String(h?.date || '').slice(0, 10)).filter(Boolean),
+    [publicHolidays]
+  );
 
   // Custom days & ranges (stored as holiday / break exclusions in API; managed via calendar events)
   const [customHolidays, setCustomHolidays] = useState(
@@ -620,6 +701,24 @@ export default function PlannerSettingsContent({
     setPreferredLearningDayNums(normalizeAllowedWeekdays(cached.preferredLearningDayNums));
     setFollowGlobalHolidays(cached.followGlobalHolidays !== false);
     setExcludedPublicHolidayDates(Array.isArray(cached.excludedPublicHolidayDates) ? cached.excludedPublicHolidayDates : []);
+    if (Array.isArray(cached.publicHolidays) && cached.publicHolidays.length > 0) {
+      setPublicHolidays(normalizePublicHolidayList(cached.publicHolidays));
+    } else {
+      const builtIn = getUsFederalHolidaysForRange(
+        cached.defaultYearStartDate,
+        cached.defaultYearEndDate
+      );
+      if (builtIn.length > 0) {
+        setPublicHolidays(builtIn);
+      } else {
+        const seededHolidays = readPublicHolidaysCache(
+          'US',
+          cached.defaultYearStartDate,
+          cached.defaultYearEndDate
+        );
+        if (seededHolidays?.length) setPublicHolidays(seededHolidays);
+      }
+    }
     setCustomHolidays(Array.isArray(cached.customHolidays) ? cached.customHolidays : []);
     setCustomBreaks(Array.isArray(cached.customBreaks) ? cached.customBreaks : []);
     setDefaultYearStartDate(cached.defaultYearStartDate || '');
@@ -664,6 +763,8 @@ export default function PlannerSettingsContent({
       learningEndTime,
       preferredLearningDayNums,
       followGlobalHolidays,
+      excludedPublicHolidayDates,
+      publicHolidays,
       countryCode,
       regionCode,
       customHolidays,
@@ -692,6 +793,7 @@ export default function PlannerSettingsContent({
       preferredLearningDayNums,
       followGlobalHolidays,
       excludedPublicHolidayDates: Array.isArray(excludedPublicHolidayDates) ? [...excludedPublicHolidayDates] : [],
+      publicHolidays: Array.isArray(publicHolidays) ? [...publicHolidays] : [],
       customHolidays: Array.isArray(customHolidays) ? [...customHolidays] : [],
       customBreaks: Array.isArray(customBreaks) ? [...customBreaks] : [],
       defaultYearStartDate,
@@ -720,6 +822,7 @@ export default function PlannerSettingsContent({
     preferredLearningDayNums,
     followGlobalHolidays,
     excludedPublicHolidayDates,
+    publicHolidays,
     customHolidays,
     customBreaks,
     defaultYearStartDate,
@@ -820,6 +923,48 @@ export default function PlannerSettingsContent({
     [customHolidays, customBreaks]
   );
 
+  /** Custom days off + optional US public holidays for the Days off list. */
+  const displayedDayOffRows = useMemo(() => {
+    const custom = Array.isArray(dayOffRows) ? dayOffRows : [];
+    if (!followGlobalHolidays) return custom;
+
+    const excluded = new Set(
+      (excludedPublicHolidayDates || []).map((d) => String(d || '').slice(0, 10))
+    );
+    const coveredByCustom = new Set();
+    custom.forEach((row) => {
+      const start = String(row?.start || '').slice(0, 10);
+      const end = String(row?.end || row?.start || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return;
+      const cur = new Date(`${start}T12:00:00`);
+      const last = new Date(`${end}T12:00:00`);
+      while (cur <= last) {
+        const y = cur.getFullYear();
+        const m = String(cur.getMonth() + 1).padStart(2, '0');
+        const d = String(cur.getDate()).padStart(2, '0');
+        coveredByCustom.add(`${y}-${m}-${d}`);
+        cur.setDate(cur.getDate() + 1);
+      }
+    });
+
+    const publicRows = (publicHolidays || [])
+      .map((h) => {
+        const date = String(h?.date || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+        if (excluded.has(date) || coveredByCustom.has(date)) return null;
+        return {
+          id: `public-${date}`,
+          kind: 'public',
+          name: String(h?.name || 'US holiday').trim() || 'US holiday',
+          start: date,
+          end: date,
+        };
+      })
+      .filter(Boolean);
+
+    return [...custom, ...publicRows].sort((a, b) => String(a.start).localeCompare(String(b.start)));
+  }, [dayOffRows, followGlobalHolidays, publicHolidays, excludedPublicHolidayDates]);
+
   // How many learning days the school year actually has, so the goal can be set
   // against a real number. Counts selected weekdays in the year range, then
   // discounts the days off (custom holidays + break ranges).
@@ -879,35 +1024,38 @@ export default function PlannerSettingsContent({
     excludedPublicHolidayDates,
   ]);
 
-  // Pull the followed public-holiday dates for the selected year range so the
-  // available-days readout is exact (not just "about"). Cheap, cached server-side,
-  // and de-duped per country|range so it won't spam the API while editing.
+  // Paint US holidays instantly from the built-in calendar; soft-refresh from API in background.
   const publicHolidayFetchKeyRef = useRef(null);
   useEffect(() => {
     const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
     const startYmd = String(defaultYearStartDate || '').slice(0, 10);
     const endYmd = String(defaultYearEndDate || '').slice(0, 10);
-    if (!followGlobalHolidays || !DATE_RE.test(startYmd) || !DATE_RE.test(endYmd) || startYmd > endYmd) {
-      publicHolidayFetchKeyRef.current = null;
-      setPublicHolidayDates([]);
+    if (!DATE_RE.test(startYmd) || !DATE_RE.test(endYmd) || startYmd > endYmd) {
       return;
     }
-    const key = `${countryCode}|${startYmd}|${endYmd}`;
+    const key = buildPublicHolidaysCacheKey(countryCode, startYmd, endYmd);
+    const builtIn = countryCode === 'US' ? getUsFederalHolidaysForRange(startYmd, endYmd) : [];
+    const cached = readPublicHolidaysCache(countryCode, startYmd, endYmd);
+    const immediate = builtIn.length > 0 ? builtIn : (cached || []);
+    if (immediate.length > 0) {
+      setPublicHolidays(immediate);
+      if (builtIn.length > 0) writePublicHolidaysCache(countryCode, startYmd, endYmd, builtIn);
+    }
     if (publicHolidayFetchKeyRef.current === key) return;
     publicHolidayFetchKeyRef.current = key;
+    // Built-in US list is authoritative for the UI; skip slow network path when we already have it.
+    if (builtIn.length > 0) return undefined;
     let cancelled = false;
     (async () => {
       const { data } = await getPublicHolidaysForRange(countryCode, startYmd, endYmd);
       if (cancelled) return;
-      const dates = (data?.holidays || [])
-        .map((h) => String(h?.date || '').slice(0, 10))
-        .filter((d) => DATE_RE.test(d));
-      setPublicHolidayDates(dates);
+      const list = writePublicHolidaysCache(countryCode, startYmd, endYmd, data?.holidays || []);
+      if (list.length > 0) setPublicHolidays(list);
     })();
     return () => {
       cancelled = true;
     };
-  }, [followGlobalHolidays, defaultYearStartDate, defaultYearEndDate, countryCode]);
+  }, [defaultYearStartDate, defaultYearEndDate, countryCode]);
 
   useEffect(() => {
     if (!familyId || !selectedSchoolYearLabel || readOnly || isSchoolYearLocked || embeddedInModal) return;
@@ -992,6 +1140,22 @@ export default function PlannerSettingsContent({
         ? (coercedRangeDates.default_year_end_date || rangeDefaults.yearEnd)
         : rangeDefaults.yearEnd
     );
+    {
+      const seedStart = matchesInitialDataYear
+        ? (coercedRangeDates.default_year_start_date || rangeDefaults.yearStart)
+        : rangeDefaults.yearStart;
+      const seedEnd = matchesInitialDataYear
+        ? (coercedRangeDates.default_year_end_date || rangeDefaults.yearEnd)
+        : rangeDefaults.yearEnd;
+      const builtIn = getUsFederalHolidaysForRange(seedStart, seedEnd);
+      if (builtIn.length > 0) {
+        setPublicHolidays(builtIn);
+        writePublicHolidaysCache('US', seedStart, seedEnd, builtIn);
+      } else {
+        const seededHolidays = readPublicHolidaysCache('US', seedStart, seedEnd);
+        if (seededHolidays?.length) setPublicHolidays(seededHolidays);
+      }
+    }
     setDefaultFallStartDate(
       matchesInitialDataYear
         ? (coercedRangeDates.default_fall_term_start_date || rangeDefaults.fallStart)
@@ -1036,11 +1200,18 @@ export default function PlannerSettingsContent({
     }));
     setCustomHolidays(holidays);
     setCustomBreaks(breaks);
-    setExcludedPublicHolidayDates(
-      matchesInitialDataYear && Array.isArray(initialData.excluded_holiday_dates)
-        ? initialData.excluded_holiday_dates
-        : []
-    );
+    setExcludedPublicHolidayDates(() => {
+      const fromServer = matchesInitialDataYear && Array.isArray(initialData.excluded_holiday_dates)
+        ? initialData.excluded_holiday_dates.map((d) => String(d || '').slice(0, 10)).filter(Boolean)
+        : [];
+      // Keep any in-session exclusions that haven't round-tripped yet.
+      const localPending = (
+        Array.isArray(stateRef.current?.excludedPublicHolidayDates)
+          ? stateRef.current.excludedPublicHolidayDates
+          : []
+      ).map((d) => String(d || '').slice(0, 10)).filter(Boolean);
+      return Array.from(new Set([...fromServer, ...localPending]));
+    });
     const subjectsList = initialData.subjects || [];
     setSubjects(subjectsList);
     const { subjectTargetsMap, firstActiveTarget } = deriveSubjectTargetState(subjectsList);
@@ -1390,6 +1561,26 @@ export default function PlannerSettingsContent({
           selectedSchoolYearLabel
         );
         if (syncResult?.error) throw syncResult.error;
+        // Persist per-date opt-outs from the default US holiday list.
+        const excludedDates = Array.isArray(s.excludedPublicHolidayDates)
+          ? s.excludedPublicHolidayDates
+          : [];
+        const holidayNameByDate = new Map(
+          (Array.isArray(s.publicHolidays) ? s.publicHolidays : []).map((h) => [
+            String(h?.date || '').slice(0, 10),
+            String(h?.name || 'Holiday').trim() || 'Holiday',
+          ])
+        );
+        const excludedPayload = excludedDates
+          .map((d) => String(d || '').slice(0, 10))
+          .filter(Boolean)
+          .map((date) => ({ date, name: holidayNameByDate.get(date) || 'Holiday' }));
+        const { error: excludedErr } = await saveExcludedPublicHolidayDates(
+          familyId,
+          excludedPayload,
+          selectedSchoolYearLabel
+        );
+        if (excludedErr) throw excludedErr;
         const syncedCustomHolidays = Array.isArray(syncResult?.customHolidays)
           ? syncResult.customHolidays
           : (Array.isArray(s.customHolidays) ? s.customHolidays : []);
@@ -1732,6 +1923,76 @@ export default function PlannerSettingsContent({
     setShowDayOffModal(true);
   }, [readOnly]);
 
+  const handleFollowGlobalHolidaysChange = useCallback((nextEnabled) => {
+    if (readOnly) return;
+    const enabled = nextEnabled !== false;
+    setFollowGlobalHolidays(enabled);
+    stateRef.current = { ...(stateRef.current || {}), followGlobalHolidays: enabled };
+    if (embeddedInModal) {
+      setHasPendingModalSave(true);
+    } else {
+      persist({ follow_public_holidays: enabled });
+    }
+  }, [readOnly, embeddedInModal, persist]);
+
+  const persistExcludedPublicHolidayDates = useCallback((nextDates) => {
+    const next = Array.from(new Set(
+      (Array.isArray(nextDates) ? nextDates : [])
+        .map((d) => String(d || '').slice(0, 10))
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    ));
+    setExcludedPublicHolidayDates(next);
+    stateRef.current = { ...(stateRef.current || {}), excludedPublicHolidayDates: next };
+    if (embeddedInModal) setHasPendingModalSave(true);
+    // Persist immediately so a later refreshPlanDefaults / Save cannot resurrect the holiday.
+    if (!familyId || readOnly) return;
+    const holidayNameByDate = new Map(
+      (publicHolidays || []).map((h) => [
+        String(h?.date || '').slice(0, 10),
+        String(h?.name || 'Holiday').trim() || 'Holiday',
+      ])
+    );
+    const payload = next.map((date) => ({
+      date,
+      name: holidayNameByDate.get(date) || 'Holiday',
+    }));
+    void saveExcludedPublicHolidayDates(familyId, payload, selectedSchoolYearLabel);
+  }, [embeddedInModal, familyId, publicHolidays, selectedSchoolYearLabel, readOnly]);
+
+  const excludePublicHolidayDate = useCallback(async (dateYmd) => {
+    if (readOnly) return;
+    const ymd = String(dateYmd || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return;
+    const current = (
+      Array.isArray(stateRef.current?.excludedPublicHolidayDates)
+        ? stateRef.current.excludedPublicHolidayDates
+        : (excludedPublicHolidayDates || [])
+    ).map((d) => String(d || '').slice(0, 10));
+    const next = current.includes(ymd) ? current : [...current, ymd];
+    setExcludedPublicHolidayDates(next);
+    stateRef.current = { ...(stateRef.current || {}), excludedPublicHolidayDates: next };
+    if (embeddedInModal) setHasPendingModalSave(true);
+    if (!familyId) return;
+    const holidayNameByDate = new Map(
+      (publicHolidays || []).map((h) => [
+        String(h?.date || '').slice(0, 10),
+        String(h?.name || 'Holiday').trim() || 'Holiday',
+      ])
+    );
+    const payload = next.map((date) => ({
+      date,
+      name: holidayNameByDate.get(date) || 'Holiday',
+    }));
+    await saveExcludedPublicHolidayDates(familyId, payload, selectedSchoolYearLabel);
+  }, [
+    readOnly,
+    embeddedInModal,
+    familyId,
+    publicHolidays,
+    selectedSchoolYearLabel,
+    excludedPublicHolidayDates,
+  ]);
+
   const closeDayOffModal = useCallback(() => {
     setShowDayOffModal(false);
     setEditingDayOffRow(null);
@@ -1739,7 +2000,8 @@ export default function PlannerSettingsContent({
   }, []);
 
   const handleDayOffSaved = useCallback((savedRow, previousRow) => {
-    const next = applyDayOffRowToState(customHolidays, customBreaks, savedRow, previousRow);
+    const previousForState = previousRow?.kind === 'public' ? null : previousRow;
+    const next = applyDayOffRowToState(customHolidays, customBreaks, savedRow, previousForState);
     setCustomHolidays(next.customHolidays);
     setCustomBreaks(next.customBreaks);
     stateRef.current = {
@@ -1747,9 +2009,22 @@ export default function PlannerSettingsContent({
       customHolidays: next.customHolidays,
       customBreaks: next.customBreaks,
     };
-  }, [customHolidays, customBreaks]);
+    if (previousRow?.kind === 'public' && previousRow?.start) {
+      excludePublicHolidayDate(previousRow.start);
+    }
+    if (embeddedInModal) setHasPendingModalSave(true);
+  }, [customHolidays, customBreaks, excludePublicHolidayDate, embeddedInModal]);
 
-  const handleDayOffDeleted = useCallback((deletedRow) => {
+  const handleDayOffDeleted = useCallback(async (deletedRow) => {
+    const isPublicHoliday = deletedRow?.kind === 'public'
+      || String(deletedRow?.id || '').startsWith('public-');
+    if (isPublicHoliday) {
+      const dateYmd = String(deletedRow?.start || deletedRow?.end || '')
+        .slice(0, 10)
+        || String(deletedRow?.id || '').replace(/^public-/, '').slice(0, 10);
+      await excludePublicHolidayDate(dateYmd);
+      return;
+    }
     const next = applyDayOffRowToState(customHolidays, customBreaks, null, deletedRow);
     setCustomHolidays(next.customHolidays);
     setCustomBreaks(next.customBreaks);
@@ -1758,7 +2033,8 @@ export default function PlannerSettingsContent({
       customHolidays: next.customHolidays,
       customBreaks: next.customBreaks,
     };
-  }, [customHolidays, customBreaks]);
+    if (embeddedInModal) setHasPendingModalSave(true);
+  }, [customHolidays, customBreaks, excludePublicHolidayDate, embeddedInModal]);
 
   const handleRangeDefaultChange = (setter) => (value) => {
     const normalizedValue = normalizeYmd(value);
@@ -2831,6 +3107,27 @@ export default function PlannerSettingsContent({
         )}
       </View>
       <View style={fieldWrapStyle}>
+        <Text style={modalFieldLabelStyle}>{SCHOOL_YEAR_SETTINGS_UI.defaultUsHolidays}</Text>
+        <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
+          <TouchableOpacity
+            style={[modalModeToggleStyle(followGlobalHolidays), { minWidth: 64 }]}
+            onPress={() => handleFollowGlobalHolidaysChange(true)}
+            disabled={readOnly}
+            {...(Platform.OS === 'web' && { cursor: readOnly ? 'default' : 'pointer' })}
+          >
+            <Text style={modalModeToggleTextStyle(followGlobalHolidays)}>Yes</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[modalModeToggleStyle(!followGlobalHolidays), { minWidth: 64 }]}
+            onPress={() => handleFollowGlobalHolidaysChange(false)}
+            disabled={readOnly}
+            {...(Platform.OS === 'web' && { cursor: readOnly ? 'default' : 'pointer' })}
+          >
+            <Text style={modalModeToggleTextStyle(!followGlobalHolidays)}>No</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+      <View style={fieldWrapStyle}>
         <View style={{
           flexDirection: 'row',
           alignItems: 'center',
@@ -2865,7 +3162,7 @@ export default function PlannerSettingsContent({
             </TouchableOpacity>
           ) : null}
         </View>
-        {dayOffRows.length === 0 ? (
+        {displayedDayOffRows.length === 0 ? (
           <Text style={{
             fontSize: 14,
             color: MUTED,
@@ -2875,17 +3172,13 @@ export default function PlannerSettingsContent({
             }),
           }}
           >
-            No days off yet. Add holidays, breaks, or other non-learning days for this school year.
+            {followGlobalHolidays
+              ? 'No days off yet. Add holidays or breaks for this school year.'
+              : 'No days off yet. Set Default US holidays to Yes, or add custom days off.'}
           </Text>
         ) : (
-          <ScrollView
-            style={useTwoColumnModalLayout ? { maxHeight: 240 } : undefined}
-            contentContainerStyle={{ gap: 8 }}
-            showsVerticalScrollIndicator
-            keyboardShouldPersistTaps="handled"
-            nestedScrollEnabled
-          >
-            {dayOffRows.map((row) => (
+          <View style={{ gap: 8 }}>
+            {displayedDayOffRows.map((row) => (
               <TouchableOpacity
                 key={row.id}
                 onPress={() => openEditDayOffModal(row)}
@@ -2915,7 +3208,7 @@ export default function PlannerSettingsContent({
                   }}
                   numberOfLines={1}
                   >
-                    {row.name || 'Day off'}
+                    {formatDayOffTitleLabel(row)}
                   </Text>
                   <Text style={{
                     fontSize: 13,
@@ -2932,7 +3225,7 @@ export default function PlannerSettingsContent({
                 {!readOnly ? <ChevronRight size={16} color="#9CA3AF" /> : null}
               </TouchableOpacity>
             ))}
-          </ScrollView>
+          </View>
         )}
       </View>
     </View>
@@ -3102,8 +3395,16 @@ export default function PlannerSettingsContent({
     <View style={assignmentModalStyles.schoolYearSettingsFormRow}>
       <View style={assignmentModalStyles.schoolYearSettingsFormColumnMain}>
         <View style={assignmentModalStyles.schoolYearSettingsContentPanel}>
-          <SectionHeading>{SCHOOL_YEAR_SETTINGS_UI.sections.learningDays}</SectionHeading>
-          {learningDaysForm}
+          <ScrollView
+            style={assignmentModalStyles.schoolYearSettingsContentPanelScroll}
+            contentContainerStyle={assignmentModalStyles.schoolYearSettingsContentPanelScrollInner}
+            showsVerticalScrollIndicator
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+          >
+            <SectionHeading>{SCHOOL_YEAR_SETTINGS_UI.sections.learningDays}</SectionHeading>
+            {learningDaysForm}
+          </ScrollView>
         </View>
       </View>
       {showAttendanceSection ? (
@@ -3220,10 +3521,37 @@ export default function PlannerSettingsContent({
         </View>
       </View>
 
-      {/* Section: Days off */}
+      {/* Section: Default US holidays + Days off */}
+      <View style={settingsRowSectionStyle}>
+        <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.defaultUsHolidays}</Text>
+        <View style={sectionBucketDividerStyle} />
+        <View style={settingsRowGroupStyle}>
+          <View style={settingsRowStyle}>
+            <Text style={settingsRowLabelStyle}>{SCHOOL_YEAR_SETTINGS_UI.defaultUsHolidays}</Text>
+            <View style={settingsRowControlsStyle}>
+              <TouchableOpacity
+                style={settingsModeToggle(followGlobalHolidays)}
+                onPress={() => handleFollowGlobalHolidaysChange(true)}
+                disabled={readOnly}
+                {...(Platform.OS === 'web' && { cursor: readOnly ? 'default' : 'pointer' })}
+              >
+                <Text style={settingsModeToggleText(followGlobalHolidays)}>Yes</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={settingsModeToggle(!followGlobalHolidays)}
+                onPress={() => handleFollowGlobalHolidaysChange(false)}
+                disabled={readOnly}
+                {...(Platform.OS === 'web' && { cursor: readOnly ? 'default' : 'pointer' })}
+              >
+                <Text style={settingsModeToggleText(!followGlobalHolidays)}>No</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </View>
       <View style={settingsRowSectionStyle}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          <Text style={[sectionBucketTitleStyle, { marginBottom: 0 }]}>Days off</Text>
+          <Text style={[sectionBucketTitleStyle, { marginBottom: 0 }]}>{SCHOOL_YEAR_SETTINGS_UI.sections.daysOff}</Text>
           {!readOnly ? (
             <TouchableOpacity
               onPress={() => openAddDayOffModal()}
@@ -3239,12 +3567,14 @@ export default function PlannerSettingsContent({
         </View>
         <View style={sectionBucketDividerStyle} />
         <View style={settingsRowGroupStyle}>
-          {dayOffRows.length === 0 ? (
+          {displayedDayOffRows.length === 0 ? (
             <Text style={{ fontSize: 14, color: MUTED, paddingVertical: 8, fontFamily: Platform.OS === 'web' ? '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined }}>
-              No days off yet.
+              {followGlobalHolidays
+                ? 'No days off yet.'
+                : 'No days off yet. Set Default US holidays to Yes, or add custom days off.'}
             </Text>
           ) : (
-            dayOffRows.map((row) => (
+            displayedDayOffRows.map((row) => (
               <TouchableOpacity
                 key={row.id}
                 onPress={() => openEditDayOffModal(row)}
@@ -3252,7 +3582,7 @@ export default function PlannerSettingsContent({
                 style={settingsRowStyle}
                 {...(Platform.OS === 'web' && { cursor: readOnly ? 'default' : 'pointer' })}
               >
-                <Text style={settingsRowLabelStyle} numberOfLines={1}>{row.name || 'Day off'}</Text>
+                <Text style={settingsRowLabelStyle} numberOfLines={1}>{formatDayOffTitleLabel(row)}</Text>
                 <View style={settingsRowControlsStyle}>
                   <Text style={{ fontSize: 14, color: '#374151', fontFamily: Platform.OS === 'web' ? '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined }}>
                     {formatDayOffRangeLabel(row)}
@@ -3351,6 +3681,16 @@ export default function PlannerSettingsContent({
         paddingHorizontal: 0,
         paddingTop: 0,
         width: '100%',
+        ...(useTwoColumnModalLayout && embeddedInModal
+          ? {
+              flex: 1,
+              minHeight: 0,
+              ...(Platform.OS === 'web' && {
+                display: 'flex',
+                flexDirection: 'column',
+              }),
+            }
+          : null),
       }}>
         {embeddedInModal && !hideEmbeddedHeader ? (
           <View style={embeddedTitleRowStyle}>
@@ -3592,19 +3932,11 @@ export default function PlannerSettingsContent({
   }
 
   if (useTwoColumnModalLayout && embeddedInModal) {
-    // Scroll within the modal frame so tall content (e.g. lots of holidays)
-    // stays reachable instead of overflowing past the fixed shell height.
+    // Fixed shell height: left column scrolls internally; don't grow the modal.
     return (
-      <ScrollView
-        scrollEnabled
-        style={{ flex: 1, minHeight: 0 }}
-        contentContainerStyle={{ paddingBottom: 8 }}
-        showsVerticalScrollIndicator
-        keyboardShouldPersistTaps="handled"
-        nestedScrollEnabled
-      >
+      <View style={{ flex: 1, minHeight: 0, width: '100%' }}>
         {settingsInner}
-      </ScrollView>
+      </View>
     );
   }
 

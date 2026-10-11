@@ -80,6 +80,10 @@ export default function OnboardingModal({
 
   /** Tracks resume per modal open so familyId arriving mid-flow does not reset the step. */
   const resumeKeyRef = useRef(null);
+  /** Real/pending id for the child currently in the add-child form (same session upsert). */
+  const formSessionChildIdRef = useRef(null);
+  /** Serializes create/update so back/forth continue cannot double-insert. */
+  const formChildSavePromiseRef = useRef(null);
 
   useEffect(() => {
     if (!visible) return;
@@ -101,6 +105,8 @@ export default function OnboardingModal({
   useEffect(() => {
     if (!visible) {
       resumeKeyRef.current = null;
+      formSessionChildIdRef.current = null;
+      formChildSavePromiseRef.current = null;
       return;
     }
     let cancelled = false;
@@ -262,20 +268,25 @@ export default function OnboardingModal({
     })();
   };
 
-  const addOneChild = async (child, pendingId = null) => {
+  const addOneChild = async (child, pendingId = null, existingChildId = null) => {
     const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
     if (!fid) {
       setError('We couldn’t set up your family yet. Please refresh the page or contact contact@learnadoodle.com.');
       return;
     }
-    const isBackground = pendingId != null;
+    const isBackground = pendingId != null || existingChildId != null;
     if (!isBackground) {
       setIsSaving(true);
     }
     setError(null);
     try {
+      const updateId =
+        existingChildId && !String(existingChildId).startsWith('pending-child-')
+          ? existingChildId
+          : null;
       const res = await addChild({
         family_id: fid,
+        ...(updateId ? { child_id: updateId } : {}),
         name: child.name,
         nickname: child.nickname ?? null,
         age: child.age ?? null,
@@ -293,8 +304,18 @@ export default function OnboardingModal({
       if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to create child.');
       const id = res?.data?.id ?? res?.id;
       if (id) {
-        if (pendingId) {
+        if (updateId) {
+          setCreatedChildren((prev) =>
+            prev.map((c) => (c.id === updateId ? { id, name: child.name } : c)),
+          );
+          if (formSessionChildIdRef.current === updateId) {
+            formSessionChildIdRef.current = id;
+          }
+        } else if (pendingId) {
           setCreatedChildren((prev) => prev.map((c) => (c.id === pendingId ? { id, name: child.name } : c)));
+          if (formSessionChildIdRef.current === pendingId) {
+            formSessionChildIdRef.current = id;
+          }
         } else {
           setCreatedChildren((prev) => [...prev, { id, name: child.name }]);
         }
@@ -333,12 +354,17 @@ export default function OnboardingModal({
           });
         }
       }
+      return id || updateId || null;
     } catch (e) {
-      if (pendingId) {
+      if (pendingId && !existingChildId) {
         setCreatedChildren((prev) => prev.filter((c) => c.id !== pendingId));
+        if (formSessionChildIdRef.current === pendingId) {
+          formSessionChildIdRef.current = null;
+        }
       }
       setError(e?.message ?? 'Failed to create child.');
       if (!isBackground) throw e;
+      return null;
     } finally {
       if (!isBackground) setIsSaving(false);
     }
@@ -346,16 +372,33 @@ export default function OnboardingModal({
 
   const goToCompleteStepWithChild = (childPayload) => {
     setError(null);
-    const pendingId = `pending-child-${Date.now()}`;
-    setCreatedChildren((prev) => [...prev, { id: pendingId, name: childPayload.name }]);
     transitionToStep('school_year');
-    (async () => {
+    const previousSave = formChildSavePromiseRef.current;
+    const run = (async () => {
       try {
+        if (previousSave) await previousSave;
+        const sessionId = formSessionChildIdRef.current;
+        if (sessionId && !String(sessionId).startsWith('pending-child-')) {
+          await addOneChild(childPayload, null, sessionId);
+          return;
+        }
+        if (sessionId && String(sessionId).startsWith('pending-child-')) {
+          await addOneChild(childPayload, sessionId);
+          return;
+        }
+        const pendingId = `pending-child-${Date.now()}`;
+        formSessionChildIdRef.current = pendingId;
+        setCreatedChildren((prev) => [...prev, { id: pendingId, name: childPayload.name }]);
         await addOneChild(childPayload, pendingId);
       } catch (_) {
         // Error already set in addOneChild
       }
     })();
+    formChildSavePromiseRef.current = run.finally(() => {
+      if (formChildSavePromiseRef.current === run) {
+        formChildSavePromiseRef.current = null;
+      }
+    });
   };
 
   const removeOneChild = async (childId, childName) => {
@@ -365,6 +408,9 @@ export default function OnboardingModal({
       return prev.filter((c) => c.id !== childId);
     });
     if (!removedChild) return;
+    if (formSessionChildIdRef.current === childId) {
+      formSessionChildIdRef.current = null;
+    }
 
     setError(null);
 
@@ -511,27 +557,11 @@ export default function OnboardingModal({
                 </View>
                 <View style={step === 'planning_mode' ? undefined : styles.stepHidden}>
                   <PlanningModeStep
-                    onNext={async (who) => {
+                    onNext={(who) => {
                       const newWho = who || 'parent';
-                      const changedRole = onboardingWho != null && newWho !== onboardingWho;
-                      if (changedRole && createdChildren.length > 0) {
-                        const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
-                        if (fid) {
-                          await Promise.all(
-                            createdChildren.map((c) =>
-                              permanentDeleteChild({
-                                childId: c.id,
-                                confirmName: (c.name || '').trim(),
-                              }).then(({ error, data }) => {
-                                if (error || !data?.ok) {
-                                  console.warn('Onboarding clear: failed to delete child', c.id, error || data);
-                                }
-                              })
-                            )
-                          );
-                        }
-                        setCreatedChildren([]);
-                      }
+                      // Never cascade-delete children on role change. Doing so wiped real
+                      // family data when onboarding resumed with existing kids loaded into
+                      // createdChildren (subjects/materials purged via permanent_delete).
                       setOnboardingWho(newWho);
                       if (Platform.OS === 'web' && typeof window !== 'undefined') {
                         localStorage.setItem(ONBOARDING_WHO_STORAGE_KEY, newWho);

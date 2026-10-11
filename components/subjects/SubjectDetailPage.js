@@ -96,8 +96,8 @@ import MaterialDetailsModal from '../materials/MaterialDetailsModal';
 import { archiveMaterial } from '../../lib/services/materialsClient';
 import LearningSubjectDetailView from '../learning/LearningSubjectDetailView';
 import EditSubjectSettingsModal from './EditSubjectSettingsModal';
-import EditSubjectUnitsModal from './EditSubjectUnitsModal';
-import { draftFromCurriculumStructure } from '../../lib/subjectUnitsEditorDraft';
+import { dispatchOpenSubjectUnitsEditor } from '../../lib/subjectUnitsEditor';
+import { writeCachedSubjectCurriculumUnits } from '../../lib/useSubjectCurriculumUnits';
 import SubjectClassroomTabs from './SubjectClassroomTabs';
 import SubjectClassworkSection from './SubjectClassworkSection';
 import MaterialsLibrary from '../materials/MaterialsLibrary';
@@ -105,7 +105,6 @@ import { isHomeschoolPlanningMode, isSelfManagedStudentWithoutParent, getWorkspa
 import { useFamilyPlanningMode } from '../../lib/useFamilyPlanningMode';
 import SubjectGradesPanel from './SubjectGradesPanel';
 import SubjectGapAnalysisModal from './SubjectGapAnalysisModal';
-import { parseSubjectGradingSettings, getGradingMethodLabel } from '../../lib/subjectGradingSettings';
 import { buildSubjectClassworkModel } from '../../lib/subjectClassworkModel';
 import { executeSubjectGapFix, previewSubjectGapFix } from '../../lib/subjectAddSessions';
 import { dispatchOpenSubjectClassworkScheduleAll } from '../../lib/subjectClassworkActions';
@@ -634,8 +633,6 @@ export default function SubjectDetailPage({
     setClassroomTab('bulletin');
   }, [subjectId]);
 
-  const [showEditUnitsModal, setShowEditUnitsModal] = useState(false);
-  const [editUnitsInitialDraft, setEditUnitsInitialDraft] = useState(null);
   const [learningGoalsUnits, setLearningGoalsUnits] = useState(() => {
     if (Array.isArray(preloadedProgressCache?.curriculumUnits) && preloadedProgressCache.curriculumUnits.length > 0) {
       return preloadedProgressCache.curriculumUnits;
@@ -1159,7 +1156,33 @@ export default function SubjectDetailPage({
   const learningGoalsBuildSummaryLine = useMemo(() => (
     `${totalLearningGoalUnits} ${totalLearningGoalUnits === 1 ? 'unit' : 'units'} · ${totalLearningGoalLessons} ${totalLearningGoalLessons === 1 ? 'lesson' : 'lessons'} built`
   ), [totalLearningGoalUnits, totalLearningGoalLessons]);
-  const openSubjectSettings = useCallback((tab = 'details') => {
+  const returnToUnitsEditorAfterSettingsRef = useRef(false);
+  const openUnitsEditor = useCallback(() => {
+    if (!subject?.id) return;
+    // Single editor stack via SubjectUnitsEditorHost — avoids a stale Edit modal
+    // sitting under Create units / import after save.
+    if (hasLearningGoalsContent && Array.isArray(effectiveLearningGoalsUnits)) {
+      writeCachedSubjectCurriculumUnits(familyId, subject.id, effectiveLearningGoalsUnits);
+    }
+    dispatchOpenSubjectUnitsEditor({
+      subjectId: subject.id,
+      subjectName: subject?.name || 'Subject',
+      academicYearId: subjectPlanYearId || subjectPlanYearIdFromEvents || null,
+      childIds: assignedChildren,
+      hasExistingContent: hasLearningGoalsContent,
+    });
+  }, [
+    subject?.id,
+    subject?.name,
+    familyId,
+    hasLearningGoalsContent,
+    effectiveLearningGoalsUnits,
+    subjectPlanYearId,
+    subjectPlanYearIdFromEvents,
+    assignedChildren,
+  ]);
+  const openSubjectSettings = useCallback((tab = 'details', opts = {}) => {
+    returnToUnitsEditorAfterSettingsRef.current = opts?.returnToUnitsEditor === true;
     setEditSettingsInitialTab(tab);
     setShowEditSettingsModal(true);
   }, []);
@@ -1175,27 +1198,22 @@ export default function SubjectDetailPage({
         if (fetched?.planData) setSubjectPlanData(fetched.planData);
       } catch (_) {}
     }
-  }, [familyId, subject?.id, loadSubjectDetail]);
-  const openUnitsEditor = useCallback(() => {
-    if (hasLearningGoalsContent) {
-      setEditUnitsInitialDraft(
-        draftFromCurriculumStructure({ units: effectiveLearningGoalsUnits }),
-      );
-    } else {
-      setEditUnitsInitialDraft(null);
+    const shouldReopenUnitsEditor = returnToUnitsEditorAfterSettingsRef.current;
+    returnToUnitsEditorAfterSettingsRef.current = false;
+    if (shouldReopenUnitsEditor) {
+      // Defer so plan/schedule state from this save is visible when Edit units reopens.
+      setTimeout(() => openUnitsEditor(), 0);
     }
-    setShowEditUnitsModal(true);
-  }, [hasLearningGoalsContent, effectiveLearningGoalsUnits]);
-  const handleEditUnitsSaved = useCallback(async () => {
-    setClassroomTab((tab) => (tab === 'classwork' ? tab : 'classwork'));
-    learningGoalsFetchCooldownUntilRef.current = 0;
-    invalidateSubjectCurriculumStructureCache(familyId, subject?.id, subjectPlanYearId || subjectPlanYearIdFromEvents || null);
-    await loadLearningGoalsStructure({ force: true });
-    await loadSubjectDetail({ silent: true });
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: false } }));
+  }, [familyId, subject?.id, loadSubjectDetail, openUnitsEditor]);
+  const handleSubjectSettingsClose = useCallback(() => {
+    // Cancel from schedule CTA: still return to Edit units so the flow isn't stranded.
+    const shouldReopenUnitsEditor = returnToUnitsEditorAfterSettingsRef.current;
+    returnToUnitsEditorAfterSettingsRef.current = false;
+    setShowEditSettingsModal(false);
+    if (shouldReopenUnitsEditor) {
+      setTimeout(() => openUnitsEditor(), 0);
     }
-  }, [loadLearningGoalsStructure, loadSubjectDetail, familyId, subject?.id, subjectPlanYearId, subjectPlanYearIdFromEvents]);
+  }, [openUnitsEditor]);
   const handleCreateAssignment = useCallback(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !subject?.id) return;
     window.dispatchEvent(
@@ -2129,10 +2147,8 @@ export default function SubjectDetailPage({
     return vals.reduce((sum, v) => sum + v, 0) / vals.length;
   }, [subjectAssignments]);
 
-  const gradingSettings = useMemo(
-    () => parseSubjectGradingSettings(subject?.grading_settings),
-    [subject?.grading_settings],
-  );
+  // Pass raw DB value (or null) so settings modal can fetch if the column was omitted.
+  const gradingSettings = subject?.grading_settings ?? null;
 
   const classroomStatusSummary = useMemo(() => {
     const parts = [];
@@ -4224,11 +4240,17 @@ export default function SubjectDetailPage({
               unitsActionLabel={unitsEditorLabel}
               onCreateAssignment={handleCreateAssignment}
               onAddLearningDay={handleAddLearningDay}
-              onEditSubject={isParentViewer ? () => openSubjectSettings('schedule') : undefined}
+              onEditSubject={
+                isParentViewer
+                  ? (opts) => openSubjectSettings('schedule', opts && typeof opts === 'object' ? opts : undefined)
+                  : undefined
+              }
               onPlacementChanged={handleClassworkPlacementChanged}
               highlightLessonId={highlightLessonId}
               highlightAssignmentId={highlightAssignmentId}
               showScheduleAllLessons={showSmartActions}
+              hasSubjectSchedule={Boolean(classScheduleSummary)}
+              subjectScheduleSummary={classScheduleSummary}
             />
           </View>
         ) : (
@@ -4249,11 +4271,17 @@ export default function SubjectDetailPage({
                 unitsActionLabel={unitsEditorLabel}
                 onCreateAssignment={handleCreateAssignment}
                 onAddLearningDay={handleAddLearningDay}
-                onEditSubject={isParentViewer ? () => openSubjectSettings('schedule') : undefined}
+                onEditSubject={
+                  isParentViewer
+                    ? (opts) => openSubjectSettings('schedule', opts && typeof opts === 'object' ? opts : undefined)
+                    : undefined
+                }
                 onPlacementChanged={handleClassworkPlacementChanged}
                 highlightLessonId={highlightLessonId}
                 highlightAssignmentId={highlightAssignmentId}
                 showScheduleAllLessons={showSmartActions}
+                hasSubjectSchedule={Boolean(classScheduleSummary)}
+                subjectScheduleSummary={classScheduleSummary}
               />
             </View>
           ) : null
@@ -4918,7 +4946,7 @@ export default function SubjectDetailPage({
       />
       <EditSubjectSettingsModal
         visible={showEditSettingsModal}
-        onClose={() => setShowEditSettingsModal(false)}
+        onClose={handleSubjectSettingsClose}
         onSaved={handleSubjectSettingsSaved}
         familyId={familyId}
         subject={subject}
@@ -4929,19 +4957,6 @@ export default function SubjectDetailPage({
         assignedChildIds={assignedChildren}
         allChildIds={allChildIds}
         initialGradingSettings={gradingSettings}
-      />
-      <EditSubjectUnitsModal
-        visible={showEditUnitsModal}
-        onClose={() => {
-          setShowEditUnitsModal(false);
-          setEditUnitsInitialDraft(null);
-        }}
-        onSaved={handleEditUnitsSaved}
-        familyId={familyId}
-        subject={subject}
-        hasExistingContent={hasLearningGoalsContent}
-        initialDraft={editUnitsInitialDraft}
-        academicYearId={subjectPlanYearId || subjectPlanYearIdFromEvents || null}
       />
       <MarkAllAttendedModal
         visible={showMarkAllAttendedModal}

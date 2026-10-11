@@ -146,6 +146,7 @@ export default function AddSubjectModal({
   const [lessonPlanMaterialId, setLessonPlanMaterialId] = useState(null);
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
   const [addMaterialDefaultRole, setAddMaterialDefaultRole] = useState(null);
+  const [recentAttachmentMaterial, setRecentAttachmentMaterial] = useState(null);
   const [children, setChildren] = useState(propChildren || []);
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -338,6 +339,7 @@ export default function AddSubjectModal({
       setShowAdditionalNotesAccordion(false);
       setSyllabusMaterialId(null);
       setLessonPlanMaterialId(null);
+      setRecentAttachmentMaterial(null);
     }
   }, [visible, defaultChildId, defaultChildIds, defaultSubjectName, initialSchoolTerm, initialSchoolYear, subject, initScheduleDefaults, propChildren]);
 
@@ -615,9 +617,21 @@ export default function AddSubjectModal({
     setError(null);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        throw new Error('User not authenticated');
+      // Prefer local session — getUser() hits the network and our fetch timeout can
+      // abort it, which incorrectly surfaces as "User not authenticated".
+      let sessionUser = null;
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      sessionUser = sessionData?.session?.user || null;
+      if (!sessionUser) {
+        const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+        sessionUser = refreshed?.session?.user || null;
+        if (!sessionUser) {
+          const refreshMsg = String(refreshError?.message || sessionError?.message || '');
+          if (/abort/i.test(refreshMsg) || refreshError?.name === 'AbortError') {
+            throw new Error('Connection timed out. Check your network and try again — your subject may not have been saved yet.');
+          }
+          throw new Error('Session expired. Please refresh the page and sign in again.');
+        }
       }
 
       const subjectData = buildSubjectPayload();
@@ -803,7 +817,13 @@ export default function AddSubjectModal({
         handleClose();
       }, 500);
     } catch (err) {
-      setError(err.message || 'Failed to add subject. Please try again.');
+      const raw = String(err?.message || err?.name || '');
+      const isAbort = err?.name === 'AbortError' || /abort/i.test(raw);
+      setError(
+        isAbort
+          ? 'Connection timed out. Refresh the page to see if the subject was saved, or try again.'
+          : (err?.message || 'Failed to add subject. Please try again.'),
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -992,6 +1012,7 @@ export default function AddSubjectModal({
                       familyId={familyId}
                       syllabusMaterialId={syllabusMaterialId}
                       lessonPlanMaterialId={lessonPlanMaterialId}
+                      recentMaterial={recentAttachmentMaterial}
                       onSyllabusChange={setSyllabusMaterialId}
                       onLessonPlanChange={setLessonPlanMaterialId}
                       onAddSyllabus={() => {
@@ -1102,6 +1123,7 @@ export default function AddSubjectModal({
         }}
         onSaved={(material) => {
           if (material?.id) {
+            setRecentAttachmentMaterial(material);
             if (addMaterialDefaultRole === 'lesson_plan') {
               setLessonPlanMaterialId(material.id);
             } else {

@@ -66,7 +66,10 @@ import ClassworkPlanningModal from './ClassworkPlanningModal';
 import ScheduleLessonModal from './ScheduleLessonModal';
 import ConfirmDialog from '../ConfirmDialog';
 import { dispatchOpenLearningDayModal } from '../../lib/planner/learningDayModalNavigation';
-import { OPEN_SUBJECT_CLASSWORK_SCHEDULE_ALL } from '../../lib/subjectClassworkActions';
+import {
+  OPEN_SUBJECT_CLASSWORK_SCHEDULE_ALL,
+  dispatchCloseSubjectUnitsEditor,
+} from '../../lib/subjectClassworkActions';
 import {
   CLASSWORK_FG,
   CLASSWORK_MUTED,
@@ -1195,6 +1198,9 @@ export default function SubjectClassworkSection({
   highlightLessonId = null,
   highlightAssignmentId = null,
   showScheduleAllLessons = false,
+  /** True when subject has a saved weekly schedule (plan blocks). */
+  hasSubjectSchedule = false,
+  subjectScheduleSummary = null,
 }) {
   const toast = useToast();
   const totalLessonCount = useMemo(
@@ -1513,18 +1519,19 @@ export default function SubjectClassworkSection({
     });
   }, [schedulingAll]);
 
-  const openScheduleSetupInstead = useCallback(() => {
-    // No learning-day slots yet: send parents to set a recurring schedule or add a day.
+  const openSubjectScheduleSettings = useCallback(() => {
+    closeScheduleModal();
+    // Close Edit units (if open) so Subject settings isn't buried underneath.
+    // Ask the host to reopen Edit units after settings save so Schedule all can be retried.
+    dispatchCloseSubjectUnitsEditor();
     if (typeof onEditSubject === 'function') {
-      onEditSubject();
-      return true;
+      setTimeout(() => onEditSubject({ returnToUnitsEditor: true }), 0);
+      return;
     }
     if (typeof onAddLearningDay === 'function') {
-      onAddLearningDay();
-      return true;
+      setTimeout(() => onAddLearningDay(), 0);
     }
-    return false;
-  }, [onEditSubject, onAddLearningDay]);
+  }, [closeScheduleModal, onEditSubject, onAddLearningDay]);
 
   const openScheduleAllModal = useCallback(() => {
     if (!familyId || !subjectId || schedulingAll) return;
@@ -1557,30 +1564,40 @@ export default function SubjectClassworkSection({
       }
       return;
     }
-    const previewLimit = Math.max(model.unscheduledLessonCount, 20);
+
+    const previewLimit = Math.max(model.unscheduledLessonCount, 50);
     const preview = buildLessonSchedulePreview({
       subjectEvents: events,
       units,
       limit: previewLimit,
     });
     const scheduleLines = preview.map((row) => formatLessonSchedulePreviewLine(row));
-    const messageParts = [
-      `${count} lesson${count === 1 ? '' : 's'} ${count === 1 ? 'is' : 'are'} not scheduled yet.`,
-      '',
-      'Each lesson will be linked to the next open learning day for this subject, in unit order.',
-    ];
-    if (scheduleLines.length < count) {
-      messageParts.push(
-        '',
-        `Only ${scheduleLines.length} open learning day${scheduleLines.length === 1 ? '' : 's'} ${scheduleLines.length === 1 ? 'is' : 'are'} available. Any remaining lessons will stay unscheduled until you add more sessions.`,
-      );
-    }
+
+    // No open planner slots for unscheduled lessons.
     if (scheduleLines.length === 0) {
-      if (openScheduleSetupInstead()) return;
+      if (!hasSubjectSchedule) {
+        setScheduleModal({
+          visible: true,
+          title: 'No schedule yet',
+          message:
+            'This subject doesn’t have a saved weekly schedule yet. Add days and times in Subject settings, then Schedule all lessons will place each lesson on the next open slot.',
+          scheduleLines: [],
+          showConfirm: typeof onEditSubject === 'function',
+          confirmLabel: 'Open subject settings',
+          cancelLabel: 'Close',
+          working: false,
+          mode: 'needs_schedule',
+        });
+        return;
+      }
+      const scheduleBit = subjectScheduleSummary
+        ? ` Saved schedule: ${subjectScheduleSummary}.`
+        : '';
       setScheduleModal({
         visible: true,
-        title: 'Schedule class days',
-        message: 'This subject does not have class days on the planner yet. Add a repeating schedule in Edit subject, or add a learning day.',
+        title: 'No open learning days',
+        message:
+          `Your schedule is saved, but there are no open learning days left to place these lessons.${scheduleBit} A smart rescheduler for full calendars is next — for now, add a learning day or free a slot, then try again.`,
         scheduleLines: [],
         showConfirm: false,
         confirmLabel: 'OK',
@@ -1589,6 +1606,20 @@ export default function SubjectClassworkSection({
         mode: 'info',
       });
       return;
+    }
+
+    const messageParts = [
+      `${count} lesson${count === 1 ? '' : 's'} ${count === 1 ? 'is' : 'are'} not scheduled yet.`,
+      '',
+      hasSubjectSchedule && subjectScheduleSummary
+        ? `Using your saved schedule (${subjectScheduleSummary}). Each lesson will be linked to the next open learning day, in unit order.`
+        : 'Each lesson will be linked to the next open learning day for this subject, in unit order.',
+    ];
+    if (scheduleLines.length < count) {
+      messageParts.push(
+        '',
+        `Only ${scheduleLines.length} open learning day${scheduleLines.length === 1 ? '' : 's'} ${scheduleLines.length === 1 ? 'is' : 'are'} available. Any remaining lessons will stay unscheduled until you add more sessions.`,
+      );
     }
     setScheduleModal({
       visible: true,
@@ -1609,7 +1640,9 @@ export default function SubjectClassworkSection({
     totalLessonCount,
     events,
     units,
-    openScheduleSetupInstead,
+    hasSubjectSchedule,
+    subjectScheduleSummary,
+    onEditSubject,
   ]);
 
   const handleScheduleClassDaysPress = useCallback(() => {
@@ -1617,6 +1650,10 @@ export default function SubjectClassworkSection({
   }, [openScheduleAllModal]);
 
   const confirmScheduleAllModal = useCallback(async () => {
+    if (scheduleModal.mode === 'needs_schedule') {
+      openSubjectScheduleSettings();
+      return;
+    }
     if (scheduleModal.mode === 'done' || scheduleModal.mode === 'info' || !scheduleModal.showConfirm) {
       closeScheduleModal();
       return;
@@ -1629,7 +1666,7 @@ export default function SubjectClassworkSection({
         subjectId,
         subjectEvents: events,
         units,
-        limit: Math.max(model.unscheduledLessonCount, 20),
+        limit: Math.max(model.unscheduledLessonCount, 50),
       });
       if (assigned > 0) {
         onPlacementChanged?.();
@@ -1645,16 +1682,25 @@ export default function SubjectClassworkSection({
           working: false,
           mode: 'done',
         });
-      } else {
-        if (openScheduleSetupInstead()) {
-          setSchedulingAll(false);
-          closeScheduleModal();
-          return;
-        }
+      } else if (!hasSubjectSchedule) {
         setScheduleModal({
           visible: true,
-          title: 'Schedule class days',
-          message: 'This subject does not have class days on the planner yet. Add a repeating schedule in Edit subject, or add a learning day.',
+          title: 'No schedule yet',
+          message:
+            'This subject doesn’t have a saved weekly schedule yet. Add days and times in Subject settings, then try again.',
+          scheduleLines: [],
+          showConfirm: typeof onEditSubject === 'function',
+          confirmLabel: 'Open subject settings',
+          cancelLabel: 'Close',
+          working: false,
+          mode: 'needs_schedule',
+        });
+      } else {
+        setScheduleModal({
+          visible: true,
+          title: 'No open learning days',
+          message:
+            'Your schedule is saved, but there are no open learning days left to place these lessons. A smart rescheduler for full calendars is next.',
           scheduleLines: [],
           showConfirm: false,
           confirmLabel: 'OK',
@@ -1688,7 +1734,9 @@ export default function SubjectClassworkSection({
     model.unscheduledLessonCount,
     closeScheduleModal,
     onPlacementChanged,
-    openScheduleSetupInstead,
+    hasSubjectSchedule,
+    onEditSubject,
+    openSubjectScheduleSettings,
   ]);
 
   useEffect(() => {

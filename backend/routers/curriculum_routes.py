@@ -2088,24 +2088,42 @@ def _remap_events_after_lesson_replace(
 
     remapped = 0
     now_iso = datetime.now(timezone.utc).isoformat()
+    # Group events that share the same patch so we can update in batches.
+    patch_groups: Dict[str, Dict[str, Any]] = {}
     for old_lid, event_ids in events_by_old_lesson.items():
         new_lid = full_remap.get(old_lid)
-        if not new_lid:
+        if not new_lid or not event_ids:
             continue
         key = lesson_keys_by_old_id.get(old_lid)
         unit_title = key[0] if key else None
         lesson_title = key[1] if key else None
-        patch = {
-            "curriculum_lesson_id": new_lid,
-            "curriculum_unit_title": unit_title or None,
-            "unit": unit_title or None,
-            "lesson": lesson_title or None,
-            "curriculum_metadata": {"lesson_label": lesson_title} if lesson_title else {},
-            "updated_at": now_iso,
-        }
-        for eid in event_ids:
-            supabase.table("events").update(patch).eq("id", eid).eq("family_id", family_id).execute()
-            remapped += 1
+        group = patch_groups.setdefault(
+            new_lid,
+            {
+                "event_ids": [],
+                "patch": {
+                    "curriculum_lesson_id": new_lid,
+                    "curriculum_unit_title": unit_title or None,
+                    "unit": unit_title or None,
+                    "lesson": lesson_title or None,
+                    "curriculum_metadata": {"lesson_label": lesson_title} if lesson_title else {},
+                    "updated_at": now_iso,
+                },
+            },
+        )
+        group["event_ids"].extend(event_ids)
+
+    for group in patch_groups.values():
+        event_ids = list(dict.fromkeys(group["event_ids"]))
+        if not event_ids:
+            continue
+        # Chunk to keep PostgREST URL/body sizes reasonable.
+        for i in range(0, len(event_ids), 100):
+            chunk = event_ids[i : i + 100]
+            supabase.table("events").update(group["patch"]).in_("id", chunk).eq(
+                "family_id", family_id
+            ).execute()
+            remapped += len(chunk)
     return remapped
 
 
@@ -2133,7 +2151,8 @@ async def commit_manual_draft_endpoint(
 
         ay_id = (body.academic_year_id or "").strip() if body.academic_year_id else ""
         sid_list = [str(s).strip() for s in (body.student_ids or []) if s]
-        if ay_id and not sid_list:
+        # Only resolve children when we will materialize calendar events.
+        if body.create_calendar_events and ay_id and not sid_list:
             ch_res = supabase.table("children").select("id").eq("family_id", family_id).execute()
             sid_list = [str(r["id"]) for r in (ch_res.data or []) if r.get("id")]
 
@@ -2184,27 +2203,29 @@ async def commit_manual_draft_endpoint(
                 supabase.table("curriculum_lessons").delete().in_("unit_id", existing_unit_ids).execute()
                 supabase.table("curriculum_units").delete().in_("id", existing_unit_ids).execute()
 
+        # Build unit + lesson rows, then batch-insert (one request per table) instead of
+        # one round-trip per unit/lesson — edit saves were N+1 slow for small text tweaks.
+        prepared_units: List[Dict[str, Any]] = []
+        prepared_lessons_by_unit_index: List[List[Dict[str, Any]]] = []
         for ui, u in enumerate(body.draft.units):
             unit_title = (u.title or "").strip() or f"Unit {ui + 1}"
-            unit_row = {
-                "family_id": body.family_id,
-                "created_by_uid": user["id"],
-                "title": unit_title,
-                "source_type": "manual",
-                "source_ref": None,
-                "grade_band": None,
-                "subject_tags": subject_tags,
-                "student_ids": [],
-                "total_minutes_est": 0,
-                "weeks_est": 1,
-                "metadata": {"builder_mode": body.builder_mode, "subject_id": str(body.subject_id)},
-                "updated_at": now_iso,
-            }
-            ins_u = supabase.table("curriculum_units").insert(unit_row).execute()
-            if not ins_u.data or len(ins_u.data) == 0:
-                raise HTTPException(status_code=500, detail="Failed to insert curriculum unit")
-            unit_id = str(ins_u.data[0]["id"])
-            unit_ids.append(unit_id)
+            prepared_units.append(
+                {
+                    "family_id": body.family_id,
+                    "created_by_uid": user["id"],
+                    "title": unit_title,
+                    "source_type": "manual",
+                    "source_ref": None,
+                    "grade_band": None,
+                    "subject_tags": subject_tags,
+                    "student_ids": [],
+                    "total_minutes_est": 0,
+                    "weeks_est": 1,
+                    "metadata": {"builder_mode": body.builder_mode, "subject_id": str(body.subject_id)},
+                    "updated_at": now_iso,
+                }
+            )
+            unit_lessons: List[Dict[str, Any]] = []
             for seq, le in enumerate(u.lessons, start=1):
                 lesson_title = (le.title or "").strip() or f"Lesson {seq}"
                 if not lesson_title:
@@ -2225,48 +2246,102 @@ async def commit_manual_draft_endpoint(
                 cadence_meta = getattr(le, "cadence_metadata", None) or {}
                 if not isinstance(cadence_meta, dict):
                     cadence_meta = {}
-                lesson_row = {
-                    "unit_id": unit_id,
-                    "sequence_index": seq,
-                    "title": lesson_title,
-                    "objective": (le.objective or "").strip() or None,
-                    "minutes_est": minutes,
-                    "modality": modality,
-                    "difficulty": "standard",
-                    "materials": le.materials if isinstance(le.materials, list) else [],
-                    "assessment": {
-                        "lesson_type": lt,
-                        "cadence_metadata": cadence_meta,
-                        "notes": (le.notes or "").strip() or None,
-                    },
-                    "prereqs": [],
-                    "links": [],
-                }
-                les_ins = supabase.table("curriculum_lessons").insert(lesson_row).execute()
-                lid_str = None
-                if les_ins.data and len(les_ins.data) > 0:
-                    lid_str = str(les_ins.data[0]["id"])
-                    lesson_ids.append(lid_str)
-                    prior_lesson_id = _lesson_id_from_manual_temp_id(getattr(le, "temp_id", None))
-                    if prior_lesson_id:
-                        lesson_id_remap[prior_lesson_id] = lid_str
-                flat_rows.append(
+                unit_lessons.append(
                     {
-                        "unit_title": unit_title,
-                        "seq": seq,
-                        "lesson_title": lesson_title,
-                        "lesson_type": lt,
-                        "modality": modality,
-                        "minutes": minutes,
+                        "sequence_index": seq,
+                        "title": lesson_title,
                         "objective": (le.objective or "").strip() or None,
-                        "notes": (le.notes or "").strip() or None,
+                        "minutes_est": minutes,
+                        "modality": modality,
+                        "difficulty": "standard",
                         "materials": le.materials if isinstance(le.materials, list) else [],
-                        "is_placeholder": bool(getattr(le, "is_placeholder", False)),
-                        "cadence_metadata": cadence_meta,
-                        "curriculum_lesson_id": lid_str,
-                        "metadata_extra": {},
+                        "assessment": {
+                            "lesson_type": lt,
+                            "cadence_metadata": cadence_meta,
+                            "notes": (le.notes or "").strip() or None,
+                        },
+                        "prereqs": [],
+                        "links": [],
+                        "_prior_lesson_id": _lesson_id_from_manual_temp_id(getattr(le, "temp_id", None)),
+                        "_flat": {
+                            "unit_title": unit_title,
+                            "seq": seq,
+                            "lesson_title": lesson_title,
+                            "lesson_type": lt,
+                            "modality": modality,
+                            "minutes": minutes,
+                            "objective": (le.objective or "").strip() or None,
+                            "notes": (le.notes or "").strip() or None,
+                            "materials": le.materials if isinstance(le.materials, list) else [],
+                            "is_placeholder": bool(getattr(le, "is_placeholder", False)),
+                            "cadence_metadata": cadence_meta,
+                            "metadata_extra": {},
+                        },
                     }
                 )
+            prepared_lessons_by_unit_index.append(unit_lessons)
+
+        if prepared_units:
+            ins_u = supabase.table("curriculum_units").insert(prepared_units).execute()
+            inserted_units = list(ins_u.data or [])
+            if len(inserted_units) != len(prepared_units):
+                raise HTTPException(status_code=500, detail="Failed to insert curriculum units")
+            # Prefer request order when the API returns rows in insert order; fall back to title match.
+            if len(inserted_units) == len(prepared_units):
+                unit_ids = [str(row["id"]) for row in inserted_units if row.get("id")]
+            else:
+                unit_ids = []
+            if len(unit_ids) != len(prepared_units):
+                raise HTTPException(status_code=500, detail="Failed to insert curriculum units")
+
+            lesson_rows: List[Dict[str, Any]] = []
+            lesson_meta_by_key: Dict[Tuple[str, int], Dict[str, Any]] = {}
+            for ui, unit_id in enumerate(unit_ids):
+                for prepared in prepared_lessons_by_unit_index[ui]:
+                    prior = prepared.get("_prior_lesson_id")
+                    flat = prepared.get("_flat") or {}
+                    seq = int(prepared.get("sequence_index") or 0)
+                    row = {
+                        "unit_id": unit_id,
+                        "sequence_index": seq,
+                        "title": prepared.get("title"),
+                        "objective": prepared.get("objective"),
+                        "minutes_est": prepared.get("minutes_est"),
+                        "modality": prepared.get("modality"),
+                        "difficulty": prepared.get("difficulty"),
+                        "materials": prepared.get("materials") if isinstance(prepared.get("materials"), list) else [],
+                        "assessment": prepared.get("assessment") or {},
+                        "prereqs": [],
+                        "links": [],
+                    }
+                    lesson_rows.append(row)
+                    lesson_meta_by_key[(unit_id, seq)] = {"prior": prior, "flat": flat}
+
+            if lesson_rows:
+                ins_l = supabase.table("curriculum_lessons").insert(lesson_rows).execute()
+                inserted_lessons = list(ins_l.data or [])
+                if len(inserted_lessons) != len(lesson_rows):
+                    raise HTTPException(status_code=500, detail="Failed to insert curriculum lessons")
+                inserted_by_key = {
+                    (str(r.get("unit_id") or ""), int(r.get("sequence_index") or 0)): r
+                    for r in inserted_lessons
+                    if r.get("id")
+                }
+                # Keep flat_rows in draft order for calendar materialization.
+                for row in lesson_rows:
+                    unit_id = str(row.get("unit_id") or "")
+                    seq = int(row.get("sequence_index") or 0)
+                    meta = lesson_meta_by_key.get((unit_id, seq)) or {}
+                    match = inserted_by_key.get((unit_id, seq))
+                    lid_str = str(match.get("id")) if match and match.get("id") else None
+                    if lid_str:
+                        lesson_ids.append(lid_str)
+                        prior_lesson_id = meta.get("prior")
+                        if prior_lesson_id:
+                            lesson_id_remap[str(prior_lesson_id)] = lid_str
+                    flat_row = dict(meta.get("flat") or {})
+                    flat_row["curriculum_lesson_id"] = lid_str
+                    flat_rows.append(flat_row)
 
         if body.replace_existing and events_by_old_lesson:
             remapped = _remap_events_after_lesson_replace(

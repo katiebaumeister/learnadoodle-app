@@ -256,7 +256,26 @@ async function confirmMemberDelete(label) {
   });
 }
 
-export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null, hideInternalSidebar = false, embeddedInFamily = false, embeddedInModal = false, onViewAsChild = null, onExitChildView = null }) {
+function normalizeFamilyPanelChildren(list) {
+  if (!Array.isArray(list) || list.length === 0) return null;
+  return list
+    .filter((c) => c?.id != null)
+    .map((c) => ({
+      ...c,
+      id: c.id,
+      name: c.first_name || c.name || 'Child',
+      first_name: c.first_name || c.name || 'Child',
+      grade: c.grade ?? c.grade_level ?? c.grade_label ?? null,
+      grade_level: c.grade_level ?? c.grade ?? null,
+      grade_label: c.grade_label ?? c.grade ?? null,
+      age: c.age ?? null,
+      avatar: c.avatar || c.avatar_url || null,
+      avatar_url: c.avatar_url || c.avatar || null,
+      archived: c.archived === true,
+    }));
+}
+
+export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, preloadedChildren: propPreloadedChildren = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null, hideInternalSidebar = false, embeddedInFamily = false, embeddedInModal = false, onViewAsChild = null, onExitChildView = null }) {
   const isChildMode = propUserRole === 'child' || propUserRole === 'student';
   const currentChildId = propCurrentChildId ?? null;
   const viewingAsChildId = propViewingAsChildId ?? null;
@@ -503,7 +522,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [savingSubject, setSavingSubject] = useState(false);
   const [selectedCoursesSchoolYear, setSelectedCoursesSchoolYear] = useState(getCurrentSchoolYearLabel());
   const [showCoursesSchoolYearDropdown, setShowCoursesSchoolYearDropdown] = useState(false);
-  const [childrenWithAvatars, setChildrenWithAvatars] = useState([]);
+  const [childrenWithAvatars, setChildrenWithAvatars] = useState(
+    () => normalizeFamilyPanelChildren(propPreloadedChildren) || [],
+  );
 
   useEffect(() => {
     if (!showCoursesSchoolYearDropdown || Platform.OS !== 'web' || typeof document === 'undefined') return;
@@ -600,8 +621,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Temporary name for child ID card only (e.g. "First Last"); not saved to profile
   const [idCardDisplayName, setIdCardDisplayName] = useState('');
 
-  // Children list from DB (includes archived) so Family page shows all children even if API filters or fails
-  const [childrenFromDb, setChildrenFromDb] = useState(null);
+  // Children list from DB (includes archived) so Family page shows all children even if API filters or fails.
+  // Seed from preloaded page data so Edit Family modal does not flash empty → loaded.
+  const [childrenFromDb, setChildrenFromDb] = useState(() => (
+    normalizeFamilyPanelChildren(propPreloadedChildren)
+    || normalizeFamilyPanelChildren(propFamily?.children)
+  ));
   const [childrenFetchKey, setChildrenFetchKey] = useState(0);
 
   const childrenIdsKeyForInvites = useMemo(() => {
@@ -878,13 +903,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     };
   }, [family?.id, familyId, propFamilyId, user?.id]);
 
-  // Load children directly from Supabase (including archived) so everyone shows on Family page
+  // Soft-revalidate children; never blank the list while refetching (avoids modal load flash).
   useEffect(() => {
     const fid = family?.id || familyId || propFamilyId;
-    if (!fid) {
-      setChildrenFromDb(null);
-      return;
-    }
+    if (!fid) return;
     let cancelled = false;
     (async () => {
       try {
@@ -893,21 +915,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           .select('*')
           .eq('family_id', fid);
         if (cancelled) return;
-        if (error) {
-          setChildrenFromDb(null);
-          return;
-        }
-        const list = (data || []).map((c) => ({
-          id: c.id,
-          name: c.first_name || c.name || 'Child',
-          first_name: c.first_name || c.name || 'Child',
-          grade: c.grade ?? c.grade_level ?? c.grade_label,
-          grade_level: c.grade_level ?? c.grade,
-          grade_label: c.grade_label,
-          age: c.age,
-          avatar: c.avatar || c.avatar_url || null,
-          archived: c.archived === true,
-        }));
+        if (error) return; // keep seeded/preloaded rows
+        const list = normalizeFamilyPanelChildren(data) || [];
         setChildrenFromDb((prev) => {
           const prevList = Array.isArray(prev) ? prev : [];
           if (prevList.length !== list.length) return list;
@@ -918,6 +927,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               String(prevRow.id || '') !== String(nextRow.id || '')
               || String(prevRow.name || '') !== String(nextRow.name || '')
               || String(prevRow.first_name || '') !== String(nextRow.first_name || '')
+              || String(prevRow.age ?? '') !== String(nextRow.age ?? '')
+              || String(prevRow.grade ?? '') !== String(nextRow.grade ?? '')
+              || String(prevRow.avatar || '') !== String(nextRow.avatar || '')
               || prevRow.archived !== nextRow.archived
             ) {
               return list;
@@ -926,7 +938,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           return prev;
         });
       } catch (_) {
-        if (!cancelled) setChildrenFromDb(null);
+        // Keep existing seeded data on network blips.
       }
     })();
     return () => { cancelled = true; };
@@ -1268,7 +1280,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           .from('children')
           .select('*')
           .eq('family_id', familyId)
-          .eq('archived', false);
+          .or('archived.eq.false,archived.is.null');
         
         if (childrenError) {
           // Try without archived filter if that fails
@@ -1286,7 +1298,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             setChildrenWithAvatars(cleaned);
           } else {
             console.warn('[FamilyPanel] Error fetching children:', childrenError);
-            setChildrenWithAvatars([]);
+            // Keep seeded/preloaded rows — do not flash empty.
           }
         } else {
           // Validate and clean avatar URLs
@@ -1299,7 +1311,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         }
       } catch (err) {
         console.error('[FamilyPanel] Error fetching children:', err);
-        setChildrenWithAvatars([]);
+        // Keep seeded/preloaded rows.
       }
     };
     
@@ -1313,7 +1325,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     try {
       const { data, error } = await supabase
         .from('subject')
-        .select('id, name, child_id, grade, notes, school_year, created_at, updated_at')
+        .select('id, name, child_id, grade, notes, school_year, school_term, grading_settings, created_at, updated_at')
         .eq('family_id', familyId)
         .order('name');
       

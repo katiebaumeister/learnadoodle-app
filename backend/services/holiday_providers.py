@@ -70,15 +70,19 @@ class NagerDateProvider:
         """
         try:
             url = f"{NagerDateProvider.BASE_URL}/PublicHolidays/{year}/{country_code}"
+            # Keep timeouts short — School Year Settings / holiday pickers must not block for minutes.
             response = None
-            for timeout in (15, 25):
+            last_error = None
+            for timeout in (3, 5):
                 try:
                     response = requests.get(url, timeout=timeout)
                     response.raise_for_status()
                     break
                 except requests.RequestException as e:
-                    if timeout == 25:
-                        raise
+                    last_error = e
+                    response = None
+            if response is None:
+                raise last_error or requests.RequestException("Nager.Date request failed")
             holidays_data = response.json()
             
             entries = []

@@ -104,8 +104,9 @@ class GuestMemberUpdateIn(BaseModel):
 class FamilyMembersOut(BaseModel):
     id: Optional[str] = None
     family_name: Optional[str] = None
-    onboarding_completed: Optional[bool] = False  # stored flag (convenience only)
-    onboarding_is_valid: Optional[bool] = False  # derived: default_planning_mode + has_children (subjects optional)
+    # None = unknown (e.g. unexpected error). Clients must not treat None as "incomplete".
+    onboarding_completed: Optional[bool] = None  # stored flag (convenience only)
+    onboarding_is_valid: Optional[bool] = None  # derived: default_planning_mode + has_children (subjects optional)
     default_planning_mode: Optional[str] = None  # HOMESCHOOL_COMPLIANCE | AFTERSCHOOL_GOALS | NONE
     children: List[ChildOut] = Field(default_factory=list)
     members: List[MemberOut] = Field(default_factory=list)
@@ -1023,7 +1024,7 @@ async def get_family_members(
         members = []
 
         # Get family row (name, onboarding_completed, default_planning_mode)
-        onboarding_completed = False
+        onboarding_completed = None  # unknown until family row loads
         default_planning_mode = None
         try:
             family_res = supabase.table("family").select("*").eq("id", family_id).maybe_single().execute()
@@ -1033,6 +1034,8 @@ async def get_family_members(
                 onboarding_completed = family_res.data.get("onboarding_completed")
                 if onboarding_completed is None and family_res.data.get("has_completed_onboarding") is True:
                     onboarding_completed = True
+                elif onboarding_completed is None:
+                    onboarding_completed = False
                 default_planning_mode = family_res.data.get("default_planning_mode")
         except Exception as e:
             log_event("family.get_members.family_table_error", user_id=user["id"], error=str(e))
@@ -1225,12 +1228,13 @@ async def get_family_members(
         raise
     except Exception as e:
         log_event("family.get_members.unexpected_error", user_id=user["id"], error=str(e))
-        # Never return 500: return 200 with empty/safe data so UI can still load
+        # Never return 500: return 200 with empty/safe data so UI can still load.
+        # Leave onboarding flags as None (unknown) — False would force re-onboarding.
         return FamilyMembersOut(
             id=family_id,
             family_name=None,
-            onboarding_completed=False,
-            onboarding_is_valid=False,
+            onboarding_completed=None,
+            onboarding_is_valid=None,
             default_planning_mode=None,
             children=[],
             members=[],

@@ -279,7 +279,8 @@ async def get_public_holidays_for_range(
 ):
     """
     Get public holidays for a date range (for Plan My Year holiday picker).
-    Uses Nager.Date API; falls back to global_official_holidays for US when API returns empty.
+    For US: prefer global_official_holidays (fast) — Nager.Date can take 15–40s+ when unreachable.
+    For other countries: Nager.Date with short timeout behavior from the provider.
     """
     try:
         start_date = date.fromisoformat(start[:10])
@@ -287,6 +288,11 @@ async def get_public_holidays_for_range(
         if start_date > end_date:
             raise HTTPException(status_code=400, detail="start must be <= end")
         country_code = country.upper()
+        # US: DB first so School Year Settings never waits on Nager timeouts.
+        if country_code == "US":
+            result = _fallback_holidays_from_db(start_date, end_date)
+            if result:
+                return {"holidays": result}
         years = set([start_date.year, end_date.year])
         result = []
         seen = set()
@@ -302,7 +308,6 @@ async def get_public_holidays_for_range(
             result.sort(key=lambda x: (x["date"], x["name"]))
         except Exception:
             result = []
-        # Fallback: if empty and US, use global_official_holidays
         if not result and country_code == "US":
             result = _fallback_holidays_from_db(start_date, end_date)
         return {"holidays": result}

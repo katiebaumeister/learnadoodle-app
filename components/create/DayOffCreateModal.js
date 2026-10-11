@@ -19,6 +19,7 @@ import {
   useModalStackElevation,
   NESTED_OVER_PARENT_MODAL_Z,
 } from '../hooks/useModalStackElevation';
+import { SCHOOL_YEAR_SETTINGS_UI } from '../planner/planningPreferencesUiCopy';
 
 export default function DayOffCreateModal({
   visible,
@@ -36,6 +37,8 @@ export default function DayOffCreateModal({
   const overlayRef = useRef(null);
   useModalStackElevation(overlayRef, visible, stackZIndex);
   const isEditMode = !!editRow?.id;
+  const isDefaultUsHoliday = editRow?.kind === 'public'
+    || String(editRow?.id || '').startsWith('public-');
   const [title, setTitle] = useState('');
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(null);
@@ -80,6 +83,7 @@ export default function DayOffCreateModal({
   }, [visible, editRow, defaultDate, isEditMode]);
 
   const selectRepeatMode = useCallback((repeating) => {
+    if (isDefaultUsHoliday) return;
     setIsRepeating(repeating);
     if (repeating) {
       const anchor = startDate instanceof Date ? startDate : new Date();
@@ -89,17 +93,19 @@ export default function DayOffCreateModal({
       setRecurrenceEndAfterText('');
       setRecurrenceEndDate(null);
     }
-  }, [startDate]);
+  }, [startDate, isDefaultUsHoliday]);
 
   const handleRecurrenceTypeChange = useCallback((type) => {
+    if (isDefaultUsHoliday) return;
     setRecurrenceType(type);
     if (type === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
       const anchor = startDate instanceof Date ? startDate : new Date();
       setRecurrenceWeekdays([anchor.getDay()]);
     }
-  }, [recurrenceWeekdays, startDate]);
+  }, [recurrenceWeekdays, startDate, isDefaultUsHoliday]);
 
   const validate = useCallback(() => {
+    if (isDefaultUsHoliday) return false;
     const next = {};
     if (!title.trim()) next.title = 'Title is required';
     if (!startDate) next.date = 'Date is required';
@@ -113,9 +119,10 @@ export default function DayOffCreateModal({
     if (!ok) setValidationBanner('Please complete required fields before saving.');
     else setValidationBanner('');
     return ok;
-  }, [title, startDate, startTime, endTime, isRepeating]);
+  }, [title, startDate, startTime, endTime, isRepeating, isDefaultUsHoliday]);
 
   const handleSave = async () => {
+    if (isDefaultUsHoliday) return;
     if (!validate()) return;
     setSubmitting(true);
     try {
@@ -146,13 +153,19 @@ export default function DayOffCreateModal({
     setDeleting(true);
     try {
       await deleteDayOff(editRow);
+      // Await parent update (and DB exclusion write for default US holidays) before closing.
+      // Skip refreshPlanDefaults for default holidays — it reloads settings and can resurrect them.
+      await Promise.resolve(onDeleted?.(editRow));
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
-        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        if (!isDefaultUsHoliday) {
+          window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+        }
+        window.dispatchEvent(new CustomEvent('refreshCalendar', {
+          detail: { forceInvalidate: true, reason: isDefaultUsHoliday ? 'excludedPublicHoliday' : 'dayOffDeleted' },
+        }));
       }
-      toast.push('Day off deleted', 'success');
+      toast.push(isDefaultUsHoliday ? 'Holiday removed from days off' : 'Day off deleted', 'success');
       setShowDeleteConfirm(false);
-      onDeleted?.(editRow);
       onClose?.();
     } catch (err) {
       toast.push(err?.message || 'Failed to delete day off', 'error');
@@ -174,11 +187,11 @@ export default function DayOffCreateModal({
       <Modal visible transparent animationType="fade" onRequestClose={onClose}>
         <View ref={overlayRef} style={{ flex: 1 }}>
           <CreateModalShell
-            title={isEditMode ? 'Edit day off' : 'Day off'}
+            title={isDefaultUsHoliday ? 'Default US holiday' : (isEditMode ? 'Edit day off' : 'Day off')}
             onClose={onClose}
-            onSave={isEditMode ? undefined : handleSave}
+            onSave={isEditMode || isDefaultUsHoliday ? undefined : handleSave}
             saving={submitting}
-            saveDisabled={!title.trim()}
+            saveDisabled={!title.trim() || isDefaultUsHoliday}
             saveLabel="Save changes"
             validationBanner={validationBanner}
             maxWidth={CREATE_EVENT_MODAL_MAX_WIDTH}
@@ -187,30 +200,60 @@ export default function DayOffCreateModal({
                 mode="edit"
                 primaryLabel={submitting ? 'Saving…' : 'Save changes'}
                 onCancel={onClose}
-                onPrimary={handleSave}
+                onPrimary={isDefaultUsHoliday ? undefined : handleSave}
+                hidePrimary={isDefaultUsHoliday}
                 onDelete={() => {
                   if (!submitting && !deleting) setShowDeleteConfirm(true);
                 }}
-                destructiveLabel={deleting ? 'Deleting…' : 'Delete day off'}
+                destructiveLabel={deleting
+                  ? (isDefaultUsHoliday ? 'Removing…' : 'Deleting…')
+                  : (isDefaultUsHoliday ? 'Remove from days off' : 'Delete day off')}
                 accent="#9ECFFB"
                 disabled={submitting || deleting}
-                visuallyDisabled={!title.trim()}
+                visuallyDisabled={isDefaultUsHoliday ? false : !title.trim()}
                 loading={submitting}
-                onBlockedPrimary={() => validate()}
+                onBlockedPrimary={isDefaultUsHoliday ? undefined : () => validate()}
               />
             ) : undefined}
           >
-          <View style={styles.formGroup}>
+          {isDefaultUsHoliday ? (
+            <View
+              style={{
+                marginBottom: 14,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: 'rgba(148, 163, 184, 0.35)',
+                backgroundColor: '#F8FAFC',
+              }}
+            >
+              <Text style={{
+                fontSize: 13,
+                lineHeight: 18,
+                color: '#475569',
+                ...(Platform.OS === 'web' && {
+                  fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                }),
+              }}
+              >
+                {SCHOOL_YEAR_SETTINGS_UI.defaultHolidayNotEditableNote}
+              </Text>
+            </View>
+          ) : null}
+
+          <View style={[styles.formGroup, isDefaultUsHoliday ? { opacity: 0.72 } : null]}>
             <Text style={styles.fieldLabel}>
-              Title<Text style={styles.required}> *</Text>
+              Title{isDefaultUsHoliday ? null : <Text style={styles.required}> *</Text>}
             </Text>
             <TextInput
               value={title}
-              onChangeText={setTitle}
+              onChangeText={isDefaultUsHoliday ? undefined : setTitle}
               placeholder="Day off name"
               placeholderTextColor={PLACEHOLDER}
               style={[styles.fieldInput, errors.title && styles.fieldInputError]}
-              autoFocus
+              editable={!isDefaultUsHoliday}
+              autoFocus={!isDefaultUsHoliday}
             />
             {errors.title ? <Text style={styles.errorTextSmall}>{errors.title}</Text> : null}
           </View>
@@ -225,19 +268,21 @@ export default function DayOffCreateModal({
             onStartTimeChange={setStartTime}
             endTime={endTime}
             onEndTimeChange={setEndTime}
-            onOpenStartDatePicker={() => setDatePickerTarget('start')}
-            onOpenEndDatePicker={() => setDatePickerTarget('end')}
+            onOpenStartDatePicker={isDefaultUsHoliday ? undefined : () => setDatePickerTarget('start')}
+            onOpenEndDatePicker={isDefaultUsHoliday ? undefined : () => setDatePickerTarget('end')}
             startDateError={errors.date}
             timeError={errors.time}
+            disabled={isDefaultUsHoliday}
           />
 
-          <View style={styles.formGroup}>
+          <View style={[styles.formGroup, isDefaultUsHoliday ? { opacity: 0.72 } : null]}>
             <Text style={styles.fieldLabel}>Repeat</Text>
             <View style={styles.chipRow}>
               <TouchableOpacity
                 onPress={() => selectRepeatMode(false)}
+                disabled={isDefaultUsHoliday}
                 style={[styles.dropdownOption, !isRepeating && styles.dropdownOptionActive]}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                {...(Platform.OS === 'web' && { cursor: isDefaultUsHoliday ? 'default' : 'pointer' })}
               >
                 <Text style={[styles.dropdownOptionText, !isRepeating && styles.dropdownOptionTextActive]}>
                   Just once
@@ -245,8 +290,9 @@ export default function DayOffCreateModal({
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => selectRepeatMode(true)}
+                disabled={isDefaultUsHoliday}
                 style={[styles.dropdownOption, isRepeating && styles.dropdownOptionActive]}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                {...(Platform.OS === 'web' && { cursor: isDefaultUsHoliday ? 'default' : 'pointer' })}
               >
                 <Text style={[styles.dropdownOptionText, isRepeating && styles.dropdownOptionTextActive]}>
                   Repeat
@@ -256,7 +302,7 @@ export default function DayOffCreateModal({
             {errors.repeat ? <Text style={styles.errorTextSmall}>{errors.repeat}</Text> : null}
           </View>
 
-          {isRepeating ? (
+          {isRepeating && !isDefaultUsHoliday ? (
             <EventRecurrenceFields
               recurrenceType={recurrenceType}
               onRecurrenceTypeChange={handleRecurrenceTypeChange}
@@ -272,43 +318,66 @@ export default function DayOffCreateModal({
             />
           ) : null}
 
-          <View style={styles.formGroup}>
+          <View style={[styles.formGroup, isDefaultUsHoliday ? { opacity: 0.72 } : null]}>
             <Text style={styles.fieldLabel}>Location (optional)</Text>
             <TextInput
               value={location}
-              onChangeText={setLocation}
+              onChangeText={isDefaultUsHoliday ? undefined : setLocation}
               placeholder="Where is this happening?"
               placeholderTextColor={PLACEHOLDER}
               style={styles.fieldInput}
+              editable={!isDefaultUsHoliday}
             />
           </View>
 
-          <AdditionalNotesSection value={notes} onChangeText={setNotes} />
+          {isDefaultUsHoliday ? (
+            <View style={[styles.formGroup, { opacity: 0.72 }]}>
+              <Text style={styles.fieldLabel}>Additional notes (optional)</Text>
+              <TextInput
+                value={notes}
+                editable={false}
+                placeholder="Anything else to remember."
+                placeholderTextColor={PLACEHOLDER}
+                style={[styles.fieldInput, { minHeight: 88, textAlignVertical: 'top' }]}
+                multiline
+              />
+            </View>
+          ) : (
+            <AdditionalNotesSection value={notes} onChangeText={setNotes} />
+          )}
           </CreateModalShell>
         </View>
       </Modal>
 
-      <AppCalendarDatePickerModal
-        visible={!!datePickerTarget}
-        selectedDate={datePickerValue}
-        onClose={() => setDatePickerTarget(null)}
-        onSelectDate={(nextDate) => {
-          if (datePickerTarget === 'end') setEndDate(nextDate);
-          else if (datePickerTarget === 'recurrenceEnd') setRecurrenceEndDate(nextDate);
-          else setStartDate(nextDate);
-          setDatePickerTarget(null);
-        }}
-      />
+      {!isDefaultUsHoliday ? (
+        <AppCalendarDatePickerModal
+          visible={!!datePickerTarget}
+          selectedDate={datePickerValue}
+          onClose={() => setDatePickerTarget(null)}
+          onSelectDate={(nextDate) => {
+            if (datePickerTarget === 'end') setEndDate(nextDate);
+            else if (datePickerTarget === 'recurrenceEnd') setRecurrenceEndDate(nextDate);
+            else setStartDate(nextDate);
+            setDatePickerTarget(null);
+          }}
+        />
+      ) : null}
 
       <ConfirmDialog
         visible={showDeleteConfirm}
-        title="Delete day off?"
+        title={isDefaultUsHoliday ? 'Remove holiday from days off?' : 'Delete day off?'}
         message={
-          title.trim()
-            ? `"${title.trim()}" will be removed from your school year calendar. This cannot be undone.`
-            : 'This day off will be removed from your school year calendar. This cannot be undone.'
+          isDefaultUsHoliday
+            ? (title.trim()
+              ? `"${title.trim()}" will no longer count as a day off. Default US holidays stay available if you turn the setting back on later.`
+              : 'This default holiday will no longer count as a day off.')
+            : (title.trim()
+              ? `"${title.trim()}" will be removed from your school year calendar. This cannot be undone.`
+              : 'This day off will be removed from your school year calendar. This cannot be undone.')
         }
-        confirmLabel={deleting ? 'Deleting…' : 'Delete day off'}
+        confirmLabel={deleting
+          ? (isDefaultUsHoliday ? 'Removing…' : 'Deleting…')
+          : (isDefaultUsHoliday ? 'Remove from days off' : 'Delete day off')}
         cancelLabel="Cancel"
         destructive
         onCancel={() => {

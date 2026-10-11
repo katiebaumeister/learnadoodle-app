@@ -7078,12 +7078,53 @@ async def apply_to_calendar(
                     "schedule_start_date": getattr(b, "schedule_start_date", None),
                     "schedule_end_date": getattr(b, "schedule_end_date", None),
                 })
-            subject_ids_in_blocks = list({b["subject_id"] for b in blocks_to_use if b["subject_id"]})
-            sub_resp = supabase.table("subject").select("id, name").eq("family_id", body.family_id).in_("id", subject_ids_in_blocks or ["__none__"]).execute()
-            subject_rows = {str(r["id"]): r["name"] for r in (sub_resp.data or [])}
+            subject_ids_in_blocks = list({
+                str(b["subject_id"]).strip()
+                for b in blocks_to_use
+                if b.get("subject_id") and str(b.get("subject_id")).strip()
+            })
+            subject_rows: Dict[str, str] = {}
+            if subject_ids_in_blocks:
+                sub_resp = (
+                    supabase.table("subject")
+                    .select("id, name")
+                    .eq("family_id", body.family_id)
+                    .in_("id", subject_ids_in_blocks)
+                    .execute()
+                )
+                subject_rows = {str(r["id"]): r["name"] for r in (sub_resp.data or [])}
+            # Drop orphan subject blocks left in plan JSON after deletes — don't fail the whole apply.
+            requested_subject_ids = {
+                str(s).strip() for s in (body.subjects or []) if s and str(s).strip()
+            }
+            orphan_ids: List[str] = []
+            kept_blocks: List[Dict[str, Any]] = []
             for b in blocks_to_use:
-                if b["subject_id"] and str(b["subject_id"]) not in subject_rows:
-                    raise HTTPException(status_code=400, detail=f"Subject {b['subject_id']} is invalid or not in this family.")
+                sid = str(b.get("subject_id") or "").strip()
+                if not sid:
+                    kept_blocks.append(b)
+                    continue
+                if sid in subject_rows:
+                    kept_blocks.append(b)
+                else:
+                    orphan_ids.append(sid)
+            if orphan_ids:
+                log_event(
+                    "academic_year.apply_to_calendar.drop_orphan_blocks",
+                    family_id=body.family_id,
+                    orphan_subject_ids=list(dict.fromkeys(orphan_ids)),
+                    kept_blocks=len(kept_blocks),
+                )
+            missing_requested = sorted(s for s in requested_subject_ids if s not in subject_rows)
+            if missing_requested:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Subject {missing_requested[0]} is invalid or not in this family. "
+                        "Refresh the page and try again."
+                    ),
+                )
+            blocks_to_use = kept_blocks
         else:
             if not body.subjects and attendance_tracking_mode != "class_day":
                 raise HTTPException(status_code=400, detail="At least one subject is required, or provide blocks.")

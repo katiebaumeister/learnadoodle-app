@@ -17,9 +17,11 @@ export function ModalFooter({
   loading = false,
   onBlockedPrimary,
   compact = false,
+  hidePrimary = false,
 }) {
   const isPrimaryBlocked = Boolean(disabled || visuallyDisabled);
   const showDelete = mode === 'edit' && !!destructiveLabel;
+  const showPrimary = !hidePrimary && !!primaryLabel;
   const extraSecondaryActions = Array.isArray(secondaryActions) ? secondaryActions : [];
   const rowStyle = compact ? styles.rowCompact : styles.row;
   const cancelStyle = compact ? styles.cancelButtonCompact : styles.cancelButton;
@@ -42,33 +44,35 @@ export function ModalFooter({
           <X size={16} color="#374151" />
           <Text style={[cancelTextStyle, loading && styles.buttonTextDisabled]}>Cancel</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => {
-            if (loading) return;
-            if (isPrimaryBlocked) {
-              onBlockedPrimary?.();
-              return;
-            }
-            onPrimary?.();
-          }}
-          disabled={loading}
-          style={[
-            primaryStyle,
-            {
-              backgroundColor: loading ? '#B7BFCD' : accent,
-              borderColor: loading ? '#B7BFCD' : accent,
-            },
-          ]}
-          activeOpacity={0.9}
-          {...(Platform.OS === 'web' && { cursor: loading ? 'not-allowed' : 'pointer' })}
-        >
-          {mode === 'edit' ? (
-            <Check size={14} color="#FFF" />
-          ) : (
-            <Sparkles size={14} color="#FFF" />
-          )}
-          <Text style={primaryTextStyle}>{primaryLabel}</Text>
-        </TouchableOpacity>
+        {showPrimary ? (
+          <TouchableOpacity
+            onPress={() => {
+              if (loading) return;
+              if (isPrimaryBlocked) {
+                onBlockedPrimary?.();
+                return;
+              }
+              onPrimary?.();
+            }}
+            disabled={loading}
+            style={[
+              primaryStyle,
+              {
+                backgroundColor: loading ? '#B7BFCD' : accent,
+                borderColor: loading ? '#B7BFCD' : accent,
+              },
+            ]}
+            activeOpacity={0.9}
+            {...(Platform.OS === 'web' && { cursor: loading ? 'not-allowed' : 'pointer' })}
+          >
+            {mode === 'edit' ? (
+              <Check size={14} color="#FFF" />
+            ) : (
+              <Sparkles size={14} color="#FFF" />
+            )}
+            <Text style={primaryTextStyle}>{primaryLabel}</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     );
   }
@@ -126,36 +130,38 @@ export function ModalFooter({
             </TouchableOpacity>
           );
         })}
-        <TouchableOpacity
-          onPress={() => {
-            if (loading) return;
-            if (isPrimaryBlocked) {
-              onBlockedPrimary?.();
-              return;
-            }
-            onPrimary?.();
-          }}
-          disabled={loading}
-          style={[
-            primaryStyle,
-            {
-              backgroundColor: loading ? '#B7BFCD' : accent,
-              borderColor: loading ? '#B7BFCD' : accent,
-            },
-            loading && styles.buttonDisabled,
-          ]}
-          activeOpacity={0.9}
-          accessibilityRole="button"
-          accessibilityLabel={primaryLabel}
-          {...(Platform.OS === 'web' && { cursor: loading ? 'not-allowed' : 'pointer' })}
-        >
-          {mode === 'edit' ? (
-            <Check size={16} color="#FFF" />
-          ) : (
-            <Sparkles size={16} color="#FFF" />
-          )}
-          <Text style={primaryTextStyle}>{primaryLabel}</Text>
-        </TouchableOpacity>
+        {showPrimary ? (
+          <TouchableOpacity
+            onPress={() => {
+              if (loading) return;
+              if (isPrimaryBlocked) {
+                onBlockedPrimary?.();
+                return;
+              }
+              onPrimary?.();
+            }}
+            disabled={loading}
+            style={[
+              primaryStyle,
+              {
+                backgroundColor: loading ? '#B7BFCD' : accent,
+                borderColor: loading ? '#B7BFCD' : accent,
+              },
+              loading && styles.buttonDisabled,
+            ]}
+            activeOpacity={0.9}
+            accessibilityRole="button"
+            accessibilityLabel={primaryLabel}
+            {...(Platform.OS === 'web' && { cursor: loading ? 'not-allowed' : 'pointer' })}
+          >
+            {mode === 'edit' ? (
+              <Check size={16} color="#FFF" />
+            ) : (
+              <Sparkles size={16} color="#FFF" />
+            )}
+            <Text style={primaryTextStyle}>{primaryLabel}</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     </View>
   );
