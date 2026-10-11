@@ -22,6 +22,7 @@ import {
   getPlanDefaultsFromSettings,
   syncFamilyHolidayBreakExclusions,
   saveExcludedPublicHolidayDates,
+  mapPlannerExclusionsToHolidayBreakUi,
 } from '../../lib/services/plannerSettingsClient';
 import { getPublicHolidaysForRange } from '../../lib/services/academicYearClient';
 import { getUsFederalHolidaysForRange } from '../../lib/usFederalHolidays';
@@ -505,6 +506,163 @@ const getInitialPlannerSettingsSnapshot = ({
   return persisted && typeof persisted === 'object' ? persisted : null;
 };
 
+/** First-paint seed from preloaded API data + session snapshot so the modal never flashes empty. */
+const buildPlannerFormSeed = ({
+  familyId,
+  lockedSchoolYearLabel,
+  initialSchoolYearLabel,
+  initialData,
+}) => {
+  const snapshot = getInitialPlannerSettingsSnapshot({
+    familyId,
+    lockedSchoolYearLabel,
+    initialSchoolYearLabel,
+  }) || {};
+  const settings = initialData?.settings && typeof initialData.settings === 'object'
+    ? initialData.settings
+    : null;
+  const yearLabel = normalizeSchoolYearLabel(
+    String(
+      lockedSchoolYearLabel
+      || initialSchoolYearLabel
+      || settings?.school_year_label
+      || settings?.default_school_year
+      || snapshot.selectedSchoolYearLabel
+      || ''
+    ).trim()
+  ) || deriveInitialSchoolYearLabel(normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim()));
+  const rangeDefaults = schoolYearRangeDefaults(yearLabel);
+  const coerced = settings ? coerceRangeDatesToSchoolYear(settings, yearLabel) : {};
+  const mappedExclusions = mapPlannerExclusionsToHolidayBreakUi(
+    Array.isArray(initialData?.exclusions) ? initialData.exclusions : []
+  );
+  const yearStart = String(
+    coerced.default_year_start_date
+    || settings?.default_year_start_date
+    || snapshot.defaultYearStartDate
+    || rangeDefaults.yearStart
+    || ''
+  ).slice(0, 10);
+  const yearEnd = String(
+    coerced.default_year_end_date
+    || settings?.default_year_end_date
+    || snapshot.defaultYearEndDate
+    || rangeDefaults.yearEnd
+    || ''
+  ).slice(0, 10);
+  const attendanceTrackingMode = getAttendanceMode({
+    academicYearMode: settings?.attendance_tracking_mode ?? snapshot.attendanceTrackingMode,
+    fallback: ATTENDANCE_MODES.CLASS_DAY,
+  });
+  const subjectsList = Array.isArray(initialData?.subjects)
+    ? initialData.subjects
+    : (Array.isArray(snapshot.subjects) ? snapshot.subjects : []);
+  const { subjectTargetsMap } = deriveSubjectTargetState(subjectsList);
+  const publicHolidays = (() => {
+    if (Array.isArray(snapshot.publicHolidays) && snapshot.publicHolidays.length > 0) {
+      return normalizePublicHolidayList(snapshot.publicHolidays);
+    }
+    const builtIn = getUsFederalHolidaysForRange(yearStart, yearEnd);
+    if (builtIn.length > 0) return builtIn;
+    return readPublicHolidaysCache('US', yearStart, yearEnd) || [];
+  })();
+  const customHolidays = mappedExclusions.customHolidays.length > 0
+    ? mappedExclusions.customHolidays
+    : (Array.isArray(snapshot.customHolidays) ? snapshot.customHolidays : []);
+  const customBreaks = mappedExclusions.customBreaks.length > 0
+    ? mappedExclusions.customBreaks
+    : (Array.isArray(snapshot.customBreaks) ? snapshot.customBreaks : []);
+
+  return {
+    selectedSchoolYearLabel: yearLabel,
+    attendanceTrackingMode,
+    targetScope: resolveTargetScopeForAttendanceMode(attendanceTrackingMode),
+    goalMode: settings?.default_constraint_mode || snapshot.goalMode || 'days',
+    targetDays: settings?.default_target_days != null
+      ? String(settings.default_target_days)
+      : (snapshot.targetDays ?? '0'),
+    targetHours: settings?.default_target_hours != null
+      ? String(settings.default_target_hours)
+      : (snapshot.targetHours ?? '0'),
+    learningStartTime: normalizeLearningTimeDisplay(
+      settings?.default_day_start_time ?? snapshot.learningStartTime,
+      DEFAULT_LEARNING_START_TIME
+    ),
+    learningEndTime: normalizeLearningTimeDisplay(
+      settings?.default_day_end_time ?? snapshot.learningEndTime,
+      DEFAULT_LEARNING_END_TIME
+    ),
+    preferredLearningDayNums: normalizeAllowedWeekdays(
+      settings?.allowed_weekdays ?? snapshot.preferredLearningDayNums
+    ),
+    followGlobalHolidays: settings
+      ? settings.follow_public_holidays !== false
+      : snapshot.followGlobalHolidays !== false,
+    excludedPublicHolidayDates: Array.isArray(initialData?.excluded_holiday_dates)
+      ? initialData.excluded_holiday_dates
+      : (Array.isArray(snapshot.excludedPublicHolidayDates) ? snapshot.excludedPublicHolidayDates : []),
+    publicHolidays,
+    customHolidays,
+    customBreaks,
+    defaultYearStartDate: yearStart,
+    defaultYearEndDate: yearEnd,
+    defaultFallStartDate: String(
+      coerced.default_fall_term_start_date
+      || settings?.default_fall_term_start_date
+      || snapshot.defaultFallStartDate
+      || rangeDefaults.fallStart
+      || ''
+    ).slice(0, 10),
+    defaultFallEndDate: String(
+      coerced.default_fall_term_end_date
+      || settings?.default_fall_term_end_date
+      || snapshot.defaultFallEndDate
+      || rangeDefaults.fallEnd
+      || ''
+    ).slice(0, 10),
+    defaultSpringStartDate: String(
+      coerced.default_spring_term_start_date
+      || settings?.default_spring_term_start_date
+      || snapshot.defaultSpringStartDate
+      || rangeDefaults.springStart
+      || ''
+    ).slice(0, 10),
+    defaultSpringEndDate: String(
+      coerced.default_spring_term_end_date
+      || settings?.default_spring_term_end_date
+      || snapshot.defaultSpringEndDate
+      || rangeDefaults.springEnd
+      || ''
+    ).slice(0, 10),
+    defaultSummerStartDate: String(
+      coerced.default_summer_term_start_date
+      || settings?.default_summer_term_start_date
+      || settings?.default_summer_start_date
+      || snapshot.defaultSummerStartDate
+      || rangeDefaults.summerStart
+      || ''
+    ).slice(0, 10),
+    defaultSummerEndDate: String(
+      coerced.default_summer_term_end_date
+      || settings?.default_summer_term_end_date
+      || settings?.default_summer_end_date
+      || snapshot.defaultSummerEndDate
+      || rangeDefaults.summerEnd
+      || ''
+    ).slice(0, 10),
+    subjects: subjectsList,
+    subjectTargets: Object.keys(subjectTargetsMap).length > 0
+      ? subjectTargetsMap
+      : (snapshot.subjectTargets && typeof snapshot.subjectTargets === 'object' ? snapshot.subjectTargets : {}),
+  };
+};
+
+const sameWeekdayList = (a, b) => {
+  const left = normalizeAllowedWeekdays(a).join(',');
+  const right = normalizeAllowedWeekdays(b).join(',');
+  return left === right;
+};
+
 export default function PlannerSettingsContent({
   familyId,
   onSave,
@@ -535,14 +693,17 @@ export default function PlannerSettingsContent({
   const showAttendanceSection = capabilities.showAttendance && !onboardingStep;
   const isHomeschoolMode = familyApproach === PLANNING_MODES.HOMESCHOOL_COMPLIANCE;
   const resolvedPageTitle = pageTitle || (isHomeschoolMode ? 'School Year' : 'Schedule Settings');
-  const initialSnapshot = getInitialPlannerSettingsSnapshot({
-    familyId,
-    lockedSchoolYearLabel,
-    initialSchoolYearLabel,
-  });
-  const [loading, setLoading] = useState(
-    embeddedInModal && !initialData && !initialSnapshot && !onboardingStep
-  );
+  const formSeedRef = useRef(null);
+  if (formSeedRef.current == null) {
+    formSeedRef.current = buildPlannerFormSeed({
+      familyId,
+      lockedSchoolYearLabel,
+      initialSchoolYearLabel,
+      initialData,
+    });
+  }
+  const formSeed = formSeedRef.current;
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedIndicator, setSavedIndicator] = useState(false);
   const [hasPendingModalSave, setHasPendingModalSave] = useState(false);
@@ -562,95 +723,60 @@ export default function PlannerSettingsContent({
   const resetDefaultsWhenNoSubjectsInFlightRef = useRef(false);
 
   const stateRef = useRef({});
-  const initialAttendanceTrackingMode = getAttendanceMode({
-    academicYearMode: initialSnapshot?.attendanceTrackingMode,
-    fallback: ATTENDANCE_MODES.CLASS_DAY,
-  });
-  const initialSelectedYearLabelFromSnapshot = normalizeSchoolYearLabel(initialSnapshot?.selectedSchoolYearLabel);
-  const normalizedInitialSchoolYearLabel = normalizeSchoolYearLabel(
-    String(initialSchoolYearLabel || lockedSchoolYearLabel || '').trim()
-  );
-  const initialSelectedSchoolYearLabel = initialSelectedYearLabelFromSnapshot || deriveInitialSchoolYearLabel(
-    normalizedInitialSchoolYearLabel
-  );
 
-  // Target scope: overall (one target) vs per_subject
-  const [targetScope, setTargetScope] = useState(resolveTargetScopeForAttendanceMode(initialAttendanceTrackingMode));
-  const [attendanceTrackingMode, setAttendanceTrackingMode] = useState(initialAttendanceTrackingMode);
+  // Target scope: overall (one target) vs per_subject — seeded for stable first paint.
+  const [targetScope, setTargetScope] = useState(formSeed.targetScope);
+  const [attendanceTrackingMode, setAttendanceTrackingMode] = useState(formSeed.attendanceTrackingMode);
 
   // Goal defaults (scope is now derived from attendance mode)
-  const [goalMode, setGoalMode] = useState(initialSnapshot?.goalMode || 'days');
-  const [targetDays, setTargetDays] = useState(initialSnapshot?.targetDays ?? '0');
-  const [targetHours, setTargetHours] = useState(initialSnapshot?.targetHours ?? '0');
-  const [learningStartTime, setLearningStartTime] = useState(
-    normalizeLearningTimeDisplay(initialSnapshot?.learningStartTime, DEFAULT_LEARNING_START_TIME)
-  );
-  const [learningEndTime, setLearningEndTime] = useState(
-    normalizeLearningTimeDisplay(initialSnapshot?.learningEndTime, DEFAULT_LEARNING_END_TIME)
-  );
-  const [preferredLearningDayNums, setPreferredLearningDayNums] = useState(
-    normalizeAllowedWeekdays(initialSnapshot?.preferredLearningDayNums)
-  );
+  const [goalMode, setGoalMode] = useState(formSeed.goalMode);
+  const [targetDays, setTargetDays] = useState(formSeed.targetDays);
+  const [targetHours, setTargetHours] = useState(formSeed.targetHours);
+  const [learningStartTime, setLearningStartTime] = useState(formSeed.learningStartTime);
+  const [learningEndTime, setLearningEndTime] = useState(formSeed.learningEndTime);
+  const [preferredLearningDayNums, setPreferredLearningDayNums] = useState(formSeed.preferredLearningDayNums);
 
   // Public holidays
-  const [followGlobalHolidays, setFollowGlobalHolidays] = useState(initialSnapshot?.followGlobalHolidays !== false);
-  const [excludedPublicHolidayDates, setExcludedPublicHolidayDates] = useState(
-    Array.isArray(initialSnapshot?.excludedPublicHolidayDates) ? initialSnapshot.excludedPublicHolidayDates : []
-  );
+  const [followGlobalHolidays, setFollowGlobalHolidays] = useState(formSeed.followGlobalHolidays);
+  const [excludedPublicHolidayDates, setExcludedPublicHolidayDates] = useState(formSeed.excludedPublicHolidayDates);
   const countryCode = 'US';
   const regionCode = null;
   // Followed public holidays for the selected year range (dates + names for Days off list
   // and the "learning days available" readout). Prefer built-in US calendar (instant).
-  const [publicHolidays, setPublicHolidays] = useState(() => {
-    const start = String(initialSnapshot?.defaultYearStartDate || '').slice(0, 10);
-    const end = String(initialSnapshot?.defaultYearEndDate || '').slice(0, 10);
-    if (Array.isArray(initialSnapshot?.publicHolidays) && initialSnapshot.publicHolidays.length > 0) {
-      return normalizePublicHolidayList(initialSnapshot.publicHolidays);
-    }
-    const builtIn = getUsFederalHolidaysForRange(start, end);
-    if (builtIn.length > 0) return builtIn;
-    return readPublicHolidaysCache('US', start, end) || [];
-  });
+  const [publicHolidays, setPublicHolidays] = useState(formSeed.publicHolidays);
   const publicHolidayDates = useMemo(
     () => (publicHolidays || []).map((h) => String(h?.date || '').slice(0, 10)).filter(Boolean),
     [publicHolidays]
   );
 
   // Custom days & ranges (stored as holiday / break exclusions in API; managed via calendar events)
-  const [customHolidays, setCustomHolidays] = useState(
-    Array.isArray(initialSnapshot?.customHolidays) ? initialSnapshot.customHolidays : []
-  );
-  const [customBreaks, setCustomBreaks] = useState(
-    Array.isArray(initialSnapshot?.customBreaks) ? initialSnapshot.customBreaks : []
-  );
+  const [customHolidays, setCustomHolidays] = useState(formSeed.customHolidays);
+  const [customBreaks, setCustomBreaks] = useState(formSeed.customBreaks);
   const [showDayOffModal, setShowDayOffModal] = useState(false);
   const [editingDayOffRow, setEditingDayOffRow] = useState(null);
   const [pendingDayOffDate, setPendingDayOffDate] = useState(null);
-  const [defaultYearStartDate, setDefaultYearStartDate] = useState(initialSnapshot?.defaultYearStartDate || '');
-  const [defaultYearEndDate, setDefaultYearEndDate] = useState(initialSnapshot?.defaultYearEndDate || '');
-  const [defaultFallStartDate, setDefaultFallStartDate] = useState(initialSnapshot?.defaultFallStartDate || '');
-  const [defaultFallEndDate, setDefaultFallEndDate] = useState(initialSnapshot?.defaultFallEndDate || '');
-  const [defaultSpringStartDate, setDefaultSpringStartDate] = useState(initialSnapshot?.defaultSpringStartDate || '');
-  const [defaultSpringEndDate, setDefaultSpringEndDate] = useState(initialSnapshot?.defaultSpringEndDate || '');
-  const [defaultSummerStartDate, setDefaultSummerStartDate] = useState(initialSnapshot?.defaultSummerStartDate || '');
-  const [defaultSummerEndDate, setDefaultSummerEndDate] = useState(initialSnapshot?.defaultSummerEndDate || '');
+  const [defaultYearStartDate, setDefaultYearStartDate] = useState(formSeed.defaultYearStartDate);
+  const [defaultYearEndDate, setDefaultYearEndDate] = useState(formSeed.defaultYearEndDate);
+  const [defaultFallStartDate, setDefaultFallStartDate] = useState(formSeed.defaultFallStartDate);
+  const [defaultFallEndDate, setDefaultFallEndDate] = useState(formSeed.defaultFallEndDate);
+  const [defaultSpringStartDate, setDefaultSpringStartDate] = useState(formSeed.defaultSpringStartDate);
+  const [defaultSpringEndDate, setDefaultSpringEndDate] = useState(formSeed.defaultSpringEndDate);
+  const [defaultSummerStartDate, setDefaultSummerStartDate] = useState(formSeed.defaultSummerStartDate);
+  const [defaultSummerEndDate, setDefaultSummerEndDate] = useState(formSeed.defaultSummerEndDate);
 
   // Subject targets (per-subject defaults)
-  const [subjects, setSubjects] = useState(Array.isArray(initialSnapshot?.subjects) ? initialSnapshot.subjects : []);
-  const [subjectTargets, setSubjectTargets] = useState(
-    initialSnapshot?.subjectTargets && typeof initialSnapshot.subjectTargets === 'object'
-      ? initialSnapshot.subjectTargets
-      : {}
-  ); // { subjectId: { mode, days, hours } }
-  const [selectedSchoolYearLabel, setSelectedSchoolYearLabel] = useState(initialSelectedSchoolYearLabel);
+  const [subjects, setSubjects] = useState(formSeed.subjects);
+  const [subjectTargets, setSubjectTargets] = useState(formSeed.subjectTargets);
+  const [selectedSchoolYearLabel, setSelectedSchoolYearLabel] = useState(formSeed.selectedSchoolYearLabel);
   const [schoolYearOptions] = useState(() => getFallbackSchoolYearOptions());
   const [showEmbeddedSchoolYearDropdown, setShowEmbeddedSchoolYearDropdown] = useState(false);
   const embeddedSchoolYearTriggerRef = useRef(null);
   const [showAttendanceModeDropdown, setShowAttendanceModeDropdown] = useState(false);
   const [attendanceModeMenuAnchor, setAttendanceModeMenuAnchor] = useState(null);
   const attendanceModeTriggerRef = useRef(null);
-  const hasHydratedSnapshotRef = useRef(Boolean(initialSnapshot));
+  const hasHydratedSnapshotRef = useRef(true);
   const appliedInitialDataKeyRef = useRef('');
+  const selectedYearLabelSeededRef = useRef(formSeed.selectedSchoolYearLabel);
   const initialDataRef = useRef(initialData);
   useEffect(() => {
     initialDataRef.current = initialData;
@@ -698,7 +824,10 @@ export default function PlannerSettingsContent({
     setTargetHours(cached.targetHours ?? '0');
     setLearningStartTime(normalizeLearningTimeDisplay(cached.learningStartTime, DEFAULT_LEARNING_START_TIME));
     setLearningEndTime(normalizeLearningTimeDisplay(cached.learningEndTime, DEFAULT_LEARNING_END_TIME));
-    setPreferredLearningDayNums(normalizeAllowedWeekdays(cached.preferredLearningDayNums));
+    setPreferredLearningDayNums((prev) => {
+      const next = normalizeAllowedWeekdays(cached.preferredLearningDayNums);
+      return sameWeekdayList(prev, next) ? prev : next;
+    });
     setFollowGlobalHolidays(cached.followGlobalHolidays !== false);
     setExcludedPublicHolidayDates(Array.isArray(cached.excludedPublicHolidayDates) ? cached.excludedPublicHolidayDates : []);
     if (Array.isArray(cached.publicHolidays) && cached.publicHolidays.length > 0) {
@@ -894,7 +1023,15 @@ export default function PlannerSettingsContent({
   }, [familyId, readOnly, selectedSchoolYearLabel, selectedYearMeta.end, selectedYearMeta.start]);
 
   useEffect(() => {
-    const seeded = schoolYearRangeDefaults(selectedSchoolYearLabel);
+    const label = normalizeSchoolYearLabel(selectedSchoolYearLabel);
+    if (!label) return;
+    // First mount already seeded from cache/initialData — do not overwrite (causes flashes).
+    if (selectedYearLabelSeededRef.current === label) return;
+    const prevLabel = selectedYearLabelSeededRef.current;
+    selectedYearLabelSeededRef.current = label;
+    // Only replace term ranges when the user actually changes school year.
+    if (!prevLabel) return;
+    const seeded = schoolYearRangeDefaults(label);
     setDefaultYearStartDate(seeded.yearStart);
     setDefaultYearEndDate(seeded.yearEnd);
     setDefaultFallStartDate(seeded.fallStart);
@@ -903,6 +1040,11 @@ export default function PlannerSettingsContent({
     setDefaultSpringEndDate(seeded.springEnd);
     setDefaultSummerStartDate(seeded.summerStart);
     setDefaultSummerEndDate(seeded.summerEnd);
+    const builtIn = getUsFederalHolidaysForRange(seeded.yearStart, seeded.yearEnd);
+    if (builtIn.length > 0) {
+      setPublicHolidays(builtIn);
+      writePublicHolidaysCache('US', seeded.yearStart, seeded.yearEnd, builtIn);
+    }
   }, [selectedSchoolYearLabel]);
 
   const visibleSubjects = useMemo(
@@ -1110,21 +1252,18 @@ export default function PlannerSettingsContent({
         ? (s.default_target_hours != null ? String(s.default_target_hours) : '0')
         : '0'
     );
-    setLearningStartTime(
-      matchesInitialDataYear
-        ? normalizeLearningTimeDisplay(s.default_day_start_time, DEFAULT_LEARNING_START_TIME)
-        : normalizeLearningTimeDisplay(DEFAULT_LEARNING_START_TIME, DEFAULT_LEARNING_START_TIME)
-    );
-    setLearningEndTime(
-      matchesInitialDataYear
-        ? normalizeLearningTimeDisplay(s.default_day_end_time, DEFAULT_LEARNING_END_TIME)
-        : normalizeLearningTimeDisplay(DEFAULT_LEARNING_END_TIME, DEFAULT_LEARNING_END_TIME)
-    );
-    setPreferredLearningDayNums(
-      matchesInitialDataYear
-        ? normalizeAllowedWeekdays(s.allowed_weekdays)
-        : [...DEFAULT_ALLOWED_WEEKDAYS]
-    );
+    const nextLearningStart = matchesInitialDataYear
+      ? normalizeLearningTimeDisplay(s.default_day_start_time, DEFAULT_LEARNING_START_TIME)
+      : normalizeLearningTimeDisplay(DEFAULT_LEARNING_START_TIME, DEFAULT_LEARNING_START_TIME);
+    const nextLearningEnd = matchesInitialDataYear
+      ? normalizeLearningTimeDisplay(s.default_day_end_time, DEFAULT_LEARNING_END_TIME)
+      : normalizeLearningTimeDisplay(DEFAULT_LEARNING_END_TIME, DEFAULT_LEARNING_END_TIME);
+    const nextWeekdays = matchesInitialDataYear
+      ? normalizeAllowedWeekdays(s.allowed_weekdays)
+      : [...DEFAULT_ALLOWED_WEEKDAYS];
+    setLearningStartTime((prev) => (prev === nextLearningStart ? prev : nextLearningStart));
+    setLearningEndTime((prev) => (prev === nextLearningEnd ? prev : nextLearningEnd));
+    setPreferredLearningDayNums((prev) => (sameWeekdayList(prev, nextWeekdays) ? prev : nextWeekdays));
     setFollowGlobalHolidays(matchesInitialDataYear ? s.follow_public_holidays !== false : true);
     if (s.default_school_year && !isSchoolYearLocked) {
       const normalizedDefaultYear = normalizeSchoolYearLabel(String(s.default_school_year));

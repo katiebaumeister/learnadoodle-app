@@ -132,10 +132,11 @@ export default function SchoolYearSettingsModal({
     schoolYearLabelRef.current = targetYear;
     setSavedSinceOpen(false);
     savedSinceOpenRef.current = false;
+    // Paint immediately from cache (or empty seed inside content) — never blank the form while refetching.
+    setContentReady(true);
     let cancelled = false;
-    setContentReady(false);
     (async () => {
-      // Always refetch on open so Planner/Learning modal matches latest Settings saves.
+      // Soft-revalidate in background; keep existing year payload until the fresh one arrives.
       await preloadData(targetYear, { force: true });
       if (!cancelled) setContentReady(true);
     })();

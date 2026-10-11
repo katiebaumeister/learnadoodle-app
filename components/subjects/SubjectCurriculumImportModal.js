@@ -14,7 +14,7 @@ import {
   Platform,
   StyleSheet,
 } from 'react-native';
-import { X, Sparkles } from 'lucide-react';
+import { X, Sparkles, ChevronLeft } from 'lucide-react';
 import { useToast } from '../Toast';
 import ManualCurriculumBuilderModal from '../ManualCurriculumBuilderModal';
 import EventAttachmentsField from '../create/shared/EventAttachmentsField';
@@ -34,11 +34,20 @@ const INPUT_TITLES = {
   generate: 'Generate curriculum',
   upload: 'Upload material',
   paste_plain: 'Paste plain text',
+  unified: 'Create classwork',
 };
+
+function looksLikeOutline(text) {
+  const value = String(text || '').trim();
+  if (!value) return false;
+  if (value.includes('\n')) return true;
+  return /\bunit\s*\d|\blesson\s*\d|^[-*•]/i.test(value);
+}
 
 export default function SubjectCurriculumImportModal({
   visible,
   onClose,
+  onBack = null,
   onSaved,
   familyId,
   subject,
@@ -48,6 +57,7 @@ export default function SubjectCurriculumImportModal({
   initialMethod = null,
   academicYearId = null,
   initialMaterialId = null,
+  initialNotes = '',
   autoContinueOnOpen = false,
   headerTitle = null,
   detectDates = false,
@@ -92,6 +102,17 @@ export default function SubjectCurriculumImportModal({
     onClose?.();
   }, [onClose, reset]);
 
+  const handleBack = useCallback(() => {
+    if (typeof onBack === 'function') {
+      reset();
+      onBack();
+      return;
+    }
+    handleClose();
+  }, [onBack, reset, handleClose]);
+
+  const showBack = typeof onBack === 'function';
+
   const loadPlanningContext = useCallback(async () => {
     const ctx = await buildSubjectCurriculumPlanningContext({
       familyId,
@@ -130,6 +151,9 @@ export default function SubjectCurriculumImportModal({
       ? ' Review before saving, previously saved units and lessons will be overridden.'
       : ' This creates a draft only. Nothing is saved until you review and press Save. Your subject has no saved units yet, so this won’t overwrite anything.';
 
+    if (method === 'unified') {
+      return `Add a description and/or attach a syllabus. We will draft units and lessons sized to your saved school year schedule so you can edit before saving.${scheduleBit}${persistBit}`;
+    }
     if (method === 'generate') {
       return `Describe what this course should cover. We will generate units and lessons sized to your saved school year schedule so you can edit before saving.${scheduleBit}${persistBit}`;
     }
@@ -171,8 +195,9 @@ export default function SubjectCurriculumImportModal({
     };
   }, [planningCtx, loadPlanningContext, detectDates]);
 
-  const handleParse = async () => {
-    if (!familyId || !subjectId || !rawText.trim()) return;
+  const handleParse = async (textOverride = null) => {
+    const text = String(textOverride ?? rawText ?? '').trim();
+    if (!familyId || !subjectId || !text) return;
     setWorking(true);
     setStatusText('Parsing with your subject schedule…');
     try {
@@ -182,7 +207,7 @@ export default function SubjectCurriculumImportModal({
           subject_id: subjectId,
           family_id: familyId,
           subject_name: subjectName,
-          raw_text: rawText.trim(),
+          raw_text: text,
           source_title: `${subjectName} import`,
           ...extras,
         },
@@ -224,19 +249,21 @@ export default function SubjectCurriculumImportModal({
     }
   }, [familyId, subjectId, selectedMaterialId, subjectName, openDraftEditor, toast, parsePayloadExtras]);
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (notesOverride = null) => {
     if (!familyId || !subjectId) return;
     setWorking(true);
     setStatusText('Generating curriculum for your schedule…');
     try {
       const ctx = planningCtx || await loadPlanningContext();
+      const scope = String(notesOverride ?? generateNotes ?? '').trim()
+        || `Build units and lessons for ${subjectName}.`;
       const { data, error } = await generateCurriculumDraftStream(
         {
           subject_id: subjectId,
           family_id: familyId,
           subject_name: subjectName,
           child_ids: assignedChildIds,
-          generation_scope: generateNotes.trim() || `Build units and lessons for ${subjectName}.`,
+          generation_scope: scope,
           planning_context: ctx?.planning_context || null,
           duration_mode: ctx?.duration_mode || 'multi_unit_course',
           lesson_count_target: ctx?.lesson_count_target || null,
@@ -260,6 +287,20 @@ export default function SubjectCurriculumImportModal({
     }
   };
 
+  const handleUnifiedSubmit = async () => {
+    const text = String(generateNotes || rawText || '').trim();
+    if (selectedMaterialId) {
+      await handleUploadParse();
+      return;
+    }
+    if (!text) return;
+    if (looksLikeOutline(text)) {
+      await handleParse(text);
+      return;
+    }
+    await handleGenerate(text);
+  };
+
   const handleEditorSaved = useCallback(() => {
     onSaved?.();
     handleClose();
@@ -270,21 +311,44 @@ export default function SubjectCurriculumImportModal({
       reset();
       return;
     }
-    if (method === 'upload' && initialMaterialId) {
+    if (initialMaterialId && (method === 'upload' || method === 'unified')) {
       setSelectedMaterialId(String(initialMaterialId));
     }
-    const pendingPaste = consumePendingMagicExtractPaste();
-    if (pendingPaste && method === 'paste_plain') {
-      setRawText(pendingPaste);
+    const seedNotes = typeof initialNotes === 'string' ? initialNotes.trim() : '';
+    if (seedNotes && method === 'unified') {
+      setGenerateNotes(seedNotes);
+      setRawText(seedNotes);
     }
-  }, [visible, method, initialMaterialId, reset]);
+    const pendingPaste = consumePendingMagicExtractPaste();
+    if (pendingPaste && (method === 'paste_plain' || method === 'unified')) {
+      setRawText(pendingPaste);
+      if (method === 'unified') setGenerateNotes(pendingPaste);
+    }
+  }, [visible, method, initialMaterialId, initialNotes, reset]);
 
   useEffect(() => {
-    if (!visible || !autoContinueOnOpen || method !== 'upload' || !selectedMaterialId) return;
-    if (autoContinueStartedRef.current || working || editorDraft) return;
-    autoContinueStartedRef.current = true;
-    handleUploadParse();
-  }, [visible, autoContinueOnOpen, method, selectedMaterialId, working, editorDraft, handleUploadParse]);
+    if (!visible || !autoContinueOnOpen || working || editorDraft) return;
+    if (autoContinueStartedRef.current) return;
+    if (method === 'upload' && selectedMaterialId) {
+      autoContinueStartedRef.current = true;
+      handleUploadParse();
+      return;
+    }
+    if (method === 'unified' && (selectedMaterialId || String(generateNotes || rawText || '').trim())) {
+      autoContinueStartedRef.current = true;
+      handleUnifiedSubmit();
+    }
+  }, [
+    visible,
+    autoContinueOnOpen,
+    method,
+    selectedMaterialId,
+    generateNotes,
+    rawText,
+    working,
+    editorDraft,
+    handleUploadParse,
+  ]);
 
   const inputTitle = useMemo(
     () => (headerTitle && String(headerTitle).trim()) || INPUT_TITLES[method] || 'Add units',
@@ -293,13 +357,17 @@ export default function SubjectCurriculumImportModal({
 
   const canSubmit = useMemo(() => {
     if (working) return false;
+    if (method === 'unified') {
+      return Boolean(selectedMaterialId || String(generateNotes || rawText || '').trim());
+    }
     if (method === 'generate') return true;
     if (method === 'upload') return !!selectedMaterialId;
     return !!rawText.trim();
-  }, [working, method, selectedMaterialId, rawText]);
+  }, [working, method, selectedMaterialId, rawText, generateNotes]);
 
   const handlePrimaryAction = () => {
-    if (method === 'generate') handleGenerate();
+    if (method === 'unified') handleUnifiedSubmit();
+    else if (method === 'generate') handleGenerate();
     else if (method === 'upload') handleUploadParse();
     else handleParse();
   };
@@ -350,6 +418,37 @@ export default function SubjectCurriculumImportModal({
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
+              {method === 'unified' ? (
+                <>
+                  <Text style={styles.intro}>{introCopy}</Text>
+                  <Text style={styles.label}>Description</Text>
+                  <TextInput
+                    value={generateNotes}
+                    onChangeText={(value) => {
+                      setGenerateNotes(value);
+                      setRawText(value);
+                    }}
+                    placeholder={`e.g. 6th grade ${subjectName}, 12 weeks, include projects — or paste a unit outline`}
+                    placeholderTextColor="#9ca3af"
+                    multiline
+                    numberOfLines={10}
+                    scrollEnabled
+                    style={[styles.input, styles.textAreaLarge]}
+                    editable={!working}
+                    {...(Platform.OS === 'web' && { cursor: 'text' })}
+                  />
+                  <EventAttachmentsField
+                    key={materialReloadKey}
+                    familyId={familyId}
+                    selectedMaterialId={selectedMaterialId}
+                    onMaterialChange={setSelectedMaterialId}
+                    onAddNew={() => setShowAddMaterial(true)}
+                    label="Material (optional)"
+                    placeholder="Select or upload…"
+                  />
+                </>
+              ) : null}
+
               {method === 'generate' ? (
                 <>
                   <Text style={styles.intro}>{introCopy}</Text>
@@ -411,12 +510,19 @@ export default function SubjectCurriculumImportModal({
 
             <View style={styles.footer}>
               <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={handleClose}
+                style={showBack ? styles.backButton : styles.cancelButton}
+                onPress={handleBack}
                 disabled={working}
                 {...(Platform.OS === 'web' && { cursor: working ? 'not-allowed' : 'pointer' })}
               >
-                <Text style={styles.cancelText}>Cancel</Text>
+                {showBack ? (
+                  <>
+                    <ChevronLeft size={20} color="#374151" strokeWidth={2.4} />
+                    <Text style={styles.backText}>Back</Text>
+                  </>
+                ) : (
+                  <Text style={styles.cancelText}>Cancel</Text>
+                )}
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.saveButton, (!canSubmit || working) && styles.saveButtonDisabled]}
@@ -430,7 +536,7 @@ export default function SubjectCurriculumImportModal({
                   <View style={styles.saveInner}>
                     <Sparkles size={14} color="#FFFFFF" />
                     <Text style={styles.saveText}>
-                      {method === 'generate' ? 'Generate' : 'Continue'}
+                      {method === 'generate' || method === 'unified' ? 'Generate' : 'Continue'}
                     </Text>
                   </View>
                 )}
@@ -563,15 +669,44 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   cancelButton: {
+    minHeight: 50,
     paddingVertical: 12,
     paddingHorizontal: 18,
-    borderRadius: 10,
-    backgroundColor: '#f3f4f6',
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cancelText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
     color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  backButton: {
+    minHeight: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  backText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   saveButton: {
     minHeight: 50,

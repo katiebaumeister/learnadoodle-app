@@ -66,6 +66,7 @@ export default function AssignmentCreateModal({
   defaultSubjectId = null,
   defaultTitle = null,
   defaultMaterialId = null,
+  defaultInstructions = null,
   defaultEventType: _defaultEventType = null,
   defaultLinkedLearningDayEventId = null,
   defaultCurriculumLessonId = null,
@@ -156,7 +157,7 @@ export default function AssignmentCreateModal({
     wasVisibleRef.current = true;
 
     setTitle(defaultTitle || '');
-    setInstructions('');
+    setInstructions(defaultInstructions || '');
     setWorkSpec(buildDefaultWorkSpec());
     setMaterialIds(defaultMaterialId ? [defaultMaterialId] : []);
     setAssigneeIds(resolveDefaultAssigneeIds({ defaultChildIds, defaultChildId, familyMembers }));
@@ -182,6 +183,7 @@ export default function AssignmentCreateModal({
     defaultSubjectId,
     defaultTitle,
     defaultMaterialId,
+    defaultInstructions,
     defaultCurriculumLessonId,
     requireParentApprovalDefault,
     familyMembers,

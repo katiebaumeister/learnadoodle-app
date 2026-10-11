@@ -735,23 +735,14 @@ export const createModalStyles = StyleSheet.create({
           maxWidth: '48%',
         }),
   },
-  /** Learning day row: wider start date so full year is visible (3-column row). */
+  /** Learning day row: compact start date (e.g. "Oct 11, 2026" + chevrons). */
   scheduleColumnLearningDayDate: {
     flexGrow: 0,
     flexShrink: 0,
     flexBasis: 'auto',
     minWidth: 0,
-    ...(Platform.OS === 'web'
-      ? {
-          width: 'calc((100% - 24px) * 0.46)',
-          maxWidth: 'calc((100% - 24px) * 0.46)',
-          minWidth: 152,
-        }
-      : {
-          width: '46%',
-          maxWidth: '46%',
-          minWidth: 152,
-        }),
+    width: 180,
+    maxWidth: 180,
   },
   /** Learning day row: fixed-width start time (narrower than flex column). */
   scheduleColumnLearningDayTime: {

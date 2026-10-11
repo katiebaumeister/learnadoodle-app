@@ -338,6 +338,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [taskModalDefaultStartTime, setTaskModalDefaultStartTime] = useState(null);
   const [taskModalDefaultTitle, setTaskModalDefaultTitle] = useState(null);
   const [taskModalDefaultMaterialId, setTaskModalDefaultMaterialId] = useState(null);
+  const [taskModalDefaultInstructions, setTaskModalDefaultInstructions] = useState(null);
+  const [taskModalDefaultNotes, setTaskModalDefaultNotes] = useState(null);
   const [taskModalLinkedLearningDayEventId, setTaskModalLinkedLearningDayEventId] = useState(null);
   const [taskModalDefaultCurriculumLessonId, setTaskModalDefaultCurriculumLessonId] = useState(null);
   const [taskModalSubmittalAfterCreate, setTaskModalSubmittalAfterCreate] = useState(false);
@@ -463,6 +465,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     setTaskModalDefaultStartTime(null);
     setTaskModalDefaultTitle(null);
     setTaskModalDefaultMaterialId(null);
+    setTaskModalDefaultInstructions(null);
+    setTaskModalDefaultNotes(null);
     setTaskModalLinkedLearningDayEventId(null);
     setTaskModalDefaultCurriculumLessonId(null);
     setTaskModalSubmittalAfterCreate(false);
@@ -735,6 +739,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setTaskModalDefaultStartTime(detail.startTime || null);
       setTaskModalDefaultTitle(detail.title ?? null);
       setTaskModalDefaultMaterialId(detail.materialId || null);
+      setTaskModalDefaultInstructions(detail.instructions ?? null);
+      setTaskModalDefaultNotes(detail.notes ?? null);
       setTaskModalLinkedLearningDayEventId(detail.linkedLearningDayEventId || null);
       setTaskModalDefaultCurriculumLessonId(detail.curriculumLessonId || null);
       setTaskModalSubmittalAfterCreate(false);
@@ -757,6 +763,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     setTaskModalDefaultStartTime(detail.startTime || null);
     setTaskModalDefaultTitle(detail.title ?? null);
     setTaskModalDefaultMaterialId(detail.materialId || null);
+    setTaskModalDefaultInstructions(detail.instructions ?? null);
+    setTaskModalDefaultNotes(detail.notes ?? null);
     setTaskModalLinkedLearningDayEventId(detail.linkedLearningDayEventId || null);
     setTaskModalDefaultCurriculumLessonId(detail.curriculumLessonId || null);
     setTaskModalSubmittalAfterCreate(!!detail.submittalAfterCreate);
@@ -5790,6 +5798,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           defaultSubjectId={taskModalDefaultSubjectId}
           defaultTitle={taskModalDefaultTitle}
           defaultMaterialId={taskModalDefaultMaterialId}
+          defaultInstructions={taskModalDefaultInstructions}
           defaultEventType={taskModalDefaultEventType}
           defaultLinkedLearningDayEventId={taskModalLinkedLearningDayEventId}
           defaultCurriculumLessonId={taskModalDefaultCurriculumLessonId}
@@ -5813,6 +5822,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           defaultStartTime={taskModalDefaultStartTime}
           defaultTitle={taskModalDefaultTitle}
           defaultMaterialId={taskModalDefaultMaterialId}
+          defaultNotes={taskModalDefaultNotes}
           familyId={familyId}
           familyMembers={familyMembersForEventing}
         />

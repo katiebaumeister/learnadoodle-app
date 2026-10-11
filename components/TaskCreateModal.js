@@ -329,6 +329,7 @@ export default function TaskCreateModal({
   defaultStartTime = null, // Default start time (e.g. '9:00 AM') when opening from plan slot
   defaultTitle = null, // Default title when opening from Doodle (e.g. 'Doctors' for appointment)
   defaultMaterialId = null, // Default material ID to pre-attach
+  defaultNotes = null, // Prefill notes when opening from magic compose
 }) {
   const [title, setTitle] = useState('');
   const [isClassDayTitleAutofilled, setIsClassDayTitleAutofilled] = useState(false);
@@ -1530,7 +1531,7 @@ export default function TaskCreateModal({
         familyMembers,
       });
       setAssigneeIds(resetAssigneeIds);
-      setNotes('');
+      setNotes(defaultNotes && String(defaultNotes).trim() ? String(defaultNotes) : '');
       setNotesInputHeight(EVENT_NOTES_INPUT_MIN_HEIGHT);
       // Labels removed - no longer used
       setPlacement(defaultPlacement || 'calendar'); // Use the prop instead of hardcoded 'calendar'
@@ -1565,7 +1566,7 @@ export default function TaskCreateModal({
       setGoalLink(null);
       setShowAcademicDetails(false);
       setShowLogisticDetails(false);
-      setShowNotesSection(false);
+      setShowNotesSection(Boolean(defaultNotes && String(defaultNotes).trim()));
       setShowMaterialDropdown(false);
       setShowSubjectDropdown(false);
       setShowGoalDropdown(false);
@@ -1593,7 +1594,7 @@ export default function TaskCreateModal({
       lastMaterialsLoadKeyRef.current = '';
     }
     wasVisibleRef.current = visible;
-  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime, defaultTitle, defaultMaterialId, familyMembers, applyEventTypeSelection, applySubjectSelection]);
+  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime, defaultTitle, defaultMaterialId, defaultNotes, familyMembers, applyEventTypeSelection, applySubjectSelection]);
 
   // Keep weekly "On" default aligned with selected date until user manually edits weekday chips.
   useEffect(() => {

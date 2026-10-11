@@ -115,7 +115,7 @@ export default function SubjectMagicCreateChat(props) {
 const styles = StyleSheet.create({
   wrap: {
     flex: 1,
-    minHeight: 420,
-    ...(Platform.OS === 'web' ? { maxHeight: '62vh' } : null),
+    minHeight: 0,
+    ...(Platform.OS !== 'web' ? { minHeight: 420 } : null),
   },
 });

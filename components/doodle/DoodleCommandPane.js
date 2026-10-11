@@ -94,6 +94,10 @@ function dataTransferHasFiles(ev) {
 const COMPOSER_MIN_HEIGHT = 44;
 const COMPOSER_ATTACHED_MIN_HEIGHT = 56;
 const COMPOSER_MAX_HEIGHT = 120;
+/** Taller, scrollable composer for in-modal magic Create chat. */
+const COMPOSER_MIN_HEIGHT_EMBEDDED = 140;
+const COMPOSER_ATTACHED_MIN_HEIGHT_EMBEDDED = 160;
+const COMPOSER_MAX_HEIGHT_EMBEDDED = 280;
 const COMPOSER_BTN_SIZE = 44;
 
 function formatBytes(bytes) {
@@ -562,7 +566,12 @@ export default function DoodleCommandPane({
   const seedConsumedRef = useRef(null);
   const freshStartedRef = useRef(false);
   const [query, setQuery] = useState('');
-  const [inputHeight, setInputHeight] = useState(COMPOSER_MIN_HEIGHT);
+  const composerMinHeight = embedded ? COMPOSER_MIN_HEIGHT_EMBEDDED : COMPOSER_MIN_HEIGHT;
+  const composerAttachedMinHeight = embedded
+    ? COMPOSER_ATTACHED_MIN_HEIGHT_EMBEDDED
+    : COMPOSER_ATTACHED_MIN_HEIGHT;
+  const composerMaxHeight = embedded ? COMPOSER_MAX_HEIGHT_EMBEDDED : COMPOSER_MAX_HEIGHT;
+  const [inputHeight, setInputHeight] = useState(composerMinHeight);
   const [draftAttachments, setDraftAttachments] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
   const [attachCapHint, setAttachCapHint] = useState(false);
@@ -643,25 +652,72 @@ export default function DoodleCommandPane({
   }, [messages, pendingResponse, status, scrollToBottom]);
 
   const composerFloor = draftAttachments.length > 0
-    ? COMPOSER_ATTACHED_MIN_HEIGHT
-    : COMPOSER_MIN_HEIGHT;
+    ? composerAttachedMinHeight
+    : composerMinHeight;
+
+  const measureComposerHeight = useCallback((text) => {
+    const floor = draftAttachments.length > 0
+      ? composerAttachedMinHeight
+      : composerMinHeight;
+    const value = String(text || '');
+    if (!value) return floor;
+    // Prefer native scrollHeight on web so seeded prompts open fully visible.
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const node = inputRef.current;
+      const el = node?.getNativeScrollRef?.()
+        || node?._node
+        || node?.querySelector?.('textarea')
+        || (typeof node?.focus === 'function' ? node : null);
+      const textarea = el?.tagName === 'TEXTAREA'
+        ? el
+        : (el?.querySelector?.('textarea') || null);
+      if (textarea && typeof textarea.scrollHeight === 'number') {
+        return Math.min(
+          composerMaxHeight,
+          Math.max(floor, Math.ceil(textarea.scrollHeight)),
+        );
+      }
+    }
+    const lineHeight = 20;
+    const newlineCount = (value.match(/\n/g) || []).length;
+    const charsPerLine = embedded ? 38 : 52;
+    const lineHeightPx = embedded ? 22 : 20;
+    const approxLines = Math.max(newlineCount + 1, Math.ceil(value.length / charsPerLine));
+    return Math.min(
+      composerMaxHeight,
+      Math.max(floor, approxLines * lineHeightPx + (embedded ? 32 : 24)),
+    );
+  }, [
+    draftAttachments.length,
+    composerAttachedMinHeight,
+    composerMinHeight,
+    composerMaxHeight,
+    embedded,
+  ]);
 
   useEffect(() => {
-    if (!query) setInputHeight(composerFloor);
-  }, [query, composerFloor]);
+    if (!query) {
+      setInputHeight(composerFloor);
+      return undefined;
+    }
+    const frame = requestAnimationFrame(() => {
+      setInputHeight(measureComposerHeight(query));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [query, composerFloor, measureComposerHeight]);
 
   const handleInputContentSizeChange = useCallback((event) => {
     const contentHeight = event?.nativeEvent?.contentSize?.height;
     if (!Number.isFinite(contentHeight)) return;
     const floor = draftAttachments.length > 0
-      ? COMPOSER_ATTACHED_MIN_HEIGHT
-      : COMPOSER_MIN_HEIGHT;
+      ? composerAttachedMinHeight
+      : composerMinHeight;
     const nextHeight = Math.min(
-      COMPOSER_MAX_HEIGHT,
+      composerMaxHeight,
       Math.max(floor, Math.ceil(contentHeight)),
     );
     setInputHeight((prev) => (prev === nextHeight ? prev : nextHeight));
-  }, [draftAttachments.length]);
+  }, [draftAttachments.length, composerAttachedMinHeight, composerMinHeight, composerMaxHeight]);
 
   useEffect(() => () => {
     draftAttachments.forEach((att) => {
@@ -1068,12 +1124,12 @@ export default function DoodleCommandPane({
               blurOnSubmit={false}
               placeholder={draftAttachments.length
                 ? 'Add a note, or send…'
-                : 'Ask Doodle to update your plan…'}
+                : (embedded ? 'Describe what to create…' : 'Ask Doodle to update your plan…')}
               placeholderTextColor="#94A3B8"
               returnKeyType="send"
               editable={!busy}
               multiline
-              scrollEnabled={inputHeight >= COMPOSER_MAX_HEIGHT}
+              scrollEnabled
               onContentSizeChange={handleInputContentSizeChange}
               onKeyPress={Platform.OS === 'web' ? undefined : (e) => {
                 if (e?.nativeEvent?.key === 'Enter') {
@@ -1092,9 +1148,14 @@ export default function DoodleCommandPane({
               } : {})}
               style={[
                 styles.composerInput,
-                { height: Math.max(inputHeight, composerFloor) },
+                embedded && styles.composerInputEmbedded,
+                {
+                  height: Math.max(inputHeight, composerFloor),
+                  maxHeight: composerMaxHeight,
+                  minHeight: composerFloor,
+                },
               ]}
-              accessibilityLabel="Ask Doodle"
+              accessibilityLabel={embedded ? 'Create with Doodle' : 'Ask Doodle'}
             />
             <TouchableOpacity
               style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
@@ -1123,8 +1184,9 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { position: 'relative' } : null),
   },
   containerEmbedded: {
-    minHeight: 420,
-    ...(Platform.OS === 'web' ? { maxHeight: '62vh' } : null),
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' ? { maxHeight: '100%' } : { minHeight: 480 }),
   },
   containerDragging: {
     ...(Platform.OS === 'web' ? {
@@ -1690,7 +1752,21 @@ const styles = StyleSheet.create({
       fontFamily: FONT,
       outlineStyle: 'none',
       resize: 'none',
-      overflow: 'hidden',
+      overflowY: 'auto',
+      overflowX: 'hidden',
+    }),
+  },
+  composerInputEmbedded: {
+    borderRadius: 18,
+    fontSize: 15,
+    lineHeight: 22,
+    paddingTop: 14,
+    paddingBottom: 14,
+    ...(Platform.OS === 'web' && {
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+      overflowWrap: 'anywhere',
+      overflowY: 'auto',
     }),
   },
   attachButton: {

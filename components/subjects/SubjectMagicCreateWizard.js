@@ -1,21 +1,25 @@
 /**
  * Step-through for subject magic Create CTAs:
- * 1) purpose → 2) dates → 3) source method →
- *    subject plan: import modal | assignment/lesson: in-modal chat stream.
+ * 1) purpose → 2) dates → 3) compose (text + material) →
+ *    subject plan: curriculum import/builder |
+ *    assignment / lesson: create modals with prefilled content.
  */
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   Modal,
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   ScrollView,
   Platform,
   StyleSheet,
+  ActivityIndicator,
 } from 'react-native';
 import { X, Sparkles, ChevronLeft } from 'lucide-react';
 import { useModalStackElevation } from '../hooks/useModalStackElevation';
-import SubjectMagicCreateChat from './SubjectMagicCreateChat';
+import EventAttachmentsField from '../create/shared/EventAttachmentsField';
+import AddMaterialModal from '../materials/AddMaterialModal';
 
 const ACCENT = '#9ECFFB';
 
@@ -50,24 +54,6 @@ const DATE_OPTIONS = [
   },
 ];
 
-const SOURCE_METHODS = [
-  {
-    id: 'generate',
-    title: 'Generate from prompt',
-    subtitle: 'Invents units/lessons from a description (schedule-aware)',
-  },
-  {
-    id: 'upload',
-    title: 'Create from doc',
-    subtitle: 'Extract from a syllabus or material in your library',
-  },
-  {
-    id: 'paste_plain',
-    title: 'Paste plain text',
-    subtitle: 'Parse a pasted outline (can expand loose goals)',
-  },
-];
-
 function ChoiceRow({ title, subtitle, selected, onPress }) {
   return (
     <TouchableOpacity
@@ -88,58 +74,65 @@ function ChoiceRow({ title, subtitle, selected, onPress }) {
   );
 }
 
-function buildSeedPrompt({ purpose, withDates, sourceMethod, subjectName }) {
+function composePlaceholder(purpose, subjectName) {
   const subj = subjectName || 'this subject';
-  const datesBit = withDates
-    ? ' Include dates when possible.'
-    : ' Do not schedule dates yet — add to classwork unscheduled.';
   if (purpose === 'assignment') {
-    if (sourceMethod === 'upload') {
-      return `Create an assignment for ${subj} from a material I attach or select.${datesBit}`;
-    }
-    if (sourceMethod === 'paste_plain') {
-      return `Create an assignment for ${subj} from this outline I'll paste next.${datesBit}`;
-    }
-    return `Create an assignment for ${subj}.${datesBit}`;
+    return `Describe the assignment for ${subj}, or paste an outline. You can also attach a material.`;
   }
   if (purpose === 'lesson') {
-    if (sourceMethod === 'upload') {
-      return `Create a single learning day for ${subj} from a material I attach or select.${datesBit}`;
-    }
-    if (sourceMethod === 'paste_plain') {
-      return `Create a single learning day for ${subj} from this outline I'll paste next.${datesBit}`;
-    }
-    return `Create a single learning day for ${subj}.${datesBit}`;
+    return `Describe the learning day for ${subj}, or paste an outline. You can also attach a material.`;
   }
-  return null;
+  return `e.g. 6th grade ${subj}, 12 weeks, include projects — or paste a unit outline. Attach a syllabus if you have one.`;
+}
+
+function composeTitle(purpose) {
+  if (purpose === 'assignment') return 'Create assignment';
+  if (purpose === 'lesson') return 'Create learning day';
+  return 'Create classwork';
 }
 
 export default function SubjectMagicCreateWizard({
   visible,
   onClose,
   onContinue,
-  onChatCompleted,
+  onChatCompleted: _onChatCompleted,
   subjectName = 'Subject',
   familyId = null,
   subjectId = null,
-  academicYearId = null,
-  childIds = [],
+  academicYearId: _academicYearId = null,
+  childIds: _childIds = [],
+  /** When returning from import, reopen on compose with prior choices. */
+  resumeAt = null,
 }) {
   const overlayRef = React.useRef(null);
   useModalStackElevation(overlayRef, visible, 10002);
 
-  const [step, setStep] = useState(0);
-  const [purpose, setPurpose] = useState('subject_plan');
-  const [datesMode, setDatesMode] = useState('without_dates');
-  const [sourceMethod, setSourceMethod] = useState('upload');
-  const [chatSeed, setChatSeed] = useState(null);
+  const [step, setStep] = useState(() => (
+    Number.isFinite(resumeAt?.step) ? resumeAt.step : 0
+  ));
+  const [purpose, setPurpose] = useState(() => resumeAt?.purpose || 'subject_plan');
+  const [datesMode, setDatesMode] = useState(() => (
+    resumeAt?.withDates === true ? 'with_dates' : 'without_dates'
+  ));
+  const [notes, setNotes] = useState(() => (
+    typeof resumeAt?.notes === 'string' ? resumeAt.notes : ''
+  ));
+  const [selectedMaterialId, setSelectedMaterialId] = useState(() => (
+    resumeAt?.materialId != null ? String(resumeAt.materialId) : null
+  ));
+  const [materialReloadKey, setMaterialReloadKey] = useState(0);
+  const [showAddMaterial, setShowAddMaterial] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const reset = useCallback(() => {
     setStep(0);
     setPurpose('subject_plan');
     setDatesMode('without_dates');
-    setSourceMethod('upload');
-    setChatSeed(null);
+    setNotes('');
+    setSelectedMaterialId(null);
+    setMaterialReloadKey(0);
+    setShowAddMaterial(false);
+    setSubmitting(false);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -147,198 +140,205 @@ export default function SubjectMagicCreateWizard({
     onClose?.();
   }, [onClose, reset]);
 
-  const inChat = step === 3;
+  const inCompose = step === 2;
 
   const stepMeta = useMemo(() => {
     if (step === 0) return { title: 'What do you want to create?' };
     if (step === 1) return { title: 'Dates' };
-    if (step === 2) return { title: 'How should we create it?' };
-    return {
-      title: purpose === 'assignment' ? 'Create assignment' : 'Create learning day',
-    };
+    return { title: composeTitle(purpose) };
   }, [step, purpose]);
 
   const canContinue = useMemo(() => {
     if (step === 0) return Boolean(purpose);
     if (step === 1) return Boolean(datesMode);
-    if (step === 2) return Boolean(sourceMethod);
+    if (step === 2) {
+      return Boolean(String(notes || '').trim() || selectedMaterialId);
+    }
     return false;
-  }, [step, purpose, datesMode, sourceMethod]);
+  }, [step, purpose, datesMode, notes, selectedMaterialId]);
 
-  const handlePrimary = () => {
-    if (!canContinue) return;
+  const handlePrimary = async () => {
+    if (!canContinue || submitting) return;
     if (step < 2) {
       setStep((s) => s + 1);
       return;
     }
     const withDates = datesMode === 'with_dates';
-    if (purpose === 'assignment' || purpose === 'lesson') {
-      setChatSeed(buildSeedPrompt({
+    setSubmitting(true);
+    try {
+      await Promise.resolve(onContinue?.({
         purpose,
         withDates,
-        sourceMethod,
-        subjectName,
+        notes: String(notes || '').trim(),
+        materialId: selectedMaterialId ? String(selectedMaterialId) : null,
       }));
-      setStep(3);
-      return;
+    } finally {
+      setSubmitting(false);
     }
-    onContinue?.({
-      purpose,
-      withDates,
-      sourceMethod,
-    });
-    reset();
   };
 
   if (!visible) return null;
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={handleClose}>
-      <View ref={overlayRef} style={styles.overlay} collapsable={false}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={handleClose} />
-        <View style={[styles.shell, inChat && styles.shellChat]}>
-          <View style={styles.header}>
-            <TouchableOpacity
-              onPress={handleClose}
-              style={styles.closeCircle}
-              accessibilityRole="button"
-              accessibilityLabel="Close"
-              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <X size={20} color="#6b7280" />
-            </TouchableOpacity>
-          </View>
+    <>
+      <Modal visible transparent animationType="fade" onRequestClose={handleClose}>
+        <View ref={overlayRef} style={styles.overlay} collapsable={false}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={handleClose} />
+          <View style={[styles.shell, inCompose && styles.shellCompose]}>
+            <View style={styles.header}>
+              <TouchableOpacity
+                onPress={handleClose}
+                style={styles.closeCircle}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={20} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
 
-          {inChat ? (
-            <View style={styles.chatBody}>
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={styles.scrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
               <Text style={styles.stepTitle}>{stepMeta.title}</Text>
               <View style={styles.stepDots}>
                 {[0, 1, 2].map((i) => (
-                  <View key={i} style={[styles.dot, styles.dotDone]} />
+                  <View
+                    key={i}
+                    style={[
+                      styles.dot,
+                      i === step && styles.dotActive,
+                      i < step && styles.dotDone,
+                    ]}
+                  />
                 ))}
               </View>
-              {familyId && subjectId && chatSeed ? (
-                <SubjectMagicCreateChat
-                  familyId={familyId}
-                  subjectId={subjectId}
-                  subjectName={subjectName}
-                  academicYearId={academicYearId}
-                  childIds={childIds}
-                  purpose={purpose}
-                  withDates={datesMode === 'with_dates'}
-                  sourceMethod={sourceMethod}
-                  seedPrompt={chatSeed}
-                  onDone={(result) => {
-                    onChatCompleted?.(result);
-                    handleClose();
-                  }}
-                />
+
+              {step === 0
+                ? PURPOSES.map((opt) => (
+                  <ChoiceRow
+                    key={opt.id}
+                    title={opt.title}
+                    subtitle={opt.subtitle}
+                    selected={purpose === opt.id}
+                    onPress={() => setPurpose(opt.id)}
+                  />
+                ))
+                : null}
+
+              {step === 1
+                ? DATE_OPTIONS.map((opt) => (
+                  <ChoiceRow
+                    key={opt.id}
+                    title={opt.title}
+                    subtitle={opt.subtitle}
+                    selected={datesMode === opt.id}
+                    onPress={() => setDatesMode(opt.id)}
+                  />
+                ))
+                : null}
+
+              {step === 2 ? (
+                <View style={styles.composeBlock}>
+                  <Text style={styles.intro}>
+                    Add a description and/or attach a material. We&apos;ll draft from what you provide so you can review before saving.
+                  </Text>
+                  <Text style={styles.label}>Description</Text>
+                  <TextInput
+                    value={notes}
+                    onChangeText={setNotes}
+                    placeholder={composePlaceholder(purpose, subjectName)}
+                    placeholderTextColor="#9ca3af"
+                    multiline
+                    scrollEnabled
+                    editable={!submitting}
+                    style={styles.textArea}
+                    textAlignVertical="top"
+                    {...(Platform.OS === 'web' && {
+                      cursor: 'text',
+                      outlineStyle: 'none',
+                    })}
+                  />
+                  {familyId ? (
+                    <View style={styles.attachBlock}>
+                      <EventAttachmentsField
+                        key={materialReloadKey}
+                        familyId={familyId}
+                        selectedMaterialId={selectedMaterialId}
+                        onMaterialChange={setSelectedMaterialId}
+                        onAddNew={() => setShowAddMaterial(true)}
+                        label="Material (optional)"
+                        placeholder="Select or upload…"
+                      />
+                    </View>
+                  ) : null}
+                </View>
               ) : null}
-              <View style={styles.footer}>
+            </ScrollView>
+
+            <View style={styles.footer}>
+              {step > 0 ? (
                 <TouchableOpacity
                   style={styles.backButton}
-                  onPress={() => {
-                    setChatSeed(null);
-                    setStep(2);
-                  }}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  onPress={() => setStep((s) => Math.max(0, s - 1))}
+                  disabled={submitting}
+                  {...(Platform.OS === 'web' && { cursor: submitting ? 'not-allowed' : 'pointer' })}
                 >
-                  <ChevronLeft size={18} color="#374151" />
+                  <ChevronLeft size={20} color="#374151" strokeWidth={2.4} />
                   <Text style={styles.backText}>Back</Text>
                 </TouchableOpacity>
-                <View style={{ flex: 1 }} />
-              </View>
-            </View>
-          ) : (
-            <>
-              <ScrollView
-                style={styles.scroll}
-                contentContainerStyle={styles.scrollContent}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                <Text style={styles.stepTitle}>{stepMeta.title}</Text>
-                <View style={styles.stepDots}>
-                  {[0, 1, 2].map((i) => (
-                    <View key={i} style={[styles.dot, i === step && styles.dotActive, i < step && styles.dotDone]} />
-                  ))}
-                </View>
-
-                {step === 0
-                  ? PURPOSES.map((opt) => (
-                    <ChoiceRow
-                      key={opt.id}
-                      title={opt.title}
-                      subtitle={opt.subtitle}
-                      selected={purpose === opt.id}
-                      onPress={() => setPurpose(opt.id)}
-                    />
-                  ))
-                  : null}
-
-                {step === 1
-                  ? DATE_OPTIONS.map((opt) => (
-                    <ChoiceRow
-                      key={opt.id}
-                      title={opt.title}
-                      subtitle={opt.subtitle}
-                      selected={datesMode === opt.id}
-                      onPress={() => setDatesMode(opt.id)}
-                    />
-                  ))
-                  : null}
-
-                {step === 2
-                  ? SOURCE_METHODS.map((opt) => (
-                    <ChoiceRow
-                      key={opt.id}
-                      title={opt.title}
-                      subtitle={opt.subtitle}
-                      selected={sourceMethod === opt.id}
-                      onPress={() => setSourceMethod(opt.id)}
-                    />
-                  ))
-                  : null}
-              </ScrollView>
-
-              <View style={styles.footer}>
-                {step > 0 ? (
-                  <TouchableOpacity
-                    style={styles.backButton}
-                    onPress={() => setStep((s) => Math.max(0, s - 1))}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <ChevronLeft size={18} color="#374151" />
-                    <Text style={styles.backText}>Back</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity
-                    style={styles.cancelButton}
-                    onPress={handleClose}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={styles.cancelText}>Cancel</Text>
-                  </TouchableOpacity>
-                )}
-
+              ) : (
                 <TouchableOpacity
-                  style={[styles.saveButton, !canContinue && styles.saveButtonDisabled]}
-                  onPress={handlePrimary}
-                  disabled={!canContinue}
-                  {...(Platform.OS === 'web' && { cursor: canContinue ? 'pointer' : 'default' })}
+                  style={styles.cancelButton}
+                  onPress={handleClose}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
+                  <Text style={styles.cancelText}>Cancel</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={[styles.saveButton, (!canContinue || submitting) && styles.saveButtonDisabled]}
+                onPress={handlePrimary}
+                disabled={!canContinue || submitting}
+                {...(Platform.OS === 'web' && {
+                  cursor: canContinue && !submitting ? 'pointer' : 'default',
+                })}
+              >
+                {submitting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
                   <View style={styles.saveInner}>
                     {step === 2 ? <Sparkles size={18} color="#FFFFFF" /> : null}
-                    <Text style={styles.saveText}>{step === 2 ? 'Continue' : 'Next'}</Text>
+                    <Text style={styles.saveText}>
+                      {step === 2 ? 'Submit' : 'Next'}
+                    </Text>
                   </View>
-                </TouchableOpacity>
-              </View>
-            </>
-          )}
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
-      </View>
-    </Modal>
+      </Modal>
+
+      {showAddMaterial && familyId ? (
+        <AddMaterialModal
+          visible
+          familyId={familyId}
+          defaultSubjectId={subjectId}
+          onClose={() => setShowAddMaterial(false)}
+          onSaved={(material) => {
+            if (material?.id) setSelectedMaterialId(String(material.id));
+            setShowAddMaterial(false);
+            setMaterialReloadKey((k) => k + 1);
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -362,14 +362,9 @@ const styles = StyleSheet.create({
       boxShadow: '0 30px 60px rgba(0, 0, 0, 0.12), 0 10px 30px rgba(0, 0, 0, 0.08)',
     }),
   },
-  shellChat: {
+  shellCompose: {
     maxWidth: 720,
-    minHeight: Platform.OS === 'web' ? '70vh' : undefined,
-  },
-  chatBody: {
-    flex: 1,
-    minHeight: 0,
-    paddingHorizontal: 28,
+    minHeight: Platform.OS === 'web' ? '72vh' : undefined,
   },
   header: {
     flexDirection: 'row',
@@ -421,6 +416,43 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  composeBlock: {
+    gap: 10,
+  },
+  intro: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#64748B',
+    marginBottom: 4,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#374151',
+    marginTop: 4,
+  },
+  textArea: {
+    minHeight: 220,
+    maxHeight: 320,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#111827',
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      overflowY: 'auto',
+      resize: 'vertical',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+    }),
+  },
+  attachBlock: {
+    marginTop: 8,
   },
   choice: {
     flexDirection: 'row',
@@ -487,29 +519,44 @@ const styles = StyleSheet.create({
     borderTopColor: '#e5e7eb',
   },
   cancelButton: {
+    minHeight: 50,
     paddingVertical: 12,
     paddingHorizontal: 18,
-    borderRadius: 10,
-    backgroundColor: '#f3f4f6',
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cancelText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
     color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   backButton: {
+    minHeight: 50,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 2,
+    justifyContent: 'center',
+    gap: 8,
     paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
   backText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
     color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   saveButton: {
     minHeight: 50,
