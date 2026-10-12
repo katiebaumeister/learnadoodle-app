@@ -5,7 +5,7 @@ import {
   Text,
   TextInput,
 } from 'react-native';
-import { CalendarDays } from 'lucide-react';
+import { CalendarDays, Sparkles } from 'lucide-react';
 import { useToast } from '../Toast';
 import ConfirmDialog from '../ConfirmDialog';
 import { ModalFooter } from '../ui/ModalFooter';
@@ -41,6 +41,7 @@ import {
 import { dispatchOpenSubjectSettings } from '../../lib/subjectClassworkNavigation';
 import { resolveEventSubjectId } from '../../lib/planner/plannerEventSubject';
 import { saveLesson } from '../../lib/create/saveEventHelpers';
+import { openMagicCreateWizard } from '../../lib/doodleLaunch';
 import { formatSubjectScheduleSummaryLine } from '../subjects/subjectScheduleOverview';
 import EditSubjectUnitsModal from '../subjects/EditSubjectUnitsModal';
 import { NESTED_OVER_PARENT_MODAL_Z } from '../hooks/useModalStackElevation';
@@ -477,6 +478,31 @@ export default function LearningDayModal({
     });
   };
 
+  const handleCreateClasswork = useCallback(() => {
+    if (!subjectId) {
+      toast.push('This learning day needs a subject to create classwork.', 'error');
+      return;
+    }
+    onClose?.();
+    openMagicCreateWizard({
+      subjectId,
+      subjectName: subjectName || subjectRow?.name || 'Subject',
+      academicYearId: activeEvent?.academic_year_id
+        || subjectRow?.academic_year_id
+        || subjectRow?.academicYearId
+        || null,
+      childIds: sessionChildIds,
+    });
+  }, [
+    subjectId,
+    subjectName,
+    subjectRow,
+    activeEvent?.academic_year_id,
+    sessionChildIds,
+    onClose,
+    toast,
+  ]);
+
   const unitsEditorInitialDraft = useMemo(() => {
     if (!familyId || !subjectId) return null;
     const cached = getSubjectProgressCache(familyId, subjectId);
@@ -515,12 +541,22 @@ export default function LearningDayModal({
 
   if (!visible || !event) return null;
 
-  const secondaryActions = subjectId ? [{
-    key: 'edit-schedule',
-    label: 'Edit subject schedule',
-    icon: CalendarDays,
-    onPress: handleEditSubjectSchedule,
-  }] : [];
+  const secondaryActions = subjectId
+    ? [
+      {
+        key: 'create-classwork',
+        label: 'Create classwork',
+        icon: Sparkles,
+        onPress: handleCreateClasswork,
+      },
+      {
+        key: 'edit-schedule',
+        label: 'Edit subject schedule',
+        icon: CalendarDays,
+        onPress: handleEditSubjectSchedule,
+      },
+    ]
+    : [];
 
   return (
     <>

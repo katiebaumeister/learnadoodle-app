@@ -29,6 +29,7 @@ export const PLANNER_SMART_ACTION_SECTIONS = [
 ];
 
 export const PLANNER_SMART_ACTION_TOOLS = [
+  { id: 'create-classwork', title: 'Create classwork' },
   { id: 'school-year-settings', title: 'Edit School Year' },
   { id: 'bulk-attendance', title: 'Bulk Attendance' },
   { id: 'export-attendance', title: 'Export Attendance' },

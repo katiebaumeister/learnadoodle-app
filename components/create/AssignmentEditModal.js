@@ -21,7 +21,7 @@ import SubjectSelectField from './shared/SubjectSelectField';
 import ClassworkPlacementFields from './shared/ClassworkPlacementFields';
 import { SingleDateField } from './shared/ScheduleDateFields';
 import { SectionHeading } from './shared/assignmentFormParts';
-import { Users } from 'lucide-react';
+import { Sparkles, Users } from 'lucide-react';
 import { ModalFooter } from '../ui/ModalFooter';
 import AssignmentSubmissionsModal from './AssignmentSubmissionsModal';
 import StudentResponseSection from './assignment/StudentResponseSection';
@@ -37,6 +37,7 @@ import {
 } from '../../lib/subjectUnitsEditorDraft';
 import { createModalStyles as styles, PLACEHOLDER, CREATE_ASSIGNMENT_MODAL_MAX_WIDTH } from './shared/createModalStyles';
 import { useFamilySubjects } from './shared/useSubjectsForAssignees';
+import { openMagicCreateWizard } from '../../lib/doodleLaunch';
 import {
   filterMembersForSubject,
   findSubjectById,
@@ -160,6 +161,24 @@ export default function AssignmentEditModal({
     if (!subjectId) return;
     setShowUnitsEditor(true);
   }, [subjectId]);
+
+  const handleCreateClasswork = useCallback(() => {
+    if (!subjectId) {
+      toast.push('Pick a subject first to create classwork.', 'error');
+      return;
+    }
+    const subjectName = selectedSubject?.name || 'Subject';
+    const academicYearId = selectedSubject?.academic_year_id
+      || selectedSubject?.academicYearId
+      || null;
+    onClose?.();
+    openMagicCreateWizard({
+      subjectId,
+      subjectName,
+      academicYearId,
+      childIds: Array.isArray(assigneeIds) ? assigneeIds : [],
+    });
+  }, [subjectId, selectedSubject, assigneeIds, onClose, toast]);
 
   useEffect(() => {
     if (!visible) {
@@ -443,6 +462,13 @@ export default function AssignmentEditModal({
               onPrimary={handleSave}
               onBlockedPrimary={() => validate()}
               secondaryActions={[
+                {
+                  key: 'create-classwork',
+                  label: 'Create classwork',
+                  icon: Sparkles,
+                  onPress: handleCreateClasswork,
+                  disabled: !subjectId,
+                },
                 {
                   key: 'view-submissions',
                   label: 'View submissions',

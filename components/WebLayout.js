@@ -127,6 +127,7 @@ import FamilyCreatePane from './create/FamilyCreatePane';
 import PlannerCreateMenu from './create/PlannerCreateMenu';
 import SubjectPickerModal from './create/SubjectPickerModal';
 import LearningDaySetupChoiceModal from './planner/LearningDaySetupChoiceModal';
+import { openMagicCreateWizard } from '../lib/doodleLaunch';
 import { getSubjectsWithOverview } from '../lib/services/subjectsClient';
 import DoodleCommandPane from './doodle/DoodleCommandPane';
 import { PLANNER_EVENT_CATEGORIES } from '../lib/planner/plannerEventCategories';
@@ -623,7 +624,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [dayOffModalSchoolYearLabel, setDayOffModalSchoolYearLabel] = useState(null);
   const [dayOffModalEditRow, setDayOffModalEditRow] = useState(null);
   const [showPlannerCreateMenu, setShowPlannerCreateMenu] = useState(false);
-  const [showLearningDaySubjectPicker, setShowLearningDaySubjectPicker] = useState(false);
+  /** null | 'learning_day' | 'create_classwork' — Planner subject picker purpose */
+  const [plannerSubjectPickerPurpose, setPlannerSubjectPickerPurpose] = useState(null);
   const [learningDaySetupChoice, setLearningDaySetupChoice] = useState({ visible: false, subject: null });
   const plannerCreateButtonRef = useRef(null);
   const smartActionsHover = useHoverDropdown({
@@ -3385,6 +3387,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         case 'pack-week':
           setShowPackWeekModal(true);
           break;
+        case 'create-classwork': {
+          const rf = sessionRef.current?.role_flags;
+          const restricted = !!(rf?.isChild || rf?.isTutor);
+          if (restricted && !familyUserControls.allowed('subjects')) {
+            Alert.alert('Not available', 'Your family admin has disabled adding or editing subjects.');
+            break;
+          }
+          setPlannerSubjectPickerPurpose('create_classwork');
+          refetchSubjects().catch(() => {});
+          break;
+        }
         case 'school-year-settings':
         case 'plan-year':
           dispatchOpenSchoolYearSettingsModal();
@@ -3436,7 +3449,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     };
     window.addEventListener('plannerSmartAction', handler);
     return () => window.removeEventListener('plannerSmartAction', handler);
-  }, [navigateToIntelligence, openPlannerExportModal, handleTabChange]);
+  }, [navigateToIntelligence, openPlannerExportModal, handleTabChange, familyUserControls, refetchSubjects]);
 
   // Legacy Plan Year entry points → School Year Settings, subject page, or units editor.
   useEffect(() => {
@@ -3741,7 +3754,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         return;
       }
       setShowPlannerCreateMenu(false);
-      setShowLearningDaySubjectPicker(true);
+      setPlannerSubjectPickerPurpose('learning_day');
       // Refresh from the same Learning-page source so deleted/out-of-year rows don't linger.
       refetchSubjects().catch(() => {});
       return;
@@ -3772,12 +3785,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     viewerScopedChildIds,
   ]);
 
-  const handleLearningDaySubjectSelect = useCallback((subject) => {
-    setShowLearningDaySubjectPicker(false);
-    if (!subject) return;
-    setLearningDaySetupChoice({ visible: true, subject });
-  }, []);
-
   const closeLearningDaySetupChoice = useCallback(() => {
     setLearningDaySetupChoice({ visible: false, subject: null });
   }, []);
@@ -3802,6 +3809,22 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
     return [...new Set(ids)];
   }, []);
+
+  const handlePlannerSubjectPickerSelect = useCallback((subject) => {
+    const purpose = plannerSubjectPickerPurpose;
+    setPlannerSubjectPickerPurpose(null);
+    if (!subject?.id) return;
+    if (purpose === 'create_classwork') {
+      openMagicCreateWizard({
+        subjectId: subject.id,
+        subjectName: subject.name || 'Subject',
+        academicYearId: subject.academic_year_id || subject.academicYearId || null,
+        childIds: resolveSubjectChildIds(subject),
+      });
+      return;
+    }
+    setLearningDaySetupChoice({ visible: true, subject });
+  }, [plannerSubjectPickerPurpose, resolveSubjectChildIds]);
 
   const handleLearningDayOneOffEvent = useCallback(() => {
     const subject = learningDaySetupChoice.subject;
@@ -3841,7 +3864,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [closeLearningDaySetupChoice, learningDaySetupChoice.subject]);
 
   const handleLearningDayCreateSubject = useCallback(() => {
-    setShowLearningDaySubjectPicker(false);
+    setPlannerSubjectPickerPurpose(null);
     setEditingSubject(null);
     setAddSubjectPrefill({ schoolYear: null, schoolTerm: null, childIds: [] });
     setShowAddSubjectModal(true);
@@ -5689,15 +5712,23 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       />
 
       <SubjectPickerModal
-        visible={showLearningDaySubjectPicker}
-        onClose={() => setShowLearningDaySubjectPicker(false)}
+        visible={plannerSubjectPickerPurpose != null}
+        onClose={() => setPlannerSubjectPickerPurpose(null)}
         subjects={fullSubjects.length > 0 ? fullSubjects : subjects}
         children={children}
         title="Choose a subject"
-        subtitle="Pick the subject you want to add learning days for."
-        emptyMessage="No subjects yet. Create one to add learning days."
+        subtitle={
+          plannerSubjectPickerPurpose === 'create_classwork'
+            ? 'Pick the subject you want to create classwork for.'
+            : 'Pick the subject you want to add learning days for.'
+        }
+        emptyMessage={
+          plannerSubjectPickerPurpose === 'create_classwork'
+            ? 'No subjects yet. Create one to start classwork.'
+            : 'No subjects yet. Create one to add learning days.'
+        }
         showYearFilter
-        onSelect={handleLearningDaySubjectSelect}
+        onSelect={handlePlannerSubjectPickerSelect}
         onCreateNew={
           sessionRestricted && !familyUserControls.allowed('subjects')
             ? null

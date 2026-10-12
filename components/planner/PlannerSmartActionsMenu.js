@@ -1,11 +1,12 @@
 import React, { useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
-import { ClipboardCheck, FileDown, Download, Settings } from 'lucide-react';
+import { ClipboardCheck, FileDown, Download, Settings, Sparkles } from 'lucide-react';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { PLANNER_SMART_ACTION_TOOLS, PLANNER_SMART_ACTION_UTILITIES, dispatchPlannerSmartAction } from './plannerSmartActionsConfig';
 import { PLANNING_MODES } from '../../lib/planningMode';
 
 const SMART_ACTION_ICONS = {
+  'create-classwork': Sparkles,
   'school-year-settings': Settings,
   'bulk-attendance': ClipboardCheck,
   'export-attendance': FileDown,

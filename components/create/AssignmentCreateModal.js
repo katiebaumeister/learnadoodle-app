@@ -13,7 +13,6 @@ import ClassworkPlacementFields from './shared/ClassworkPlacementFields';
 import { SingleDateField } from './shared/ScheduleDateFields';
 import { SectionHeading } from './shared/assignmentFormParts';
 import AssignmentCreateFooter from './assignment/AssignmentCreateFooter';
-import AssignmentReleaseDateModal from './assignment/AssignmentReleaseDateModal';
 import StudentResponseSection from './assignment/StudentResponseSection';
 import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
@@ -28,6 +27,7 @@ import {
 import { createModalStyles as styles, PLACEHOLDER, CREATE_ASSIGNMENT_MODAL_MAX_WIDTH } from './shared/createModalStyles';
 import { useFamilySubjects } from './shared/useSubjectsForAssignees';
 import { saveAssignment } from '../../lib/create/saveEventHelpers';
+import { openMagicCreateWizard } from '../../lib/doodleLaunch';
 import {
   filterMembersForSubject,
   findSubjectById,
@@ -91,7 +91,6 @@ export default function AssignmentCreateModal({
   const [datePickerTarget, setDatePickerTarget] = useState(null);
   const [showAddMaterial, setShowAddMaterial] = useState(false);
   const [showUnitsEditor, setShowUnitsEditor] = useState(false);
-  const [showReleaseDateModal, setShowReleaseDateModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [validationBanner, setValidationBanner] = useState('');
   const [errors, setErrors] = useState({});
@@ -148,6 +147,24 @@ export default function AssignmentCreateModal({
     setShowUnitsEditor(true);
   }, [subjectId]);
 
+  const handleCreateClasswork = useCallback(() => {
+    if (!subjectId) {
+      toast.push('Pick a subject first to create classwork.', 'error');
+      return;
+    }
+    const subjectName = selectedSubject?.name || 'Subject';
+    const academicYearId = selectedSubject?.academic_year_id
+      || selectedSubject?.academicYearId
+      || null;
+    onClose?.();
+    openMagicCreateWizard({
+      subjectId,
+      subjectName,
+      academicYearId,
+      childIds: Array.isArray(assigneeIds) ? assigneeIds : [],
+    });
+  }, [subjectId, selectedSubject, assigneeIds, onClose, toast]);
+
   useEffect(() => {
     if (!visible) {
       wasVisibleRef.current = false;
@@ -172,7 +189,6 @@ export default function AssignmentCreateModal({
     setMilestoneDueDate(null);
     setPoints('');
     setRubricId(null);
-    setShowReleaseDateModal(false);
     setValidationBanner('');
     setErrors({});
   }, [
@@ -311,16 +327,6 @@ export default function AssignmentCreateModal({
     await persistAssignment('assign');
   }, [validate, persistAssignment]);
 
-  const handleSchedule = useCallback(() => {
-    if (!validate('schedule')) return;
-    setShowReleaseDateModal(true);
-  }, [validate]);
-
-  const handleReleaseDateConfirm = useCallback(async (releaseDate) => {
-    setShowReleaseDateModal(false);
-    await persistAssignment('schedule', releaseDate);
-  }, [persistAssignment]);
-
   const canSaveDraft = !!title.trim()
     && !!parseStudentResponseType(workSpec?.student_response_type);
   const canAssign = canSaveDraft;
@@ -343,12 +349,15 @@ export default function AssignmentCreateModal({
           footer={(
             <AssignmentCreateFooter
               onCancel={onClose}
-              onSchedule={handleSchedule}
               onAssign={handleAssign}
+              onCreateClasswork={handleCreateClasswork}
               saving={submitting}
               assignDisabled={!canAssign}
-              scheduleDisabled={!canAssign}
+              createClassworkDisabled={!subjectId}
               onBlockedAction={() => validate('assign')}
+              onBlockedCreateClasswork={() => {
+                toast.push('Pick a subject first to create classwork.', 'error');
+              }}
             />
           )}
         >
@@ -488,13 +497,6 @@ export default function AssignmentCreateModal({
           </View>
         </CreateModalShell>
       </Modal>
-
-      <AssignmentReleaseDateModal
-        visible={showReleaseDateModal}
-        onClose={() => setShowReleaseDateModal(false)}
-        selectedDate={availableDate || dueDate}
-        onConfirm={handleReleaseDateConfirm}
-      />
 
       <AppCalendarDatePickerModal
         visible={!!datePickerTarget}

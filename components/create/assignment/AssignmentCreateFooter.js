@@ -1,21 +1,22 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { CalendarClock, Check, X } from 'lucide-react';
+import { Check, Sparkles, X } from 'lucide-react';
 import { modalButtonStyles, MODAL_ACCENT_TEXT } from '../../ui/modalButtonStyles';
 
 export default function AssignmentCreateFooter({
   onCancel,
-  onSchedule,
   onAssign,
+  onCreateClasswork = null,
   saving = false,
   assignDisabled = false,
-  scheduleDisabled = false,
+  createClassworkDisabled = false,
   onBlockedAction,
+  onBlockedCreateClasswork,
 }) {
-  const handlePress = (disabled, action) => {
+  const handlePress = (disabled, action, blocked) => {
     if (saving) return;
     if (disabled) {
-      onBlockedAction?.();
+      blocked?.();
       return;
     }
     action?.();
@@ -37,20 +38,22 @@ export default function AssignmentCreateFooter({
       </TouchableOpacity>
 
       <View style={styles.actionGroup}>
+        {typeof onCreateClasswork === 'function' ? (
+          <TouchableOpacity
+            onPress={() => handlePress(createClassworkDisabled, onCreateClasswork, onBlockedCreateClasswork)}
+            disabled={saving}
+            style={[modalButtonStyles.secondaryButton, saving && modalButtonStyles.buttonDisabled]}
+            activeOpacity={0.9}
+            accessibilityRole="button"
+            accessibilityLabel="Create classwork"
+            {...(Platform.OS === 'web' && { cursor: saving ? 'not-allowed' : 'pointer' })}
+          >
+            <Sparkles size={16} color={MODAL_ACCENT_TEXT} strokeWidth={2.25} />
+            <Text style={modalButtonStyles.secondaryButtonText}>Create classwork</Text>
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity
-          onPress={() => handlePress(scheduleDisabled, onSchedule)}
-          disabled={saving}
-          style={[modalButtonStyles.secondaryButton, saving && modalButtonStyles.buttonDisabled]}
-          activeOpacity={0.9}
-          accessibilityRole="button"
-          accessibilityLabel="Schedule assignment"
-          {...(Platform.OS === 'web' && { cursor: saving ? 'not-allowed' : 'pointer' })}
-        >
-          <CalendarClock size={16} color={MODAL_ACCENT_TEXT} />
-          <Text style={modalButtonStyles.secondaryButtonText}>Schedule</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => handlePress(assignDisabled, onAssign)}
+          onPress={() => handlePress(assignDisabled, onAssign, onBlockedAction)}
           disabled={saving}
           style={[styles.primaryButton, saving && styles.buttonDisabled]}
           activeOpacity={0.9}
