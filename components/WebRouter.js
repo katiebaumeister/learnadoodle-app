@@ -6,6 +6,13 @@ import SetPasswordPage from './SetPasswordPage';
 import AppLoader, { ensureWebShellImagesLoaded } from './AppLoader';
 import { useAuth } from '../contexts/AuthContext';
 import { ensureLandingHeroLoaded } from '../lib/landingHeroPreload';
+import { stashAuthViewIntent } from '../lib/url';
+
+function navigateToAuth(view) {
+  if (typeof window === 'undefined') return;
+  stashAuthViewIntent(view);
+  window.location.href = '/';
+}
 
 const AuthenticatedApp = lazy(() => import('./AuthenticatedApp'));
 const InviteAcceptancePage = lazy(() => import('./InviteAcceptancePage'));
@@ -298,12 +305,12 @@ function WebRouterContent() {
       <TermsPage
         onNavigateToLogin={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/?view=signin';
+            navigateToAuth('signin');
           }
         }}
         onNavigateToSignUp={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/?view=signup';
+            navigateToAuth('signup');
           }
         }}
       />
@@ -315,12 +322,12 @@ function WebRouterContent() {
       <PrivacyPage
         onNavigateToLogin={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/?view=signin';
+            navigateToAuth('signin');
           }
         }}
         onNavigateToSignUp={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/?view=signup';
+            navigateToAuth('signup');
           }
         }}
       />
@@ -332,12 +339,12 @@ function WebRouterContent() {
       <AboutPage
         onNavigateToLogin={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/?view=signin';
+            navigateToAuth('signin');
           }
         }}
         onNavigateToSignUp={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/?view=signup';
+            navigateToAuth('signup');
           }
         }}
       />
@@ -349,12 +356,12 @@ function WebRouterContent() {
       <FAQPage
         onNavigateToLogin={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/?view=signin';
+            navigateToAuth('signin');
           }
         }}
         onNavigateToSignUp={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/?view=signup';
+            navigateToAuth('signup');
           }
         }}
       />
@@ -366,12 +373,12 @@ function WebRouterContent() {
       <ContactPage
         onNavigateToLogin={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/?view=signin';
+            navigateToAuth('signin');
           }
         }}
         onNavigateToSignUp={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/?view=signup';
+            navigateToAuth('signup');
           }
         }}
       />
@@ -383,12 +390,12 @@ function WebRouterContent() {
       <SubscriptionPage
         onNavigateToLogin={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/?view=signin';
+            navigateToAuth('signin');
           }
         }}
         onNavigateToSignUp={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/?view=signup';
+            navigateToAuth('signup');
           }
         }}
       />

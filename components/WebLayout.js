@@ -137,7 +137,6 @@ import { AVATAR_KEYS } from '../assets/imageAssetMap';
 import {
   canonicalizeShellUrlToRoot,
   isShellDeepLinkPath,
-  normalizeAppHref,
   normalizeAppPathname,
   parseNavigationHref,
   resolveShellRouteFromPathname,
@@ -4598,7 +4597,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   if (assignmentHash) {
                     handleTopSelect('learning');
                     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                      window.history.replaceState({}, '', `/learning?assignment=${assignmentHash[1]}`);
+                      writeAppSearchParams({});
                       window.dispatchEvent(new CustomEvent('openAssignment', {
                         detail: { assignmentId: assignmentHash[1] },
                       }));
@@ -4607,7 +4606,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   }
                   const nav = parseNavigationHref(href);
                   if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.history.replaceState({}, '', normalizeAppHref(href));
+                    writeAppSearchParams({});
                   }
                   if (nav.target === 'planner') {
                     handleTopSelect('planner');

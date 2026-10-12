@@ -59,7 +59,10 @@ export default function SubjectUnitsEditorHost({ familyId }) {
   const handleSaved = useCallback(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined' && subjectId) {
       window.dispatchEvent(new CustomEvent('refreshSubjects'));
-      window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId } }));
+      window.dispatchEvent(new CustomEvent('refreshSubjectDetail', {
+        detail: { subjectId, forceCurriculumRefresh: true },
+      }));
+      window.dispatchEvent(new CustomEvent('refreshPlanner'));
     }
     handleClose();
   }, [handleClose, subjectId]);

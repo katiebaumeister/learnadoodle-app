@@ -22,7 +22,7 @@ import DmParticipantAvatar from '../messages/DmParticipantAvatar';
 import { AppCalendarDatePickerModal } from '../ui/AppCalendarDatePickerModal';
 import { filterSubjectsForSchoolYear } from '../../lib/assistant/commands/rosterHelpers';
 import { DOODLE_HELPER_PARTICIPANT } from '../../lib/doodleHelperParticipant';
-import { normalizeAppHref } from '../../lib/url';
+import { parseNavigationHref, writeAppSearchParams } from '../../lib/url';
 import { DOODLE_PANE_STATUS, DOODLE_RESPONSE_TYPES } from '../../lib/assistant/commands/types';
 import { trackDoodleEvent } from '../../lib/assistant/commands/analytics';
 import {
@@ -924,9 +924,13 @@ export default function DoodleCommandPane({
       return;
     }
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const normalized = normalizeAppHref(link.href);
-      window.history.pushState({}, '', normalized);
-      window.dispatchEvent(new PopStateEvent('popstate'));
+      // Keep address bar on `/`; drive shell from parsed href + events.
+      writeAppSearchParams({}, { push: true });
+      const nav = parseNavigationHref(link.href);
+      if (nav?.target === 'planner' && nav.view) {
+        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: nav.view }));
+      }
+      window.dispatchEvent(new CustomEvent('appNavigate', { detail: { href: link.href, nav } }));
     }
   };
 

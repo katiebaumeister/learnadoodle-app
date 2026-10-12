@@ -31,50 +31,25 @@ def _log(msg: str, **kwargs):
     print(f"[LLM-UTIL] {msg}{(' ' + context) if context else ''}")
 
 
-async def get_file_text_from_storage(bucket: str, path: str) -> str:
-    """Fetch file from Supabase Storage and extract text (handles PDFs)"""
-    supa = get_admin_client()
-    
+async def get_file_text_from_storage(
+    bucket: str,
+    path: str,
+    *,
+    filename: str = "",
+    mime: str = "",
+) -> str:
+    """Fetch file from Supabase Storage and extract text (PDF, DOCX, text, images)."""
     try:
-        _log("storage.download.start", bucket=bucket, path=path)
-        # Download file
-        res = supa.storage.from_(bucket).download(path)
-        data: bytes = res
-        _log("storage.download.success", byte_length=len(data))
-        
-        # Check if it's a PDF by magic bytes or path
-        is_pdf = data[:4] == b'%PDF' or path.lower().endswith('.pdf')
-        
-        if is_pdf:
-            # Extract text from PDF
-            _log("storage.pdf_extraction.start", path=path)
-            try:
-                from pypdf import PdfReader
-                text = []
-                reader = PdfReader(io.BytesIO(data))
-                for page in reader.pages:
-                    page_text = page.extract_text() or ""
-                    text.append(page_text)
-                extracted = "\n".join(text)
-                _log("storage.pdf_extraction.success", text_length=len(extracted), preview=extracted[:100] if extracted else "empty")
-                return extracted
-            except ImportError:
-                _log("storage.download.error", error="pypdf missing")
-                raise ImportError("pypdf required for PDF extraction. Install with: pip install pypdf")
-            except Exception as pdf_err:
-                _log("storage.pdf_extraction.error", error=str(pdf_err))
-                raise ValueError(f"Failed to extract PDF text: {pdf_err}")
-        else:
-            # Try UTF-8 for text files
-            try:
-                decoded = data.decode("utf-8")
-                _log("storage.text_extraction.success", text_length=len(decoded))
-                return decoded
-            except UnicodeDecodeError:
-                # Try latin-1 as fallback
-                decoded = data.decode("latin-1", errors="ignore")
-                _log("storage.text_extraction.fallback", text_length=len(decoded))
-                return decoded
+        from routers.material_text_extract import extract_text_from_storage
+    except ImportError:
+        from material_text_extract import extract_text_from_storage  # type: ignore
+    try:
+        return await extract_text_from_storage(
+            bucket,
+            path,
+            filename=filename or path.rsplit("/", 1)[-1],
+            mime=mime or "",
+        )
     except Exception as e:
         _log("storage.download.exception", error=str(e))
         raise ValueError(f"Failed to fetch file from storage: {e}")

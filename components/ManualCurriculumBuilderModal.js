@@ -37,7 +37,10 @@ import {
   invalidateSubjectCurriculumStructureCache,
 } from '../lib/services/curriculumClient';
 import { refreshSubjectCurriculumUnits } from '../lib/useSubjectCurriculumUnits';
+import { invalidateSubjectProgressCache } from '../lib/subjectProgressPlanCache';
+import { autoAssignLessonsToUnlinkedEvents } from '../lib/subjectLessonLinking';
 import { draftFromCurriculumStructure } from '../lib/subjectUnitsEditorDraft';
+import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 import {
@@ -216,6 +219,8 @@ export default function ManualCurriculumBuilderModal({
   academicYearId = null,
   replaceExisting = false,
   createCalendarEvents = false,
+  /** After save, link unscheduled lessons onto upcoming unlinked learning-day events. */
+  autoAssignToLearningDays = false,
   headerTitle = null,
   embedded = false,
   autoSave = false,
@@ -651,15 +656,63 @@ export default function ManualCurriculumBuilderModal({
       }
       setDirty(false);
       invalidateSubjectCurriculumStructureCache(familyId, subjectId, academicYearId || null);
-      // Close immediately after commit so the spinner isn't held by follow-up refreshes.
+      invalidateSubjectCurriculumStructureCache(familyId, subjectId, null);
+      invalidateSubjectProgressCache(familyId, subjectId);
+
+      // Await cache refresh before notifying listeners so Classwork sees units immediately.
+      // Use year-agnostic structure (same as Subject Detail) so units show right away.
+      let savedUnits = [];
+      try {
+        savedUnits = await refreshSubjectCurriculumUnits(familyId, subjectId, null);
+      } catch (_) {
+        savedUnits = [];
+      }
+
+      let assignedCount = 0;
+      if (autoAssignToLearningDays && familyId && subjectId) {
+        try {
+          const { data: eventRows } = await supabase
+            .from('events')
+            .select('id, subject_id, event_type, start_ts, start_local, status, is_backlog, curriculum_lesson_id, lesson, curriculum_metadata')
+            .eq('family_id', familyId)
+            .eq('subject_id', subjectId);
+          const lessonEvents = (Array.isArray(eventRows) ? eventRows : []).filter((ev) => {
+            if (ev?.status === 'canceled' || ev?.is_backlog) return false;
+            const type = String(ev?.event_type || '').trim().toLowerCase();
+            return !type || type === 'lesson' || type === 'class day' || type === 'classday';
+          });
+          const lessonCount = Math.max(
+            savedUnits.reduce((n, u) => n + (Array.isArray(u?.lessons) ? u.lessons.length : 0), 0),
+            20,
+          );
+          const { assigned } = await autoAssignLessonsToUnlinkedEvents({
+            familyId,
+            subjectId,
+            subjectEvents: lessonEvents,
+            units: savedUnits,
+            limit: Math.max(lessonCount, 80),
+          });
+          assignedCount = assigned || 0;
+          if (assignedCount > 0) {
+            await refreshSubjectCurriculumUnits(familyId, subjectId, null).catch(() => {});
+          }
+        } catch (_) {
+          // Linking is best-effort; units are already saved.
+        }
+      }
+
+      if (!autoSave) {
+        toast?.push(
+          assignedCount > 0
+            ? `Curriculum saved. Scheduled ${assignedCount} lesson${assignedCount === 1 ? '' : 's'} on learning days.`
+            : s('courseStructure.manualBuilder.saveSuccess'),
+          'success',
+        );
+      }
+      onSaved?.();
       if (closeOnSuccess && !embedded) {
         onClose?.();
       }
-      if (!autoSave) {
-        toast?.push(s('courseStructure.manualBuilder.saveSuccess'), 'success');
-      }
-      onSaved?.();
-      refreshSubjectCurriculumUnits(familyId, subjectId, academicYearId || null).catch(() => {});
     } catch (e) {
       const message = e?.message || s('courseStructure.manualBuilder.errorSave');
       if (!embedded || !autoSave) {
@@ -679,6 +732,7 @@ export default function ManualCurriculumBuilderModal({
     replaceExisting,
     loadedExisting,
     createCalendarEvents,
+    autoAssignToLearningDays,
     academicYearId,
     validationError,
     embedded,
@@ -1764,15 +1818,23 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   cancelButton: {
+    minHeight: 50,
     paddingVertical: 12,
     paddingHorizontal: 18,
-    borderRadius: 10,
-    backgroundColor: '#f3f4f6',
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cancelText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
     color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   saveButton: {
     minHeight: 50,

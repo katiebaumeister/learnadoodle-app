@@ -19,6 +19,11 @@ import {
   markPendingSignupVerification,
   redirectIfAuthenticatedSession,
 } from '../lib/onboardingCrossTab';
+import {
+  consumeAuthViewIntent,
+  stashAuthViewIntent,
+  stripAppUrlToRoot,
+} from '../lib/url';
 import LandingPage from './LandingPage';
 
 const googleLogo = require('../assets/google.png');
@@ -143,57 +148,38 @@ export default function WebAuthScreen() {
     }
   }, [showWelcome, justClosedModal]);
 
-  // Helper to update URL without reload
-  const updateURL = (view) => {
+  // Keep the address bar on bare `/` — auth panels are state-only.
+  const updateURL = (_view) => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      if (view) {
-        url.searchParams.set('view', view);
-      } else {
-        url.searchParams.delete('view');
-      }
-      window.history.pushState({ view }, '', url.toString());
+      stripAppUrlToRoot({ push: false });
     }
   };
 
-  // Handle browser back/forward buttons and pre-fill email from URL (e.g. from invite landing ?view=signup&email=...)
+  // One-time: honor legacy ?view= / ?email= / stashed intent, then strip the URL.
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
 
-    const handlePopState = () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const view = urlParams.get('view');
-      const emailParam = urlParams.get('email');
+    const urlParams = new URLSearchParams(window.location.search);
+    const view = urlParams.get('view') || consumeAuthViewIntent();
+    const emailParam = urlParams.get('email');
 
-      if (emailParam) {
-        try {
-          setEmail(decodeURIComponent(emailParam).trim());
-        } catch (_) {
-          setEmail(emailParam.trim());
-        }
+    if (emailParam) {
+      try {
+        setEmail(decodeURIComponent(emailParam).trim());
+      } catch (_) {
+        setEmail(emailParam.trim());
       }
+    }
 
-      if (view === 'signup') {
-        openAuthScreen({ signUp: true });
-      } else if (view === 'signin') {
-        openAuthScreen({ signUp: false });
-      } else if (view === 'reset') {
-        openAuthScreen({ resetPassword: true });
-      } else {
-        setShowWelcome(true);
-        setIsResetPassword(false);
-      }
-    };
+    if (view === 'signup') {
+      openAuthScreen({ signUp: true });
+    } else if (view === 'signin') {
+      openAuthScreen({ signUp: false });
+    } else if (view === 'reset') {
+      openAuthScreen({ resetPassword: true });
+    }
 
-    // Check initial URL state
-    handlePopState();
-
-    // Listen for browser navigation
-    window.addEventListener('popstate', handlePopState);
-
-    return () => {
-      window.removeEventListener('popstate', handlePopState);
-    };
+    stripAppUrlToRoot({ push: false });
   }, []);
 
   // While waiting for email confirmation, watch for session from another tab/window.
@@ -389,7 +375,8 @@ export default function WebAuthScreen() {
             });
           } catch (_) {}
         } else if (data?.session && typeof window !== 'undefined') {
-          window.location.href = '/?signup=true';
+          stashAuthViewIntent('signup');
+          window.location.href = '/';
         }
       } catch (err) {
         const is500 = err?.status === 500 || (err?.message && String(err.message).toLowerCase().includes('500'));
@@ -604,7 +591,8 @@ export default function WebAuthScreen() {
       try {
         const { data: { session } } = await supabaseAuth.getCurrentSession();
         if (session?.user && typeof window !== 'undefined') {
-          window.location.href = '/?signup=true';
+          stashAuthViewIntent('signup');
+          window.location.href = '/';
           return;
         }
         setResendFeedback('We don’t see a verified session yet. Open the link in your email, then try again.');

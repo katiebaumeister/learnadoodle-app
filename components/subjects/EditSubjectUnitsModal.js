@@ -77,8 +77,8 @@ export default function EditSubjectUnitsModal({
           : 'Add units'
       }
       stackZIndex={stackZIndex}
-      showCreateUnitsAction={loadExisting}
-      createUnitsActionLabel="Create units and lessons"
+      showCreateUnitsAction
+      createUnitsActionLabel="Create classwork"
       onCreateUnitsAction={handleCreateUnitsAndLessons}
       showScheduleAllAction={loadExisting}
       scheduleAllActionLabel="Schedule all lessons"

@@ -245,7 +245,7 @@ export default function SubjectMagicCreateWizard({
               {step === 2 ? (
                 <View style={styles.composeBlock}>
                   <Text style={styles.intro}>
-                    Add a description and/or attach a material. We&apos;ll draft from what you provide so you can review before saving.
+                    Add a description and/or attach a material (PDF, Word, text, or image). We&apos;ll draft from what you provide so you can review before saving.
                   </Text>
                   <Text style={styles.label}>Description</Text>
                   <TextInput

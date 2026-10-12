@@ -756,6 +756,7 @@ export default function SubjectDetailPage({
   const loadSubjectDetailSeqRef = useRef(0);
   const loadSubjectDetail = useCallback(async (opts = {}) => {
     const silent = opts.silent === true;
+    const forceEvents = opts.forceEvents === true;
     if (!subjectId || !familyId) return;
     if (!silent && loadingRef.current) return;
     if (!silent) {
@@ -789,7 +790,8 @@ export default function SubjectDetailPage({
         const prevEvents = prev.events;
         const newEvents = data.events;
         if (
-          prevEvents && newEvents
+          !forceEvents
+          && prevEvents && newEvents
           && prevEvents.length === newEvents.length
           && prevEvents.length > 0
           && prevEvents[0]?.id === newEvents[0]?.id
@@ -842,8 +844,16 @@ export default function SubjectDetailPage({
     };
     const handleSubjectDetailRefresh = (e) => {
       if (String(e.detail?.subjectId || '') === String(subjectId || '')) {
-        loadSubjectDetail({ silent: true });
-        loadLearningGoalsStructure();
+        const forceCurriculum = e.detail?.forceCurriculumRefresh === true;
+        loadSubjectDetail({
+          silent: true,
+          // Curriculum saves update lesson links on existing event ids — don't reuse stale rows.
+          forceEvents: forceCurriculum,
+        });
+        if (forceCurriculum) {
+          learningGoalsFetchCooldownUntilRef.current = 0;
+        }
+        loadLearningGoalsStructure(forceCurriculum ? { force: true } : undefined);
       }
     };
     const handleEventPatched = (e) => {

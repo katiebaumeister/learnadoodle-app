@@ -227,7 +227,10 @@ class ParsePlainTextRequest(BaseModel):
     family_id: str = Field(..., description="Family ID")
     subject_name: str = Field(..., description="Subject name")
     raw_text: str = Field(default="", description="Pasted syllabus/outline text (optional when material_id is set)")
-    material_id: Optional[str] = Field(default=None, description="Library material ID — server extracts text from PDF/notes")
+    material_id: Optional[str] = Field(
+        default=None,
+        description="Library material ID — server extracts text from PDF, DOCX, text, or images (vision OCR)",
+    )
     source_title: Optional[str] = None
     source_type: Optional[Literal["auto_detect", "syllabus", "lesson_list", "pacing_guide", "weekly_plan", "course_outline"]] = None
     parse_mode: Optional[Literal["auto_detect", "unit_based", "lesson_based", "assignment_based", "week_based", "date_based"]] = None
@@ -251,7 +254,7 @@ class ParsePlainTextRequest(BaseModel):
 
 
 async def _resolve_plain_text_for_parse(body: ParsePlainTextRequest, family_id: str) -> str:
-    """Use pasted text, or extract from a library material (PDF/notes)."""
+    """Use pasted text, or extract from a library material (PDF/DOCX/text/image)."""
     if body.material_id:
         text = await extract_material_text(body.material_id, family_id)
         return (text or "").strip()
@@ -424,7 +427,7 @@ class CommitManualDraftResponse(BaseModel):
 
 async def extract_material_text(material_id: str, family_id: str) -> str:
     """
-    Extract text from a material (from notes field or PDF if applicable).
+    Extract text from a material file (PDF, DOCX, text, images) or notes/metadata fallback.
     """
     supabase = get_admin_client()
     
@@ -456,36 +459,61 @@ async def extract_material_text(material_id: str, family_id: str) -> str:
         
         material = material_res.data
         
-        # First, try to extract from PDF if it exists (PDF content takes priority)
         storage_path = material.get("storage_path")
-        mime = material.get("mime", "").lower()
-        filename = material.get("filename", "").lower()
-        material_title = material.get("title", "").lower()
-        
-        # Check if it's a PDF by mime type or filename
-        is_pdf = (mime == "application/pdf" or 
-                  filename.endswith(".pdf") or 
-                  material_title.endswith(".pdf"))
-        
-        if storage_path and is_pdf:
-            # Download PDF from Supabase storage and extract text
+        mime = (material.get("mime") or material.get("content_type") or "").lower()
+        filename = (
+            material.get("filename")
+            or material.get("original_filename")
+            or material.get("title")
+            or ""
+        )
+        file_extract_error = None
+
+        if storage_path:
             try:
                 from routers.util import get_file_text_from_storage
-                # Materials are stored in the 'evidence' bucket
-                log_event("curriculum.material_pdf_extraction_attempt", material_id=material_id, storage_path=storage_path, bucket="evidence")
-                text = await get_file_text_from_storage("evidence", storage_path)
+                log_event(
+                    "curriculum.material_file_extraction_attempt",
+                    material_id=material_id,
+                    storage_path=storage_path,
+                    mime=mime,
+                    filename=filename,
+                    bucket="evidence",
+                )
+                text = await get_file_text_from_storage(
+                    "evidence",
+                    storage_path,
+                    filename=filename,
+                    mime=mime,
+                )
                 if text and text.strip():
-                    log_event("curriculum.material_pdf_extraction_success", material_id=material_id, text_length=len(text), preview=text[:200])
+                    log_event(
+                        "curriculum.material_file_extraction_success",
+                        material_id=material_id,
+                        text_length=len(text),
+                        preview=text[:200],
+                    )
                     return text
-                else:
-                    log_event("curriculum.material_pdf_extraction_empty", material_id=material_id, storage_path=storage_path)
+                log_event(
+                    "curriculum.material_file_extraction_empty",
+                    material_id=material_id,
+                    storage_path=storage_path,
+                )
             except ImportError as e:
-                log_event("curriculum.material_pdf_extraction_error", material_id=material_id, error=f"Library not available: {str(e)}")
+                file_extract_error = f"Library not available: {str(e)}"
+                log_event("curriculum.material_file_extraction_error", material_id=material_id, error=file_extract_error)
             except Exception as e:
-                log_event("curriculum.material_pdf_extraction_error", material_id=material_id, error=str(e), storage_path=storage_path, error_type=type(e).__name__)
+                file_extract_error = str(e)
+                log_event(
+                    "curriculum.material_file_extraction_error",
+                    material_id=material_id,
+                    error=file_extract_error,
+                    storage_path=storage_path,
+                    error_type=type(e).__name__,
+                )
                 # Fall through to notes/metadata if extraction fails
         
-        # If PDF extraction failed or no PDF, check for notes
+        # If file extraction failed or no file, check for notes
         notes = material.get("notes")
         if notes and notes.strip():
             log_event("curriculum.material_using_notes", material_id=material_id, notes_length=len(notes))
@@ -513,6 +541,13 @@ async def extract_material_text(material_id: str, family_id: str) -> str:
             parts.append(f"Provider: {provider}")
         if subject:
             parts.append(f"Subject: {subject}")
+
+        # Prefer surfacing extract errors for image/doc uploads over thin metadata.
+        if file_extract_error and storage_path:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not read this material: {file_extract_error}",
+            )
         
         return "\n".join(parts)
         

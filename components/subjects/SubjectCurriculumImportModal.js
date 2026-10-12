@@ -152,7 +152,7 @@ export default function SubjectCurriculumImportModal({
       : ' This creates a draft only. Nothing is saved until you review and press Save. Your subject has no saved units yet, so this won’t overwrite anything.';
 
     if (method === 'unified') {
-      return `Add a description and/or attach a syllabus. We will draft units and lessons sized to your saved school year schedule so you can edit before saving.${scheduleBit}${persistBit}`;
+      return 'Add a description and/or attach a syllabus (PDF, Word, text, or image). We will draft units and lessons sized to your saved school year schedule so you can edit before saving.';
     }
     if (method === 'generate') {
       return `Describe what this course should cover. We will generate units and lessons sized to your saved school year schedule so you can edit before saving.${scheduleBit}${persistBit}`;
@@ -225,7 +225,7 @@ export default function SubjectCurriculumImportModal({
   const handleUploadParse = useCallback(async () => {
     if (!familyId || !subjectId || !selectedMaterialId) return;
     setWorking(true);
-    setStatusText('Extracting units and lessons from material…');
+    setStatusText('Reading material (PDF, Word, text, or image)…');
     try {
       const extras = await parsePayloadExtras({ expandStructure: false });
       const { data, error } = await parsePlainTextStream(
@@ -387,6 +387,7 @@ export default function SubjectCurriculumImportModal({
         initialDraft={editorDraft}
         replaceExisting={replaceExisting}
         createCalendarEvents={false}
+        autoAssignToLearningDays={detectDates === true}
         academicYearId={academicYearId}
       />
     );
