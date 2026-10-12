@@ -38,9 +38,13 @@ import {
 } from '../lib/services/curriculumClient';
 import { refreshSubjectCurriculumUnits } from '../lib/useSubjectCurriculumUnits';
 import { invalidateSubjectProgressCache } from '../lib/subjectProgressPlanCache';
-import { autoAssignLessonsToUnlinkedEvents } from '../lib/subjectLessonLinking';
+import {
+  autoAssignLessonsToUnlinkedEvents,
+  getUnlinkedUpcomingEvents,
+  loadSubjectLearningDayEvents,
+  unitsFromManualCommitResponse,
+} from '../lib/subjectLessonLinking';
 import { draftFromCurriculumStructure } from '../lib/subjectUnitsEditorDraft';
-import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 import {
@@ -141,6 +145,13 @@ function buildCommitDraft(draft) {
       })),
     })),
   };
+}
+
+function countDraftLessons(draft) {
+  return (draft?.units || []).reduce(
+    (n, unit) => n + (Array.isArray(unit?.lessons) ? unit.lessons.length : 0),
+    0,
+  );
 }
 
 function lessonIdFromDraftTempId(tempId) {
@@ -258,8 +269,14 @@ export default function ManualCurriculumBuilderModal({
   const [draftBuilderMovePickKey, setDraftBuilderMovePickKey] = useState(null);
   const [webDraftUnitMenuLayout, setWebDraftUnitMenuLayout] = useState(null);
   const [webDraftLessonMenuLayout, setWebDraftLessonMenuLayout] = useState(null);
+  /** Upcoming learning-day date labels keyed by draft lesson temp_id (With dates preview). */
+  const [draftScheduleByTempId, setDraftScheduleByTempId] = useState({});
   const unitTitleInputRefs = useRef({});
   const lessonTitleInputRefs = useRef({});
+
+  const loadLearningDayEventsForAssign = useCallback(async () => {
+    return loadSubjectLearningDayEvents({ familyId, subjectId });
+  }, [familyId, subjectId]);
 
   const closeWebDraftUnitMenu = useCallback(() => {
     setWebDraftUnitMenuLayout(null);
@@ -636,12 +653,13 @@ export default function ManualCurriculumBuilderModal({
     setError(null);
     setSaving(true);
     try {
+      const commitDraft = buildCommitDraft(draft);
       const payload = {
         subject_id: subjectId,
         family_id: familyId,
         subject_name: subjectName,
         builder_mode: 'rich_units',
-        draft: buildCommitDraft(draft),
+        draft: commitDraft,
         replace_existing: replaceExisting || loadedExisting,
         create_calendar_events: createCalendarEvents,
       };
@@ -659,55 +677,81 @@ export default function ManualCurriculumBuilderModal({
       invalidateSubjectCurriculumStructureCache(familyId, subjectId, null);
       invalidateSubjectProgressCache(familyId, subjectId);
 
-      // Await cache refresh before notifying listeners so Classwork sees units immediately.
-      // Use year-agnostic structure (same as Subject Detail) so units show right away.
-      let savedUnits = [];
+      // Prefer commit response ids (immediate) so With dates doesn't wait on structure refresh.
+      const commitUnits = unitsFromManualCommitResponse(commitDraft, data);
+      let savedUnits = commitUnits;
       try {
-        savedUnits = await refreshSubjectCurriculumUnits(familyId, subjectId, null);
+        const refreshed = await refreshSubjectCurriculumUnits(familyId, subjectId, null);
+        if (Array.isArray(refreshed) && refreshed.length && !commitUnits.length) {
+          savedUnits = refreshed;
+        } else if (Array.isArray(refreshed) && refreshed.length && commitUnits.length) {
+          // Keep commit units for assign; refresh still warmed the Classwork cache.
+          savedUnits = commitUnits;
+        }
       } catch (_) {
-        savedUnits = [];
+        savedUnits = commitUnits;
       }
 
       let assignedCount = 0;
+      let assignAttempted = false;
       if (autoAssignToLearningDays && familyId && subjectId) {
+        assignAttempted = true;
         try {
-          const { data: eventRows } = await supabase
-            .from('events')
-            .select('id, subject_id, event_type, start_ts, start_local, status, is_backlog, curriculum_lesson_id, lesson, curriculum_metadata')
-            .eq('family_id', familyId)
-            .eq('subject_id', subjectId);
-          const lessonEvents = (Array.isArray(eventRows) ? eventRows : []).filter((ev) => {
-            if (ev?.status === 'canceled' || ev?.is_backlog) return false;
-            const type = String(ev?.event_type || '').trim().toLowerCase();
-            return !type || type === 'lesson' || type === 'class day' || type === 'classday';
-          });
+          const lessonEvents = await loadLearningDayEventsForAssign();
           const lessonCount = Math.max(
             savedUnits.reduce((n, u) => n + (Array.isArray(u?.lessons) ? u.lessons.length : 0), 0),
+            countDraftLessons(commitDraft),
             20,
           );
-          const { assigned } = await autoAssignLessonsToUnlinkedEvents({
+          const { assigned, scheduled = [] } = await autoAssignLessonsToUnlinkedEvents({
             familyId,
             subjectId,
             subjectEvents: lessonEvents,
             units: savedUnits,
-            limit: Math.max(lessonCount, 80),
+            limit: Math.max(lessonCount, 120),
           });
           assignedCount = assigned || 0;
           if (assignedCount > 0) {
             await refreshSubjectCurriculumUnits(familyId, subjectId, null).catch(() => {});
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              scheduled.forEach((row) => {
+                if (!row?.eventId) return;
+                window.dispatchEvent(new CustomEvent('eventPatched', {
+                  detail: {
+                    patch: {
+                      id: row.eventId,
+                      subject_id: subjectId,
+                      curriculum_lesson_id: row.lessonId,
+                      curriculum_unit_title: row.unitTitle || null,
+                      unit: row.unitTitle || null,
+                      lesson: row.lessonTitle || null,
+                    },
+                  },
+                }));
+              });
+            }
+          } else if (typeof console !== 'undefined') {
+            console.warn('[ManualCurriculumBuilder] With dates assign matched 0 lessons', {
+              openLearningDays: lessonEvents?.length || 0,
+              units: savedUnits?.length || 0,
+              lessons: lessonCount,
+            });
           }
-        } catch (_) {
-          // Linking is best-effort; units are already saved.
+        } catch (assignErr) {
+          if (typeof console !== 'undefined') {
+            console.warn('[ManualCurriculumBuilder] With dates assign failed', assignErr);
+          }
         }
       }
 
       if (!autoSave) {
-        toast?.push(
-          assignedCount > 0
-            ? `Curriculum saved. Scheduled ${assignedCount} lesson${assignedCount === 1 ? '' : 's'} on learning days.`
-            : s('courseStructure.manualBuilder.saveSuccess'),
-          'success',
-        );
+        let saveMsg = s('courseStructure.manualBuilder.saveSuccess');
+        if (assignAttempted && assignedCount > 0) {
+          saveMsg = `Curriculum saved. Scheduled ${assignedCount} lesson${assignedCount === 1 ? '' : 's'} on learning days.`;
+        } else if (assignAttempted && assignedCount === 0) {
+          saveMsg = 'Curriculum saved. Couldn’t attach lessons to open learning days — try Schedule all lessons on Classwork.';
+        }
+        toast?.push(saveMsg, 'success');
       }
       onSaved?.();
       if (closeOnSuccess && !embedded) {
@@ -737,6 +781,52 @@ export default function ManualCurriculumBuilderModal({
     validationError,
     embedded,
     autoSave,
+    loadLearningDayEventsForAssign,
+  ]);
+
+  // Preview which subject learning days lessons will land on (With dates).
+  useEffect(() => {
+    if (!visible || !autoAssignToLearningDays || !familyId || !subjectId) {
+      setDraftScheduleByTempId({});
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const lessonEvents = await loadLearningDayEventsForAssign();
+        if (cancelled) return;
+        const slots = getUnlinkedUpcomingEvents(lessonEvents, {
+          limit: 200,
+          upcomingOnly: false,
+          curriculumFkOnly: true,
+        });
+        const next = {};
+        let i = 0;
+        (draft?.units || []).forEach((unit) => {
+          (unit?.lessons || []).forEach((lesson) => {
+            const tempId = lesson?.temp_id != null ? String(lesson.temp_id) : '';
+            if (!tempId) return;
+            if (i < slots.length) {
+              next[tempId] = slots[i].dateLabel || 'Scheduled';
+              i += 1;
+            } else {
+              next[tempId] = 'Not scheduled';
+            }
+          });
+        });
+        setDraftScheduleByTempId(next);
+      } catch (_) {
+        if (!cancelled) setDraftScheduleByTempId({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [
+    visible,
+    autoAssignToLearningDays,
+    familyId,
+    subjectId,
+    draft?.units,
+    loadLearningDayEventsForAssign,
   ]);
 
   useEffect(() => {
@@ -1277,6 +1367,11 @@ export default function ManualCurriculumBuilderModal({
                                       {embedded && typeof getLessonScheduleLabel === 'function' ? (
                                         <Text style={styles.lessonScheduleMeta} numberOfLines={1}>
                                           {getLessonScheduleLabel(lessonIdFromDraftTempId(lesson.temp_id)) || 'Not scheduled'}
+                                        </Text>
+                                      ) : null}
+                                      {!embedded && autoAssignToLearningDays ? (
+                                        <Text style={styles.lessonScheduleMeta} numberOfLines={1}>
+                                          {draftScheduleByTempId[String(lesson.temp_id || '')] || 'Not scheduled'}
                                         </Text>
                                       ) : null}
                                     </View>

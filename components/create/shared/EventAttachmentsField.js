@@ -89,6 +89,7 @@ export default function EventAttachmentsField({
   onMaterialChange,
   onAddNew,
   label = 'Attachments',
+  labelStyle = null,
   placeholder = 'Select attachment…',
   allowMultiple = false,
   selectedMaterialIds = [],
@@ -227,7 +228,7 @@ export default function EventAttachmentsField({
   return (
     <View style={styles.formGroup}>
       {label != null && label !== '' ? (
-        <Text style={styles.fieldLabel}>{label}</Text>
+        <Text style={[styles.fieldLabel, labelStyle]}>{label}</Text>
       ) : null}
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
         {canOpenSelected ? (

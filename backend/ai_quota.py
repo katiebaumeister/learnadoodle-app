@@ -1,8 +1,11 @@
 """
-Conservative AI abuse safeguards: monthly + daily unit caps, new-family tighter limits.
+AI abuse safeguards: monthly + daily unit caps, new-family tighter limits.
 
 Enforcement is server-side. Plan tiers are not wired to billing yet — everyone is
 treated as the free/default allowance unless env overrides raise the ceiling.
+
+Beta defaults are slightly above the original free caps so testers can exercise
+Create classwork / Doodle for a week, while still blocking bots and runaway spend.
 """
 from __future__ import annotations
 
@@ -17,26 +20,21 @@ from ai_usage_ledger import UNIT_WEIGHTS
 
 logger = logging.getLogger(__name__)
 
-# Conservative defaults (override via env without redeploying product copy).
-_MONTHLY_DEFAULT = int(os.environ.get("AI_MONTHLY_UNITS_DEFAULT", "40"))
-_MONTHLY_NEW_FAMILY = int(os.environ.get("AI_MONTHLY_UNITS_NEW_FAMILY", "15"))
-_DAILY_DEFAULT = int(os.environ.get("AI_DAILY_UNITS_DEFAULT", "20"))
-_DAILY_NEW_FAMILY = int(os.environ.get("AI_DAILY_UNITS_NEW_FAMILY", "8"))
+# Beta-friendly defaults (override via env without redeploying product copy).
+# Rough budget: a few curriculum imports (~30u) + material parses + Doodle chat.
+_MONTHLY_DEFAULT = int(os.environ.get("AI_MONTHLY_UNITS_DEFAULT", "120"))
+_MONTHLY_NEW_FAMILY = int(os.environ.get("AI_MONTHLY_UNITS_NEW_FAMILY", "80"))
+_DAILY_DEFAULT = int(os.environ.get("AI_DAILY_UNITS_DEFAULT", "50"))
+_DAILY_NEW_FAMILY = int(os.environ.get("AI_DAILY_UNITS_NEW_FAMILY", "35"))
 _NEW_FAMILY_DAYS = int(os.environ.get("AI_NEW_FAMILY_DAYS", "7"))
+
 
 def _env_flag(name: str, default: str = "") -> bool:
     return os.environ.get(name, default).strip().lower() in ("1", "true", "yes")
 
 
-# Lift quotas in local/dev for now. Production keeps enforcement unless AI_QUOTA_DISABLED=true.
-_IS_DEV = os.environ.get("ENVIRONMENT", "development").strip().lower() in (
-    "development",
-    "dev",
-    "local",
-)
-_QUOTA_DISABLED = _env_flag("AI_QUOTA_DISABLED") or (
-    _IS_DEV and not _env_flag("AI_QUOTA_FORCE_ENABLE")
-)
+# Quotas on everywhere unless explicitly disabled (AI_QUOTA_DISABLED=true).
+_QUOTA_DISABLED = _env_flag("AI_QUOTA_DISABLED")
 
 
 def units_for_action(action_type: str, *, units: Optional[int] = None) -> int:

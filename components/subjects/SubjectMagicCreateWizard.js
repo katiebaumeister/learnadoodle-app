@@ -272,6 +272,7 @@ export default function SubjectMagicCreateWizard({
                         onMaterialChange={setSelectedMaterialId}
                         onAddNew={() => setShowAddMaterial(true)}
                         label="Material (optional)"
+                        labelStyle={styles.label}
                         placeholder="Select or upload…"
                       />
                     </View>
@@ -427,10 +428,14 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   label: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '500',
     color: '#374151',
     marginTop: 4,
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   textArea: {
     minHeight: 220,

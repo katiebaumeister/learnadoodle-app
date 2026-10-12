@@ -58,7 +58,11 @@ export default function SubjectUnitsEditorHost({ familyId }) {
 
   const handleSaved = useCallback(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined' && subjectId) {
-      window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      // Skip subject-detail side-effect on refreshSubjects so a non-forced silent
+      // reload cannot win the race and drop freshly linked curriculum_lesson_ids.
+      window.dispatchEvent(new CustomEvent('refreshSubjects', {
+        detail: { skipSubjectDetailRefresh: true },
+      }));
       window.dispatchEvent(new CustomEvent('refreshSubjectDetail', {
         detail: { subjectId, forceCurriculumRefresh: true },
       }));

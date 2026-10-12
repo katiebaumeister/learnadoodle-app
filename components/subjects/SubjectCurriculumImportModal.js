@@ -225,7 +225,7 @@ export default function SubjectCurriculumImportModal({
   const handleUploadParse = useCallback(async () => {
     if (!familyId || !subjectId || !selectedMaterialId) return;
     setWorking(true);
-    setStatusText('Reading material (PDF, Word, text, or image)…');
+    setStatusText('Reading material…');
     try {
       const extras = await parsePayloadExtras({ expandStructure: false });
       const { data, error } = await parsePlainTextStream(
@@ -438,15 +438,18 @@ export default function SubjectCurriculumImportModal({
                     editable={!working}
                     {...(Platform.OS === 'web' && { cursor: 'text' })}
                   />
-                  <EventAttachmentsField
-                    key={materialReloadKey}
-                    familyId={familyId}
-                    selectedMaterialId={selectedMaterialId}
-                    onMaterialChange={setSelectedMaterialId}
-                    onAddNew={() => setShowAddMaterial(true)}
-                    label="Material (optional)"
-                    placeholder="Select or upload…"
-                  />
+                  <View style={styles.materialBlock}>
+                    <EventAttachmentsField
+                      key={materialReloadKey}
+                      familyId={familyId}
+                      selectedMaterialId={selectedMaterialId}
+                      onMaterialChange={setSelectedMaterialId}
+                      onAddNew={() => setShowAddMaterial(true)}
+                      label="Material (optional)"
+                      labelStyle={styles.label}
+                      placeholder="Select or upload…"
+                    />
+                  </View>
                 </>
               ) : null}
 
@@ -501,12 +504,15 @@ export default function SubjectCurriculumImportModal({
                 </>
               ) : null}
 
-              {statusText ? (
-                <View style={styles.statusRow}>
-                  {working ? <ActivityIndicator size="small" color={ACCENT} /> : null}
-                  <Text style={styles.statusText}>{statusText}</Text>
-                </View>
-              ) : null}
+              {/* Always reserve status row height so "Reading material…" doesn't jump the layout. */}
+              <View style={[styles.statusRow, !statusText && styles.statusRowPlaceholder]}>
+                {statusText ? (
+                  <>
+                    {working ? <ActivityIndicator size="small" color={ACCENT} /> : null}
+                    <Text style={styles.statusText}>{statusText}</Text>
+                  </>
+                ) : null}
+              </View>
             </ScrollView>
 
             <View style={styles.footer}>
@@ -628,6 +634,12 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#374151',
     marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  materialBlock: {
+    marginTop: 16,
   },
   input: {
     borderWidth: 1,
@@ -651,7 +663,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginTop: 14,
+    marginTop: 16,
+    minHeight: 22,
+  },
+  statusRowPlaceholder: {
+    opacity: 0,
   },
   statusText: {
     fontSize: 13,

@@ -797,7 +797,13 @@ export default function SubjectDetailPage({
           && prevEvents[0]?.id === newEvents[0]?.id
           && prevEvents[prevEvents.length - 1]?.id === newEvents[newEvents.length - 1]?.id
         ) {
-          data.events = prevEvents;
+          // Don't keep stale rows when lesson links changed (With dates / Schedule all).
+          const lessonLinkFingerprint = (events) => (events || [])
+            .map((ev) => `${ev?.id}:${ev?.curriculum_lesson_id || ''}`)
+            .join('|');
+          if (lessonLinkFingerprint(prevEvents) === lessonLinkFingerprint(newEvents)) {
+            data.events = prevEvents;
+          }
         }
         return data;
       });

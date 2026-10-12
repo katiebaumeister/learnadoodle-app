@@ -28,9 +28,10 @@ export const AI_ACTION_UNIT_WEIGHTS = {
  * Monthly included units per plan (product copy / UI).
  * Backend enforcement currently uses the free/default cap for everyone
  * (see backend/ai_quota.py — AI_MONTHLY_UNITS_DEFAULT / NEW_FAMILY), until billing tiers are wired.
+ * Free default matches beta testing allowance (~120/mo).
  */
 export const PLAN_MONTHLY_AI_UNITS: Record<PlanKey, number> = {
-  free: 40,
+  free: 120,
   family: 300,
   familyPlus: 1000,
 };
