@@ -109,6 +109,8 @@ const normalizePublicHolidayList = (holidays) => {
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
 };
 
+const mergePublicHolidayLists = (...lists) => normalizePublicHolidayList(lists.flat());
+
 const readPublicHolidaysCache = (countryCode, startYmd, endYmd) => {
   const key = buildPublicHolidaysCacheKey(countryCode, startYmd, endYmd);
   if (!key.includes('|') || key.endsWith('||') || key.includes('|undefined')) return null;
@@ -785,6 +787,10 @@ export default function PlannerSettingsContent({
     () => normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim()),
     [lockedSchoolYearLabel]
   );
+  const normalizedInitialSchoolYearLabel = useMemo(
+    () => normalizeSchoolYearLabel(String(initialSchoolYearLabel || '').trim()),
+    [initialSchoolYearLabel]
+  );
   const isSchoolYearLocked = Boolean(normalizedLockedSchoolYearLabel) && !embeddedInModal;
   const initialDataSignature = useMemo(
     () => buildPlannerInitialDataSignature(initialData),
@@ -1178,10 +1184,10 @@ export default function PlannerSettingsContent({
     const key = buildPublicHolidaysCacheKey(countryCode, startYmd, endYmd);
     const builtIn = countryCode === 'US' ? getUsFederalHolidaysForRange(startYmd, endYmd) : [];
     const cached = readPublicHolidaysCache(countryCode, startYmd, endYmd);
-    const immediate = builtIn.length > 0 ? builtIn : (cached || []);
+    const immediate = mergePublicHolidayLists(builtIn, cached || []);
     if (immediate.length > 0) {
       setPublicHolidays(immediate);
-      if (builtIn.length > 0) writePublicHolidaysCache(countryCode, startYmd, endYmd, builtIn);
+      writePublicHolidaysCache(countryCode, startYmd, endYmd, immediate);
     }
     if (publicHolidayFetchKeyRef.current === key) return;
     publicHolidayFetchKeyRef.current = key;
