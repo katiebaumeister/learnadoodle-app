@@ -1,74 +1,42 @@
 <!--
   Supabase "Confirm signup" email template.
-  Copy this entire file into: Supabase Dashboard → Project Settings → Authentication → Email Templates → Confirm signup (Message body).
-  Keep {{ .ConfirmationURL }} exactly as-is so the redirect to /set-password works.
-  Button: black background (#000), white text.
+  Copy this entire file into: Supabase Dashboard → Authentication → Emails → Templates → Confirm signup.
+  Keep {{ .ConfirmationURL }} exactly as-is.
+  Yahoo Mail on iPhone does not open a styled inline-block button, so the link is a plain underlined anchor inside a table.
 -->
 <!DOCTYPE html>
 <html>
-<head>
-    <style>
-        body {
-            font-family: 'DM Sans', Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background-color: #E6F4FC;
-            margin: 0;
-            padding: 0;
-        }
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-            padding: 40px 20px;
-            background-color: white;
-            border-radius: 12px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .logo {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        .button {
-            background-color: #000;
-            color: white;
-            padding: 15px 30px;
-            text-decoration: none;
-            border-radius: 25px;
-            display: inline-block;
-            margin: 20px 0;
-            font-weight: 600;
-            text-align: center;
-        }
-        .footer {
-            margin-top: 40px;
-            font-size: 14px;
-            color: #666;
-            text-align: center;
-        }
-        h2 {
-            font-size: 24px;
-            color: #000;
-            margin-bottom: 20px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="logo">
-            <h1>Learnadoodle</h1>
-        </div>
-        <h2>Welcome to Learnadoodle!</h2>
-        <p>Hello,</p>
-        <p>Thank you for signing up! Please confirm your email address to get started:</p>
-        
-        <div style="text-align: center;">
-            <a href="{{ .ConfirmationURL }}" style="background-color: #000; color: #ffffff !important; padding: 15px 30px; text-decoration: none; border-radius: 25px; display: inline-block; margin: 20px 0; font-weight: 600; text-align: center; font-family: 'DM Sans', Arial, sans-serif;">Confirm Email</a>
-        </div>
-        
-        <div class="footer">
-            <p>Best regards,<br>The Learnadoodle Team</p>
-            <p>Need help? Contact us at contact@learnadoodle.com</p>
-        </div>
-    </div>
+<body style="margin:0; padding:0; background-color:#ffffff;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr>
+      <td align="center" style="padding:32px 20px; font-family:Arial, Helvetica, sans-serif; color:#172033;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;">
+          <tr>
+            <td align="center" style="font-size:32px; line-height:40px; font-weight:bold; padding-bottom:28px;">Learnadoodle</td>
+          </tr>
+          <tr>
+            <td style="font-size:22px; line-height:28px; font-weight:bold; padding-bottom:16px;">Welcome to Learnadoodle!</td>
+          </tr>
+          <tr>
+            <td style="font-size:16px; line-height:24px; padding-bottom:8px;">Hello,</td>
+          </tr>
+          <tr>
+            <td style="font-size:16px; line-height:24px; padding-bottom:20px;">Thank you for signing up! Please confirm your email address to get started:</td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:8px 0 24px;">
+              <a href="{{ .ConfirmationURL }}" target="_blank" style="color:#208AEF; font-size:18px; line-height:24px; font-weight:bold; text-decoration:underline;">Confirm Email</a>
+            </td>
+          </tr>
+          <tr>
+            <td style="font-size:14px; line-height:22px; color:#687186; padding-bottom:28px;">If the button does not open, copy this link into your phone's browser:<br><a href="{{ .ConfirmationURL }}" target="_blank" style="color:#208AEF; word-break:break-all;">{{ .ConfirmationURL }}</a></td>
+          </tr>
+          <tr>
+            <td style="font-size:16px; line-height:24px; color:#687186;">Best regards,<br>The Learnadoodle Team</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
 </html>
