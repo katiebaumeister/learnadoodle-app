@@ -21,7 +21,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from auth import get_current_user, rate_limiter
-from helpers import get_family_id_for_user, child_belongs_to_family, delete_signup_confirmation_sent_for_email
+from helpers import get_family_id_for_user, child_belongs_to_family, delete_signup_confirmation_sent_for_email, resolve_family_display_name
 from logger import log_event
 from supabase_client import get_admin_client
 from email_service import send_invite_email
@@ -1029,7 +1029,7 @@ async def get_family_members(
         try:
             family_res = supabase.table("family").select("*").eq("id", family_id).maybe_single().execute()
             if family_res.data:
-                family_name = family_res.data.get("family_name") or family_res.data.get("name")
+                family_name = resolve_family_display_name(family_res.data, family_id)
                 # Prefer onboarding_completed; fallback to legacy has_completed_onboarding
                 onboarding_completed = family_res.data.get("onboarding_completed")
                 if onboarding_completed is None and family_res.data.get("has_completed_onboarding") is True:

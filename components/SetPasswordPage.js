@@ -17,16 +17,6 @@ import {
   validatePassword,
 } from '../lib/passwordValidation';
 
-function isPhoneBrowser() {
-  if (typeof navigator === 'undefined') return false;
-  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
-}
-
-function appSignInUrl(email) {
-  const query = email ? `?email=${encodeURIComponent(email)}` : '';
-  return `learnadoodle://login${query}`;
-}
-
 export default function SetPasswordPage() {
   const [userEmail, setUserEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -37,7 +27,6 @@ export default function SetPasswordPage() {
   const [successMessage, setSuccessMessage] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [returnToApp, setReturnToApp] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -139,15 +128,10 @@ export default function SetPasswordPage() {
         setErrorMessage(signInErr.message || 'Password set but sign-in failed. Please sign in manually.');
         return;
       }
-      setSuccessMessage(isPhoneBrowser() ? 'Password saved. Opening the Learnadoodle app so you can sign in.' : 'Password set! Redirecting you to your home page...');
+      setSuccessMessage('Password set! Redirecting you to your home page...');
       try {
         sessionStorage.removeItem('learnadoodle_needs_password_set');
       } catch (_) {}
-      if (isPhoneBrowser()) {
-        setReturnToApp(true);
-        window.location.href = appSignInUrl(userEmail);
-        return;
-      }
       const homeUrl = window.location.origin + '/home';
       window.history.replaceState({}, document.title || '', homeUrl);
       // Defer one frame so the success message can paint; avoid multi-second wait before full navigation
@@ -265,13 +249,11 @@ export default function SetPasswordPage() {
         </View>
 
         <TouchableOpacity
-          style={[styles.primaryButton, (!returnToApp && (loading || !isFormValid)) && styles.disabledButton]}
-          onPress={returnToApp ? () => { window.location.href = appSignInUrl(userEmail); } : handleSubmit}
-          disabled={!returnToApp && (loading || !isFormValid)}
+          style={[styles.primaryButton, (loading || !isFormValid) && styles.disabledButton]}
+          onPress={handleSubmit}
+          disabled={loading || !isFormValid}
         >
-          <Text style={styles.primaryButtonText}>
-            {returnToApp ? 'Open the app' : loading ? 'Setting password…' : 'Create password & sign in'}
-          </Text>
+          <Text style={styles.primaryButtonText}>{loading ? 'Setting password…' : 'Create password & sign in'}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.linkButton} onPress={() => { window.location.href = '/'; }}>

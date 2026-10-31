@@ -19,7 +19,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from auth import get_current_user, rate_limiter
-from helpers import get_family_id_for_user
+from helpers import get_family_id_for_user, resolve_family_display_name
 from logger import log_event
 from supabase_client import get_admin_client
 
@@ -328,8 +328,9 @@ async def get_family_ics(
         supabase = get_admin_client()
         
         # Get family name
-        family_res = supabase.table("family").select("name").eq("id", family_id).single().execute()
-        family_name = family_res.data.get("name", "Family") if family_res.data else "Family"
+        family_res = supabase.table("family").select("id, family_name").eq("id", family_id).single().execute()
+        family_name = resolve_family_display_name(family_res.data, family_id) if family_res.data else None
+        family_name = family_name or "Family"
         
         # Get all future events for the family
         now = datetime.now().isoformat()

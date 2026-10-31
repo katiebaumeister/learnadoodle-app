@@ -20,7 +20,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from auth import get_current_user, rate_limiter
-from helpers import get_family_id_for_user
+from helpers import get_family_id_for_user, resolve_family_display_name
 from logger import log_event
 from supabase_client import get_admin_client
 
@@ -529,9 +529,9 @@ async def preview_invite(
         # Get family name
         family_name = None
         try:
-            family_res = supabase.table("family").select("name").eq("id", invite["family_id"]).single().execute()
+            family_res = supabase.table("family").select("id, family_name").eq("id", invite["family_id"]).single().execute()
             if family_res.data:
-                family_name = family_res.data.get("name")
+                family_name = resolve_family_display_name(family_res.data, invite["family_id"])
         except Exception:
             pass
         

@@ -18,7 +18,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from auth import get_current_user, rate_limiter
-from helpers import get_family_id_for_user
+from helpers import get_family_id_for_user, resolve_family_display_name
 from logger import log_event
 from supabase_client import get_admin_client
 from cache import get_cached, set_cached
@@ -102,8 +102,9 @@ async def get_learning_story(
         
         # Get family name
         try:
-            family_res = supabase.table("family").select("name").eq("id", family_id).single().execute()
-            family_name = family_res.data.get("name", "your family") if family_res.data else "your family"
+            family_res = supabase.table("family").select("id, family_name").eq("id", family_id).single().execute()
+            family_name = resolve_family_display_name(family_res.data, family_id) if family_res.data else None
+            family_name = family_name or "your family"
         except Exception:
             family_name = "your family"
         

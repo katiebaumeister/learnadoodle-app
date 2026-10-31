@@ -2328,8 +2328,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       return;
     }
     let cancelled = false;
+    let settled = false;
     const timeoutId = setTimeout(() => {
-      if (cancelled) return;
+      if (cancelled || settled) return;
+      settled = true;
       setOnboardingCheckDone(true);
       setInitialOnboardingBlocked(false);
       if (typeof console !== 'undefined') {
@@ -2338,20 +2340,32 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }, 15000);
     (async () => {
       try {
-        const res = await getOnboardingStatus();
-        const data = res?.data ?? res;
+        let res = await getOnboardingStatus();
+        const authStatus = res?.error?.status;
+        // Right after password setup the session can 401 once. Retry before deciding.
+        if (!res?.data || authStatus === 401 || authStatus === 403) {
+          await new Promise((resolve) => setTimeout(resolve, 600));
+          if (cancelled) return;
+          res = await getOnboardingStatus();
+        }
+        const data = res?.data;
         if (cancelled) return;
-        // Only block when incomplete AND family does not already have setup data.
-        // Accounts with children + planning mode must never be forced through onboarding again.
+        settled = true;
+        clearTimeout(timeoutId);
+        // Only skip when setup is actually finished. A missing status must not
+        // send a brand-new account to home.
         const alreadySetup = !!(
           data?.onboarding_is_valid
           || (data?.has_children && data?.default_planning_mode)
         );
-        setInitialOnboardingBlocked(data?.onboarding_completed === false && !alreadySetup);
+        const finished = !!(data && (data.onboarding_completed === true || alreadySetup));
+        setInitialOnboardingBlocked(!finished);
         setOnboardingCheckDone(true);
       } catch (_) {
         if (!cancelled) {
-          setInitialOnboardingBlocked(false);
+          settled = true;
+          clearTimeout(timeoutId);
+          setInitialOnboardingBlocked(true);
           setOnboardingCheckDone(true);
         }
       }

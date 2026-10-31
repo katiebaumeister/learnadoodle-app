@@ -16,6 +16,73 @@ def get_placeholder_conversion_fields(event: dict) -> Tuple[dict, bool]:
     return {}, False
 
 
+_GENERIC_FAMILY_NAMES = {"", "family", "my family", "myfamily", "parent 1", "parent1"}
+
+
+def is_generic_family_name(value: Optional[str]) -> bool:
+    return str(value or "").strip().lower() in _GENERIC_FAMILY_NAMES
+
+
+def parent_call_name_for_family(family_id: str) -> Optional[str]:
+    """Name from onboarding 'What should we call you' (profiles.first_name / profiles.name)."""
+    if not family_id:
+        return None
+    supabase = get_admin_client()
+    parent_id = None
+    try:
+        members = (
+            supabase.table("family_members")
+            .select("user_id, member_role")
+            .eq("family_id", family_id)
+            .execute()
+        )
+        for row in members.data or []:
+            role = str(row.get("member_role") or "").strip().lower()
+            if role in ("parent", "admin", "owner") and row.get("user_id"):
+                parent_id = row.get("user_id")
+                break
+    except Exception:
+        parent_id = None
+    if not parent_id:
+        try:
+            profiles = (
+                supabase.table("profiles")
+                .select("id, role")
+                .eq("family_id", family_id)
+                .execute()
+            )
+            for row in profiles.data or []:
+                role = str(row.get("role") or "").strip().lower()
+                if role in ("parent", "admin", "owner", "") and row.get("id"):
+                    parent_id = row.get("id")
+                    break
+        except Exception:
+            parent_id = None
+    if not parent_id:
+        return None
+    try:
+        prof = (
+            supabase.table("profiles")
+            .select("first_name, name")
+            .eq("id", parent_id)
+            .limit(1)
+            .execute()
+        )
+        row = prof.data[0] if prof.data else {}
+        name = str(row.get("first_name") or row.get("name") or "").strip()
+        return name or None
+    except Exception:
+        return None
+
+
+def resolve_family_display_name(family_row: Optional[dict], family_id: Optional[str]) -> Optional[str]:
+    """Custom family.family_name when set. Otherwise the onboarding parent name, never family.name."""
+    stored = str((family_row or {}).get("family_name") or "").strip()
+    if stored and not is_generic_family_name(stored):
+        return stored
+    return parent_call_name_for_family(family_id or (family_row or {}).get("id") or "")
+
+
 def get_family_id_for_user(user_id: str) -> Optional[str]:
     """Resolve family_id for any user (parent or child). Tries profiles first, then family_members.
     Uses limit(1) instead of maybe_single() to avoid PostgREST 406 when 0 rows (e.g. new user, no family yet)."""

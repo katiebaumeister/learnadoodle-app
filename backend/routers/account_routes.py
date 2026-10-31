@@ -12,6 +12,7 @@ from auth import get_current_user, rate_limiter
 from logger import log_event
 from supabase_client import get_admin_client
 from email_service import send_personal_data_request_emails
+from helpers import delete_signup_confirmation_sent_for_email, resolve_family_display_name
 
 router = APIRouter(prefix="/api/account", tags=["account"])
 
@@ -71,13 +72,13 @@ async def request_personal_data_export(
         try:
             family_res = (
                 supabase.table("family")
-                .select("family_name, name")
+                .select("id, family_name")
                 .eq("id", family_id)
                 .maybe_single()
                 .execute()
             )
             if family_res.data:
-                family_name = family_res.data.get("family_name") or family_res.data.get("name")
+                family_name = resolve_family_display_name(family_res.data, family_id)
         except Exception:
             pass
         try:
@@ -155,7 +156,7 @@ async def delete_account(
 
     # 1) Get profile and ensure user is a parent with a family
     profile_res = (
-        supabase.table("profiles").select("family_id, role").eq("id", user_id).limit(1).execute()
+        supabase.table("profiles").select("family_id, role, email").eq("id", user_id).limit(1).execute()
     )
     profile = profile_res.data[0] if profile_res.data and len(profile_res.data) > 0 else None
     if not profile:
@@ -165,6 +166,7 @@ async def delete_account(
         )
 
     family_id = profile.get("family_id")
+    account_email = (user.get("email") or profile.get("email") or "").strip()
     role = (profile.get("role") or "").strip().lower()
     if role not in ("parent", "admin", "owner"):
         raise HTTPException(
@@ -230,7 +232,14 @@ async def delete_account(
                 except Exception:
                     pass
 
-        # 3c) Delete family (CASCADE removes family_members, etc.)
+        # 3c) School-year rows are keyed by family id. Remove them before the family
+        # row so a later signup with the same email cannot resume another account's setup.
+        try:
+            supabase.table("family_planner_settings").delete().eq("family_id", family_id).execute()
+        except Exception:
+            pass
+
+        # 3d) Delete family (CASCADE removes family_members, etc.)
         supabase.table("family").delete().eq("id", family_id).execute()
 
         # 4) Delete profiles (after family; may fail if FK—then auth delete still runs)
@@ -240,7 +249,11 @@ async def delete_account(
             except Exception:
                 pass
 
-        # 5) Delete auth users via Admin API (so they cannot log in again)
+        # 5) Email-keyed signup rows are not tied to the user id. Clear them with the account.
+        if account_email:
+            delete_signup_confirmation_sent_for_email(account_email)
+
+        # 6) Delete auth users via Admin API (so they cannot log in again)
         supabase_url = os.environ.get("SUPABASE_URL")
         service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
         if not supabase_url or not service_role_key:

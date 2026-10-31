@@ -31,6 +31,11 @@ const STUDENT_STEPS = ['welcome', 'planning_mode', 'learning_context', 'add_chil
 const ONBOARDING_WHO_STORAGE_KEY = 'ld_onboarding_who';
 const ONBOARDING_SCHOOL_YEAR_DONE_KEY = 'ld_onboarding_school_year_done';
 
+function onboardingStorageKey(base, userId) {
+  const id = String(userId || '').trim();
+  return id ? `${base}:${id}` : null;
+}
+
 function getStepsForWho(who) {
   return who === 'student' ? STUDENT_STEPS : PARENT_STEPS;
 }
@@ -80,6 +85,7 @@ export default function OnboardingModal({
 
   /** Tracks resume per modal open so familyId arriving mid-flow does not reset the step. */
   const resumeKeyRef = useRef(null);
+  const userIdRef = useRef('');
   /** Real/pending id for the child currently in the add-child form (same session upsert). */
   const formSessionChildIdRef = useRef(null);
   /** Serializes create/update so back/forth continue cannot double-insert. */
@@ -129,7 +135,8 @@ export default function OnboardingModal({
 
     let whoForSteps = onboardingWho;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const storedWho = localStorage.getItem(ONBOARDING_WHO_STORAGE_KEY);
+      const whoKey = onboardingStorageKey(ONBOARDING_WHO_STORAGE_KEY, userIdRef.current);
+      const storedWho = whoKey ? localStorage.getItem(whoKey) : null;
       if (storedWho === 'parent' || storedWho === 'student') {
         whoForSteps = storedWho;
       }
@@ -147,12 +154,16 @@ export default function OnboardingModal({
 
     (async () => {
       try {
+        const { data: authData } = await supabase.auth.getUser();
+        const userId = authData?.user?.id || '';
+        if (userId) userIdRef.current = userId;
         const res = await getOnboardingStatus();
         const data = res?.data ?? res;
         if (cancelled) return;
         let persistedWho = null;
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          persistedWho = localStorage.getItem(ONBOARDING_WHO_STORAGE_KEY);
+          const whoKey = onboardingStorageKey(ONBOARDING_WHO_STORAGE_KEY, userId);
+          persistedWho = whoKey ? localStorage.getItem(whoKey) : null;
           if (persistedWho === 'parent' || persistedWho === 'student') {
             setOnboardingWho(persistedWho);
           }
@@ -192,7 +203,8 @@ export default function OnboardingModal({
         } else {
           let schoolYearDone = false;
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            schoolYearDone = localStorage.getItem(ONBOARDING_SCHOOL_YEAR_DONE_KEY) === '1';
+            const doneKey = onboardingStorageKey(ONBOARDING_SCHOOL_YEAR_DONE_KEY, userId);
+            schoolYearDone = doneKey ? localStorage.getItem(doneKey) === '1' : false;
           }
           setStep(schoolYearDone ? 'complete' : 'school_year');
           setPlanningMode(data.default_planning_mode ?? null);
@@ -449,8 +461,20 @@ export default function OnboardingModal({
 
   const finishSchoolYearSetup = () => {
     setError(null);
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      localStorage.setItem(ONBOARDING_SCHOOL_YEAR_DONE_KEY, '1');
+    const rememberSchoolYear = (userId) => {
+      if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+      const doneKey = onboardingStorageKey(ONBOARDING_SCHOOL_YEAR_DONE_KEY, userId);
+      if (doneKey) localStorage.setItem(doneKey, '1');
+    };
+    if (userIdRef.current) rememberSchoolYear(userIdRef.current);
+    else {
+      void supabase.auth.getUser().then(({ data }) => {
+        const id = data?.user?.id || '';
+        if (id) {
+          userIdRef.current = id;
+          rememberSchoolYear(id);
+        }
+      });
     }
     transitionToStep('complete');
   };
@@ -489,6 +513,10 @@ export default function OnboardingModal({
       }
       // Dispatch first so WebLayout can close modal immediately (avoids depending on refetch, e.g. 429)
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const whoKey = onboardingStorageKey(ONBOARDING_WHO_STORAGE_KEY, userIdRef.current);
+        const doneKey = onboardingStorageKey(ONBOARDING_SCHOOL_YEAR_DONE_KEY, userIdRef.current);
+        if (whoKey) localStorage.removeItem(whoKey);
+        if (doneKey) localStorage.removeItem(doneKey);
         localStorage.removeItem(ONBOARDING_WHO_STORAGE_KEY);
         localStorage.removeItem(ONBOARDING_SCHOOL_YEAR_DONE_KEY);
         notifyOnboardingCompleted({
@@ -564,7 +592,17 @@ export default function OnboardingModal({
                       // createdChildren (subjects/materials purged via permanent_delete).
                       setOnboardingWho(newWho);
                       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                        localStorage.setItem(ONBOARDING_WHO_STORAGE_KEY, newWho);
+                        const whoKey = onboardingStorageKey(ONBOARDING_WHO_STORAGE_KEY, userIdRef.current);
+                        if (whoKey) localStorage.setItem(whoKey, newWho);
+                        else {
+                          void supabase.auth.getUser().then(({ data }) => {
+                            const id = data?.user?.id || '';
+                            if (!id) return;
+                            userIdRef.current = id;
+                            const scopedKey = onboardingStorageKey(ONBOARDING_WHO_STORAGE_KEY, id);
+                            if (scopedKey) localStorage.setItem(scopedKey, newWho);
+                          });
+                        }
                       }
                       transitionToStep('learning_context');
                     }}
