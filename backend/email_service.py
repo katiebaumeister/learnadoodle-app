@@ -355,7 +355,14 @@ If you didn't expect this invitation, you can safely ignore this email.
         return False
 
 
-def _postmark_send(*, to_email: str, subject: str, html_body: str, text_body: str) -> bool:
+def _postmark_send(
+    *,
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    reply_to: Optional[str] = None,
+) -> bool:
     if not postmark_client:
         log_event(
             "email_service.send.skipped",
@@ -367,7 +374,7 @@ def _postmark_send(*, to_email: str, subject: str, html_body: str, text_body: st
     try:
         response = postmark_client.emails.send(
             From=f"{POSTMARK_SENDER_NAME} <{POSTMARK_SENDER_EMAIL}>",
-            ReplyTo=CONTACT_EMAIL,
+            ReplyTo=(reply_to or CONTACT_EMAIL),
             To=to_email,
             Subject=subject,
             HtmlBody=html_body,
@@ -390,6 +397,61 @@ def _postmark_send(*, to_email: str, subject: str, html_body: str, text_body: st
         )
         print(f"[EMAIL ERROR] Failed to send to {to_email}: {e}")
         return False
+
+
+def send_feedback_email(
+    *,
+    account_email: str,
+    user_id: str,
+    subject: str,
+    description: str,
+    feedback_type: str,
+    display_name: Optional[str] = None,
+    family_id: Optional[str] = None,
+) -> bool:
+    """Send in-app feedback to the Learnadoodle contact inbox."""
+    requested_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    safe_email = html.escape(account_email or "")
+    safe_user_id = html.escape(user_id or "")
+    safe_name = html.escape(display_name or "—")
+    safe_family_id = html.escape(family_id or "—")
+    safe_type = html.escape(feedback_type or "other")
+    safe_subject = html.escape(subject or "")
+    safe_description = html.escape(description or "").replace("\n", "<br>")
+
+    mail_subject = f"[Feedback · {feedback_type or 'other'}] {subject}".strip()
+    text_body = f"""New Learnadoodle feedback
+
+From: {display_name or '—'} <{account_email}>
+User ID: {user_id}
+Family ID: {family_id or '—'}
+Type: {feedback_type or 'other'}
+Submitted: {requested_at}
+
+Subject: {subject}
+
+{description}
+"""
+    html_body = f"""<html><body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111827; line-height: 1.5;">
+<p>New Learnadoodle feedback</p>
+<ul>
+  <li><strong>From:</strong> {safe_name} &lt;{safe_email}&gt;</li>
+  <li><strong>User ID:</strong> {safe_user_id}</li>
+  <li><strong>Family ID:</strong> {safe_family_id}</li>
+  <li><strong>Type:</strong> {safe_type}</li>
+  <li><strong>Submitted:</strong> {requested_at}</li>
+</ul>
+<p><strong>Subject:</strong> {safe_subject}</p>
+<p>{safe_description}</p>
+</body></html>"""
+
+    return _postmark_send(
+        to_email=CONTACT_EMAIL,
+        subject=mail_subject,
+        html_body=html_body,
+        text_body=text_body,
+        reply_to=account_email or CONTACT_EMAIL,
+    )
 
 
 def send_personal_data_request_emails(

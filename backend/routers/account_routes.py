@@ -11,13 +11,14 @@ import traceback
 from auth import get_current_user, rate_limiter
 from logger import log_event
 from supabase_client import get_admin_client
-from email_service import send_personal_data_request_emails
+from email_service import send_feedback_email, send_personal_data_request_emails
 from helpers import delete_signup_confirmation_sent_for_email, resolve_family_display_name
 
 router = APIRouter(prefix="/api/account", tags=["account"])
 
 # Exact phrase user must type to confirm account deletion (case-sensitive in request; we compare case-insensitively)
 CONFIRM_PHRASE = "DELETE"
+FEEDBACK_TYPES = {"bug", "feature", "question", "other"}
 
 
 class DeleteAccountIn(BaseModel):
@@ -32,6 +33,100 @@ class DeleteAccountOut(BaseModel):
 class PersonalDataRequestOut(BaseModel):
     success: bool
     message: str
+
+
+class FeedbackIn(BaseModel):
+    subject: str = Field(..., min_length=1, max_length=200)
+    description: str = Field(..., min_length=1, max_length=8000)
+    type: str = Field(..., description="bug | feature | idea | question | other")
+
+
+class FeedbackOut(BaseModel):
+    success: bool
+    message: str
+
+
+@router.post("/feedback", response_model=FeedbackOut)
+async def submit_feedback(
+    body: FeedbackIn,
+    user: dict = Depends(get_current_user),
+    _: None = Depends(rate_limiter),
+):
+    """Persist feedback and email it to contact@learnadoodle.com."""
+    supabase = get_admin_client()
+    user_id = user["id"]
+    account_email = (user.get("email") or "").strip()
+    feedback_type = str(body.type or "").strip().lower()
+    if feedback_type == "idea":
+        feedback_type = "feature"
+    if feedback_type not in FEEDBACK_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid feedback type.",
+        )
+
+    subject = str(body.subject or "").strip()
+    description = str(body.description or "").strip()
+    if not subject or not description:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Subject and description are required.",
+        )
+
+    profile_res = (
+        supabase.table("profiles")
+        .select("family_id, first_name, name, email")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    profile = profile_res.data[0] if profile_res.data else None
+    if not account_email and profile:
+        account_email = (profile.get("email") or "").strip()
+    if not account_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No email address is linked to this account.",
+        )
+
+    display_name = None
+    family_id = None
+    if profile:
+        display_name = (profile.get("first_name") or profile.get("name") or "").strip() or None
+        family_id = profile.get("family_id")
+
+    try:
+        supabase.table("feedback").insert(
+            {
+                "user_id": user_id,
+                "email": account_email,
+                "subject": subject,
+                "description": description,
+                "type": feedback_type,
+                "family_id": family_id,
+            }
+        ).execute()
+    except Exception as exc:
+        log_event("account.feedback.db_error", user_id=user_id, error=str(exc))
+
+    sent = send_feedback_email(
+        account_email=account_email,
+        user_id=user_id,
+        subject=subject,
+        description=description,
+        feedback_type=feedback_type,
+        display_name=display_name,
+        family_id=family_id,
+    )
+    if not sent:
+        log_event("account.feedback.email_failed", user_id=user_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not send feedback right now. Please try again in a few minutes or email contact@learnadoodle.com.",
+        )
+
+    log_event("account.feedback.success", user_id=user_id, feedback_type=feedback_type)
+    return FeedbackOut(success=True, message="Thanks — your feedback was sent.")
 
 
 @router.post("/personal-data-request", response_model=PersonalDataRequestOut)
