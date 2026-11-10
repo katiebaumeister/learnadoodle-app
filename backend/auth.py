@@ -15,15 +15,15 @@ _RATE_LIMIT_MAX = 60  # requests per window
 
 _RATE_LIMIT_RELAXED_MAX = 300  # higher ceiling for read-heavy GET endpoints
 # Tight ceiling for LLM / AI spend paths (bots + burst abuse).
-# Slightly above the original prod 8 so beta testers aren't tripped by normal
-# multi-call flows; still far below a bot scrape.
+# Raised for beta Quick Create / curriculum flows (lesson + assignment + plan);
+# still far below a bot scrape. Override with AI_RATE_LIMIT_MAX.
 _IS_DEV = os.environ.get("ENVIRONMENT", "development").strip().lower() in (
     "development",
     "dev",
     "local",
 )
 _AI_RATE_LIMIT_MAX = int(
-    os.environ.get("AI_RATE_LIMIT_MAX", "30" if _IS_DEV else "15")
+    os.environ.get("AI_RATE_LIMIT_MAX", "50" if _IS_DEV else "25")
 )
 
 
