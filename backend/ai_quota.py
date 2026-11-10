@@ -20,12 +20,12 @@ from ai_usage_ledger import UNIT_WEIGHTS
 
 logger = logging.getLogger(__name__)
 
-# Beta-friendly defaults (override via env without redeploying product copy).
-# Rough budget: a few curriculum imports (~30u) + material parses + Doodle chat.
-_MONTHLY_DEFAULT = int(os.environ.get("AI_MONTHLY_UNITS_DEFAULT", "120"))
-_MONTHLY_NEW_FAMILY = int(os.environ.get("AI_MONTHLY_UNITS_NEW_FAMILY", "80"))
-_DAILY_DEFAULT = int(os.environ.get("AI_DAILY_UNITS_DEFAULT", "50"))
-_DAILY_NEW_FAMILY = int(os.environ.get("AI_DAILY_UNITS_NEW_FAMILY", "35"))
+# Temporary high testing ceilings so Quick Create / curriculum drafts aren't blocked.
+# Override via env (AI_DAILY_UNITS_DEFAULT, etc.) when tightening for production.
+_MONTHLY_DEFAULT = int(os.environ.get("AI_MONTHLY_UNITS_DEFAULT", "50000"))
+_MONTHLY_NEW_FAMILY = int(os.environ.get("AI_MONTHLY_UNITS_NEW_FAMILY", "50000"))
+_DAILY_DEFAULT = int(os.environ.get("AI_DAILY_UNITS_DEFAULT", "10000"))
+_DAILY_NEW_FAMILY = int(os.environ.get("AI_DAILY_UNITS_NEW_FAMILY", "10000"))
 _NEW_FAMILY_DAYS = int(os.environ.get("AI_NEW_FAMILY_DAYS", "7"))
 
 

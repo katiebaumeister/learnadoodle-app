@@ -23,7 +23,7 @@ _IS_DEV = os.environ.get("ENVIRONMENT", "development").strip().lower() in (
     "local",
 )
 _AI_RATE_LIMIT_MAX = int(
-    os.environ.get("AI_RATE_LIMIT_MAX", "50" if _IS_DEV else "25")
+    os.environ.get("AI_RATE_LIMIT_MAX", "500" if _IS_DEV else "200")
 )
 
 
